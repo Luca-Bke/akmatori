@@ -547,7 +547,7 @@ func BenchmarkAPI_DecodeJSON(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))
 		var result map[string]interface{}
-		api.DecodeJSON(req, &result)
+		_ = api.DecodeJSON(req, &result)
 	}
 }
 

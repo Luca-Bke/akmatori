@@ -41,7 +41,9 @@ func TestResolveJWTSecret_EnvVarTakesPriority(t *testing.T) {
 	defer cleanup()
 
 	// Store a different secret in DB
-	database.SetSystemSetting(database.SystemSettingJWTSecret, "db-secret")
+	if err := database.SetSystemSetting(database.SystemSettingJWTSecret, "db-secret"); err != nil {
+		t.Fatalf("Failed to set system setting: %v", err)
+	}
 
 	// Env var should take priority
 	result := ResolveJWTSecret("env-secret")
@@ -54,7 +56,9 @@ func TestResolveJWTSecret_FallsBackToDB(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
 
-	database.SetSystemSetting(database.SystemSettingJWTSecret, "db-secret")
+	if err := database.SetSystemSetting(database.SystemSettingJWTSecret, "db-secret"); err != nil {
+		t.Fatalf("Failed to set system setting: %v", err)
+	}
 
 	result := ResolveJWTSecret("")
 	if result != "db-secret" {
@@ -111,7 +115,9 @@ func TestResolveAdminPassword_FallsBackToDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to hash: %v", err)
 	}
-	database.SetSystemSetting(database.SystemSettingAdminPasswordHash, storedHash)
+	if err := database.SetSystemSetting(database.SystemSettingAdminPasswordHash, storedHash); err != nil {
+		t.Fatalf("Failed to set system setting: %v", err)
+	}
 
 	hash, setupRequired, err := ResolveAdminPassword("")
 	if err != nil {
@@ -186,7 +192,9 @@ func TestIsSetupCompleted_Completed(t *testing.T) {
 	cleanup := setupTestDB(t)
 	defer cleanup()
 
-	database.SetSystemSetting(database.SystemSettingSetupCompleted, "true")
+	if err := database.SetSystemSetting(database.SystemSettingSetupCompleted, "true"); err != nil {
+		t.Fatalf("Failed to set system setting: %v", err)
+	}
 
 	if !IsSetupCompleted() {
 		t.Error("Setup should be completed when flag is set")
