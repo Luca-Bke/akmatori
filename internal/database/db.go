@@ -104,6 +104,7 @@ func AutoMigrate() error {
 		&IncidentMerge{},
 		&AggregationSettings{},
 		&GeneralSettings{},
+		&Runbook{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
@@ -276,7 +277,12 @@ Escalate to human operators when:
 - Security incidents are detected
 - Data loss or corruption is suspected
 - The problem persists after attempted remediation
-- You lack the necessary skills or access to resolve the issue`
+- You lack the necessary skills or access to resolve the issue
+
+## Runbooks
+
+Before starting your investigation, check the /akmatori/runbooks/ directory for relevant runbooks.
+If a matching runbook exists, follow its procedures as your primary investigation guide.`
 
 // InitializeSystemSkill creates the incident-manager system skill if it doesn't exist
 func InitializeSystemSkill() error {

@@ -341,6 +341,19 @@ func (ContextFile) TableName() string {
 	return "context_files"
 }
 
+// Runbook stores operator runbooks (SOPs) that the AI agent can reference during investigations
+type Runbook struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Title     string    `gorm:"type:varchar(255);not null" json:"title"`
+	Content   string    `gorm:"type:text;not null" json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (Runbook) TableName() string {
+	return "runbooks"
+}
+
 // APIKeySettings stores API authentication configuration
 type APIKeySettings struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`

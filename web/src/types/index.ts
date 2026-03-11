@@ -210,6 +210,15 @@ export interface ContextFile {
   updated_at: string;
 }
 
+// Runbooks
+export interface Runbook {
+  id: number;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ValidateReferencesRequest {
   text: string;
 }

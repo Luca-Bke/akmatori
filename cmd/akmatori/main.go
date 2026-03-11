@@ -126,6 +126,15 @@ func main() {
 	alertService := services.NewAlertService()
 	log.Printf("Alert service initialized")
 
+	// Initialize Runbook service
+	runbookService := services.NewRunbookService(dataDir)
+	log.Printf("Runbook service initialized")
+
+	// Sync runbook files on startup
+	if err := runbookService.SyncRunbookFiles(); err != nil {
+		log.Printf("Warning: Failed to sync runbook files: %v", err)
+	}
+
 	// Initialize Aggregation service
 	aggregationService := services.NewAggregationService(database.GetDB())
 	log.Printf("Aggregation service initialized")
@@ -235,7 +244,7 @@ func main() {
 	httpHandler := handlers.NewHTTPHandler(alertHandler)
 
 	// Initialize API handler for skill communication and management
-	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, codexExecutor, agentWSHandler, slackManager)
+	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, codexExecutor, agentWSHandler, slackManager, runbookService)
 
 	// Wire alert channel reload: when alert sources are created/updated/deleted via API,
 	// reload the Slack handler's channel mappings so changes take effect immediately.

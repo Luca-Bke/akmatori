@@ -11,6 +11,7 @@ import IncidentDetail from './pages/IncidentDetail';
 import Skills from './pages/Skills';
 import Tools from './pages/Tools';
 import ContextFiles from './pages/ContextFiles';
+import Runbooks from './pages/Runbooks';
 import Settings from './pages/Settings';
 
 function App() {
@@ -33,6 +34,7 @@ function App() {
                       <Route path="/skills" element={<Skills />} />
                       <Route path="/tools" element={<Tools />} />
                       <Route path="/context" element={<ContextFiles />} />
+                      <Route path="/runbooks" element={<Runbooks />} />
                       <Route path="/settings" element={<Settings />} />
                     </Routes>
                   </Layout>

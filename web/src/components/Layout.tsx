@@ -7,6 +7,7 @@ import {
   Settings,
   Activity,
   FileText,
+  BookOpen,
   ChevronLeft,
   Menu,
   Sun,
@@ -32,6 +33,7 @@ const navigation = [
   { name: 'Skills', href: '/skills', icon: Bot },
   { name: 'Tools', href: '/tools', icon: Wrench },
   { name: 'Context Files', href: '/context', icon: FileText },
+  { name: 'Runbooks', href: '/runbooks', icon: BookOpen },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 

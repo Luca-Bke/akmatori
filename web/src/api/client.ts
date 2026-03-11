@@ -27,6 +27,7 @@ import type {
   SSHKey,
   SSHKeyCreateRequest,
   SSHKeyUpdateRequest,
+  Runbook,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -354,6 +355,30 @@ export const contextApi = {
     fetchApi<ValidateReferencesResponse>('/api/context/validate', {
       method: 'POST',
       body: JSON.stringify({ text }),
+    }),
+};
+
+// Runbooks API
+export const runbooksApi = {
+  list: () => fetchApi<Runbook[]>('/api/runbooks'),
+
+  get: (id: number) => fetchApi<Runbook>(`/api/runbooks/${id}`),
+
+  create: (data: { title: string; content: string }) =>
+    fetchApi<Runbook>('/api/runbooks', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (id: number, data: { title: string; content: string }) =>
+    fetchApi<Runbook>(`/api/runbooks/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (id: number) =>
+    fetchApi<void>(`/api/runbooks/${id}`, {
+      method: 'DELETE',
     }),
 };
 
