@@ -184,9 +184,9 @@ This unblocks future handler unit tests with mock services.
 
 ## Phase 5: Agent Worker Refactoring
 
-- [ ] Create `agent-worker/src/tool-output-formatter.ts`
-- [ ] Update `agent-runner.ts` to import and delegate to formatter
-- [ ] Verify: `cd agent-worker && npm test`
+- [x] Create `agent-worker/src/tool-output-formatter.ts`
+- [x] Update `agent-runner.ts` to import and delegate to formatter
+- [x] Verify: `cd agent-worker && npm test`
 
 ### CREATE:
 - **`agent-worker/src/tool-output-formatter.ts`** — Extract from `agent-runner.ts`:
