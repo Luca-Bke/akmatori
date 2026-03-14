@@ -42,8 +42,8 @@ Currently, the SSH tool can only connect to servers pre-configured in `ssh_hosts
 
 **File: `internal/services/skill_prompt_service.go`**
 
-- [ ] Update `extractToolDetails()` to note ad-hoc connections when enabled
-- [ ] Update `generateToolUsageExample()` to include ad-hoc example when enabled
+- [x] Update `extractToolDetails()` to note ad-hoc connections when enabled
+- [x] Update `generateToolUsageExample()` to include ad-hoc example when enabled
 
 ### Task 6: Tests
 

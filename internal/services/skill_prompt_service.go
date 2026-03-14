@@ -194,6 +194,17 @@ docker ps/logs/inspect, kubectl get/describe/logs, systemctl status.
 For CPU core count use ` + "`nproc`" + ` or ` + "`lscpu`" + ` (not /proc/cpuinfo parsing).
 `
 		}
+
+		// Add ad-hoc connection example when enabled
+		var adhocExample string
+		if allow, ok := tool.Settings["allow_adhoc_connections"].(bool); ok && allow {
+			adhocExample = fmt.Sprintf(`
+# Ad-hoc: connect to any server by hostname/FQDN/IP
+result = execute_command("uptime", servers=["any-server.example.com"], tool_instance_id=%d)
+result = test_connectivity(servers=["server1.example.com", "server2.example.com"], tool_instance_id=%d)
+`, id, id)
+		}
+
 		return fmt.Sprintf(`
 Usage (via bash tool):
 `+"```python"+`
@@ -203,8 +214,8 @@ result = execute_command("uptime", tool_instance_id=%d)
 result = execute_command("df -h", servers=["hostname"], tool_instance_id=%d)
 result = test_connectivity(tool_instance_id=%d)
 result = get_server_info(tool_instance_id=%d)
-`+"```"+`
-%s`, id, id, id, id, readOnlyNote)
+%s`+"```"+`
+%s`, id, id, id, id, adhocExample, readOnlyNote)
 	case "zabbix":
 		return fmt.Sprintf(`
 Usage (via bash tool):
@@ -235,28 +246,47 @@ func extractToolDetails(tool database.ToolInstance) string {
 
 	switch typeName {
 	case "ssh":
+		var details strings.Builder
+
 		// Extract hostnames from ssh_hosts array — agent needs these for server targeting
 		hostsData, ok := tool.Settings["ssh_hosts"]
-		if !ok {
-			return ""
-		}
-		hostsJSON, err := json.Marshal(hostsData)
-		if err != nil {
-			return ""
-		}
-		var hosts []map[string]interface{}
-		if err := json.Unmarshal(hostsJSON, &hosts); err != nil {
-			return ""
-		}
-		var hostnames []string
-		for _, h := range hosts {
-			if hostname, ok := h["hostname"].(string); ok && hostname != "" {
-				hostnames = append(hostnames, hostname)
+		if ok {
+			hostsJSON, err := json.Marshal(hostsData)
+			if err == nil {
+				var hosts []map[string]interface{}
+				if err := json.Unmarshal(hostsJSON, &hosts); err == nil {
+					var hostnames []string
+					for _, h := range hosts {
+						if hostname, ok := h["hostname"].(string); ok && hostname != "" {
+							hostnames = append(hostnames, hostname)
+						}
+					}
+					if len(hostnames) > 0 {
+						details.WriteString(fmt.Sprintf("Configured hosts: %s\n", strings.Join(hostnames, ", ")))
+					}
+				}
 			}
 		}
-		if len(hostnames) > 0 {
-			return fmt.Sprintf("Configured hosts: %s\n", strings.Join(hostnames, ", "))
+
+		// Note ad-hoc connection capability when enabled
+		if allow, ok := tool.Settings["allow_adhoc_connections"].(bool); ok && allow {
+			user := "root"
+			if u, ok := tool.Settings["adhoc_default_user"].(string); ok && u != "" {
+				user = u
+			}
+			port := 22
+			if p, ok := tool.Settings["adhoc_default_port"].(float64); ok && p > 0 {
+				port = int(p)
+			}
+			details.WriteString(fmt.Sprintf("Ad-hoc connections enabled: can connect to any server (default user: %s, port: %d)\n", user, port))
+			if allow, ok := tool.Settings["adhoc_allow_write_commands"].(bool); ok && allow {
+				details.WriteString("Ad-hoc write commands: allowed\n")
+			} else {
+				details.WriteString("Ad-hoc write commands: read-only (diagnostic commands only)\n")
+			}
 		}
+
+		return details.String()
 	}
 
 	return ""
