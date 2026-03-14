@@ -30,7 +30,7 @@ Currently, the SSH tool can only connect to servers pre-configured in `ssh_hosts
 
 **File: `mcp-gateway/internal/tools/registry.go`**
 
-- [ ] Add `servers` parameter to `ssh.test_connectivity` InputSchema and handler
+- [x] Add `servers` parameter to `ssh.test_connectivity` InputSchema and handler
 
 ### Task 4: Python Wrapper
 

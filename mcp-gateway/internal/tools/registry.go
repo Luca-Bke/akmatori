@@ -117,17 +117,30 @@ func (r *Registry) registerSSHTools() {
 	r.server.RegisterTool(
 		mcp.Tool{
 			Name:        "ssh.test_connectivity",
-			Description: "Test SSH connectivity to all configured servers",
+			Description: "Test SSH connectivity to configured servers, or specific servers when ad-hoc connections are enabled",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
 				Properties: map[string]mcp.Property{
+					"servers": {
+						Type:        "array",
+						Description: "Optional list of specific servers to test connectivity to. When ad-hoc connections are enabled, you can test servers not in the configured list.",
+						Items:       &mcp.Items{Type: "string"},
+					},
 					"tool_instance_id": toolInstanceIDProperty,
 				},
 			},
 		},
 		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
 			instanceID := extractInstanceID(args)
-			return sshTool.TestConnectivity(ctx, incidentID, nil, instanceID)
+			var servers []string
+			if serversArg, ok := args["servers"].([]interface{}); ok {
+				for _, s := range serversArg {
+					if str, ok := s.(string); ok {
+						servers = append(servers, str)
+					}
+				}
+			}
+			return sshTool.TestConnectivity(ctx, incidentID, servers, instanceID)
 		},
 	)
 
