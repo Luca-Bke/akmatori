@@ -22,9 +22,9 @@ Currently, the SSH tool can only connect to servers pre-configured in `ssh_hosts
 
 **File: `mcp-gateway/internal/tools/schemas.go`**
 
-- [ ] Remove `ssh_hosts` from Required and MinItems constraint
-- [ ] Add 4 new ad-hoc properties to SSH schema
-- [ ] Update `test_connectivity` function description for servers parameter
+- [x] Remove `ssh_hosts` from Required and MinItems constraint
+- [x] Add 4 new ad-hoc properties to SSH schema
+- [x] Update `test_connectivity` function description for servers parameter
 
 ### Task 3: MCP Gateway - Tool Registration
 
