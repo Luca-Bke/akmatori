@@ -298,7 +298,7 @@ from victoriametrics import instant_query, range_query, label_values, series, ap
 result = instant_query("up", tool_instance_id=%d)
 result = range_query("rate(http_requests_total[5m])", start="2h", end="now", step="1m", tool_instance_id=%d)
 result = label_values("__name__", tool_instance_id=%d)
-result = series(match=["up"], tool_instance_id=%d)
+result = series(match="up", tool_instance_id=%d)
 result = api_request("/api/v1/status/tsdb", tool_instance_id=%d)
 `+"```"+`
 `, id, id, id, id, id)

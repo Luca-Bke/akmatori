@@ -56,23 +56,6 @@ func newTestTool(t *testing.T, handler http.HandlerFunc) (*VictoriaMetricsTool, 
 	return tool, server, counter
 }
 
-// newTestToolWithConfig creates a tool with a specific VMConfig pre-populated.
-func newTestToolWithConfig(t *testing.T, config *VMConfig, handler http.HandlerFunc) (*VictoriaMetricsTool, *httptest.Server) {
-	t.Helper()
-	server := httptest.NewServer(handler)
-	config.URL = server.URL
-
-	tool := NewVictoriaMetricsTool(testLogger(), nil)
-	tool.configCache.Set(configCacheKey("test-incident"), config)
-
-	t.Cleanup(func() {
-		tool.Stop()
-		server.Close()
-	})
-
-	return tool, server
-}
-
 // successResponse builds a valid Prometheus-format JSON response body.
 func successResponse(data interface{}) string {
 	dataJSON, _ := json.Marshal(data)
@@ -268,24 +251,6 @@ func TestStop(t *testing.T) {
 	tool.Stop()
 }
 
-func TestClearCache(t *testing.T) {
-	logger := testLogger()
-	tool := NewVictoriaMetricsTool(logger, nil)
-	defer tool.Stop()
-
-	tool.configCache.Set("key1", "val1")
-	tool.responseCache.Set("key2", "val2")
-
-	tool.ClearCache()
-
-	if _, ok := tool.configCache.Get("key1"); ok {
-		t.Error("expected configCache to be cleared")
-	}
-	if _, ok := tool.responseCache.Get("key2"); ok {
-		t.Error("expected responseCache to be cleared")
-	}
-}
-
 // --- Unit tests for getConfig ---
 
 func TestGetConfig_CacheHit(t *testing.T) {
@@ -338,27 +303,6 @@ func TestGetConfig_CacheHitByInstanceID(t *testing.T) {
 	}
 }
 
-func TestGetConfig_Defaults(t *testing.T) {
-	tool := NewVictoriaMetricsTool(testLogger(), nil)
-	defer tool.Stop()
-
-	// Create a VMConfig with defaults and verify the defaults
-	config := &VMConfig{
-		AuthMethod: "bearer_token",
-		VerifySSL:  true,
-		Timeout:    30,
-	}
-
-	if config.AuthMethod != "bearer_token" {
-		t.Errorf("expected default AuthMethod 'bearer_token', got %q", config.AuthMethod)
-	}
-	if !config.VerifySSL {
-		t.Error("expected default VerifySSL to be true")
-	}
-	if config.Timeout != 30 {
-		t.Errorf("expected default Timeout 30, got %d", config.Timeout)
-	}
-}
 
 // --- Auth header injection tests ---
 
@@ -1241,53 +1185,6 @@ func TestCachedRequest_EmptyURL(t *testing.T) {
 	}
 }
 
-// --- VMConfig struct tests ---
-
-func TestVMConfig_AuthMethods(t *testing.T) {
-	tests := []struct {
-		name       string
-		authMethod string
-	}{
-		{"none", "none"},
-		{"bearer_token", "bearer_token"},
-		{"basic_auth", "basic_auth"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &VMConfig{
-				URL:        "https://vm.example.com",
-				AuthMethod: tt.authMethod,
-			}
-			if config.AuthMethod != tt.authMethod {
-				t.Errorf("expected AuthMethod %q, got %q", tt.authMethod, config.AuthMethod)
-			}
-		})
-	}
-}
-
-func TestVMConfig_ProxySettings(t *testing.T) {
-	config := &VMConfig{
-		URL:      "https://vm.example.com",
-		UseProxy: true,
-		ProxyURL: "http://proxy.example.com:8080",
-	}
-	if !config.UseProxy {
-		t.Error("expected UseProxy to be true")
-	}
-	if config.ProxyURL != "http://proxy.example.com:8080" {
-		t.Errorf("expected ProxyURL, got %q", config.ProxyURL)
-	}
-
-	noProxyConfig := &VMConfig{
-		URL:      "https://vm.example.com",
-		UseProxy: false,
-	}
-	if noProxyConfig.UseProxy {
-		t.Error("expected UseProxy to be false")
-	}
-}
-
 // --- Series with optional params ---
 
 func TestSeries_WithStartAndEnd(t *testing.T) {
@@ -1317,56 +1214,6 @@ func TestSeries_WithStartAndEnd(t *testing.T) {
 }
 
 // --- doRequest proxy and SSL tests ---
-
-func TestDoRequest_ProxyConfiguration(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"status":"success","data":"ok"}`)
-	}))
-	defer server.Close()
-
-	tool := NewVictoriaMetricsTool(testLogger(), nil)
-	defer tool.Stop()
-
-	config := &VMConfig{
-		URL:        server.URL,
-		AuthMethod: "none",
-		Timeout:    5,
-		UseProxy:   true,
-		ProxyURL:   "http://127.0.0.1:9999", // Won't actually be used since server is direct
-	}
-
-	// The proxy is set but since we're hitting localhost directly, request still works
-	// This tests the proxy URL parsing code path
-	_, err := tool.doRequest(context.Background(), config, http.MethodGet, "/test", nil)
-	// May fail due to proxy, but the important thing is the code path is exercised
-	_ = err
-}
-
-func TestDoRequest_InvalidProxyURL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"status":"success","data":"ok"}`)
-	}))
-	defer server.Close()
-
-	tool := NewVictoriaMetricsTool(testLogger(), nil)
-	defer tool.Stop()
-
-	config := &VMConfig{
-		URL:        server.URL,
-		AuthMethod: "none",
-		Timeout:    5,
-		UseProxy:   true,
-		ProxyURL:   "://invalid-url",
-	}
-
-	// Should still make request (proxy URL parse fails, proceeds without proxy)
-	_, err := tool.doRequest(context.Background(), config, http.MethodGet, "/test", nil)
-	if err != nil {
-		t.Fatalf("expected request to succeed with invalid proxy (should fall back), got %v", err)
-	}
-}
 
 func TestDoRequest_SSLVerifyDisabled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1458,23 +1305,63 @@ func TestAPIRequest_EmptyURL(t *testing.T) {
 	}
 }
 
-// --- Cache TTL constants ---
+// --- APIRequest security validation tests ---
 
-func TestCacheTTLConstants(t *testing.T) {
-	if ConfigCacheTTL != 5*time.Minute {
-		t.Errorf("expected ConfigCacheTTL 5m, got %v", ConfigCacheTTL)
+func TestAPIRequest_RejectsUnsupportedHTTPMethods(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"status":"success","data":"ok"}`)
+	})
+
+	for _, method := range []string{"DELETE", "PUT", "PATCH"} {
+		_, err := tool.APIRequest(context.Background(), "test-incident", map[string]interface{}{
+			"path":   "/api/v1/query",
+			"method": method,
+		})
+		if err == nil {
+			t.Errorf("expected error for HTTP method %s", method)
+		}
+		if err != nil && !strings.Contains(err.Error(), "unsupported HTTP method") {
+			t.Errorf("expected unsupported method error for %s, got %q", method, err.Error())
+		}
 	}
-	if InstantQueryTTL != 15*time.Second {
-		t.Errorf("expected InstantQueryTTL 15s, got %v", InstantQueryTTL)
+}
+
+func TestAPIRequest_AllowsGETAndPOST(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"status":"success","data":"ok"}`)
+	})
+
+	for _, method := range []string{"GET", "POST", "get", "post"} {
+		_, err := tool.APIRequest(context.Background(), "test-incident", map[string]interface{}{
+			"path":   "/api/v1/query",
+			"method": method,
+		})
+		if err != nil {
+			t.Errorf("expected no error for HTTP method %s, got %v", method, err)
+		}
 	}
-	if RangeQueryTTL != 30*time.Second {
-		t.Errorf("expected RangeQueryTTL 30s, got %v", RangeQueryTTL)
+}
+
+func TestAPIRequest_RejectsPathTraversal(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"status":"success","data":"ok"}`)
+	})
+
+	badPaths := []string{
+		"../etc/passwd",
+		"/api/v1/../../../secret",
+		"relative/path",
 	}
-	if LabelValuesTTL != 60*time.Second {
-		t.Errorf("expected LabelValuesTTL 60s, got %v", LabelValuesTTL)
-	}
-	if SeriesTTL != 30*time.Second {
-		t.Errorf("expected SeriesTTL 30s, got %v", SeriesTTL)
+	for _, path := range badPaths {
+		_, err := tool.APIRequest(context.Background(), "test-incident", map[string]interface{}{
+			"path": path,
+		})
+		if err == nil {
+			t.Errorf("expected error for path %q", path)
+		}
 	}
 }
 

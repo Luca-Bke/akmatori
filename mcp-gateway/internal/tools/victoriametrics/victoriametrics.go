@@ -39,8 +39,6 @@ type VMConfig struct {
 	Password   string
 	VerifySSL  bool
 	Timeout    int
-	UseProxy   bool
-	ProxyURL   string
 }
 
 // VictoriaMetricsTool handles VictoriaMetrics API operations
@@ -180,20 +178,9 @@ func (t *VictoriaMetricsTool) doRequest(ctx context.Context, config *VMConfig, m
 
 	t.logger.Printf("VictoriaMetrics API call: %s %s", method, path)
 
-	// Create HTTP transport with explicit proxy configuration
-	transport := &http.Transport{}
-
-	if config.UseProxy && config.ProxyURL != "" {
-		proxyURL, err := url.Parse(config.ProxyURL)
-		if err != nil {
-			t.logger.Printf("Invalid proxy URL %s: %v, proceeding without proxy", config.ProxyURL, err)
-			transport.Proxy = nil
-		} else {
-			transport.Proxy = http.ProxyURL(proxyURL)
-			t.logger.Printf("VictoriaMetrics using proxy: %s", config.ProxyURL)
-		}
-	} else {
-		transport.Proxy = nil
+	// Create HTTP transport
+	transport := &http.Transport{
+		Proxy: nil,
 	}
 
 	if !config.VerifySSL {
@@ -239,7 +226,8 @@ func (t *VictoriaMetricsTool) doRequest(ctx context.Context, config *VMConfig, m
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	const maxResponseBytes = 50 * 1024 * 1024 // 50 MB
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -446,9 +434,17 @@ func (t *VictoriaMetricsTool) APIRequest(ctx context.Context, incidentID string,
 		return "", fmt.Errorf("path is required")
 	}
 
+	if !strings.HasPrefix(path, "/") || strings.Contains(path, "..") {
+		return "", fmt.Errorf("invalid path: must start with / and not contain '..'")
+	}
+
 	method := http.MethodGet
 	if m, ok := args["method"].(string); ok && m != "" {
 		method = strings.ToUpper(m)
+	}
+
+	if method != http.MethodGet && method != http.MethodPost {
+		return "", fmt.Errorf("unsupported HTTP method: %s (allowed: GET, POST)", method)
 	}
 
 	params := url.Values{}
@@ -481,11 +477,4 @@ func (t *VictoriaMetricsTool) APIRequest(ctx context.Context, incidentID string,
 	}
 
 	return string(data), nil
-}
-
-// ClearCache clears all caches
-func (t *VictoriaMetricsTool) ClearCache() {
-	t.configCache.Clear()
-	t.responseCache.Clear()
-	t.logger.Println("All caches cleared")
 }

@@ -152,7 +152,7 @@ describe("Python tool wrappers", () => {
       const content = readFileSync(resolve(TOOLS_DIR, "victoriametrics/__init__.py"), "utf-8");
       const match = content.match(/def series\([^)]*\)/s);
       expect(match).not.toBeNull();
-      expect(match![0]).toContain("match: list");
+      expect(match![0]).toContain("match: str");
     });
   });
 

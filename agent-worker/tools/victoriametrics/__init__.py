@@ -9,7 +9,7 @@ Usage:
     result = instant_query("up", tool_instance_id=1)
     result = range_query("rate(http_requests_total[5m])", start="2h", end="now", step="1m", tool_instance_id=1)
     result = label_values("__name__", tool_instance_id=1)
-    result = series(match=["up"], tool_instance_id=1)
+    result = series(match="up", tool_instance_id=1)
     result = api_request("/api/v1/status/tsdb", tool_instance_id=1)
 """
 
@@ -72,14 +72,14 @@ def range_query(query: str, start: str, end: str, step: str,
     return call("victoriametrics.range_query", args)
 
 
-def label_values(label_name: str, match: list = None, start: str = None,
+def label_values(label_name: str, match: str = None, start: str = None,
                  end: str = None, tool_instance_id: int = None) -> list:
     """
     Get label values from VictoriaMetrics.
 
     Args:
         label_name: Label name to get values for (e.g. "__name__", "job")
-        match: Optional list of series selectors to filter by
+        match: Optional series selector to filter by (e.g. 'up{job="prometheus"}')
         start: Optional start timestamp
         end: Optional end timestamp
         tool_instance_id: Optional tool instance ID for routing
@@ -99,13 +99,13 @@ def label_values(label_name: str, match: list = None, start: str = None,
     return call("victoriametrics.label_values", args)
 
 
-def series(match: list, start: str = None, end: str = None,
+def series(match: str, start: str = None, end: str = None,
            tool_instance_id: int = None) -> list:
     """
     Find series matching label selectors in VictoriaMetrics.
 
     Args:
-        match: List of series selectors (e.g. ["up", "process_start_time_seconds{job='prometheus'}"])
+        match: Series selector (e.g. "up" or "process_start_time_seconds{job='prometheus'}")
         start: Optional start timestamp
         end: Optional end timestamp
         tool_instance_id: Optional tool instance ID for routing
