@@ -304,17 +304,20 @@ func (t *ZabbixTool) doRequest(ctx context.Context, config *ZabbixConfig, method
 	t.logger.Printf("Zabbix API call: %s", method)
 
 	// Create HTTP transport with explicit proxy configuration
-	transport := &http.Transport{}
+	// DisableKeepAlives prevents connection pool leakage since we create a new transport per request
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+	}
 
 	// Handle proxy settings - MUST explicitly set Proxy to prevent env var usage
 	if config.UseProxy && config.ProxyURL != "" {
 		proxyURL, err := url.Parse(config.ProxyURL)
 		if err != nil {
-			t.logger.Printf("Invalid proxy URL %s: %v, proceeding without proxy", config.ProxyURL, err)
+			t.logger.Printf("Invalid proxy URL: %v, proceeding without proxy", err)
 			transport.Proxy = nil
 		} else {
 			transport.Proxy = http.ProxyURL(proxyURL)
-			t.logger.Printf("Zabbix using proxy: %s", config.ProxyURL)
+			t.logger.Printf("Zabbix using proxy: %s", proxyURL.Host)
 		}
 	} else {
 		// Explicitly disable proxy (ignore HTTP_PROXY env vars)
