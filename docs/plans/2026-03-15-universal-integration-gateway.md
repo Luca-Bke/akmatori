@@ -298,16 +298,16 @@ Build a lazy connection pool for external MCP servers.
 - Create: `mcp-gateway/internal/mcpproxy/pool.go` — connection pool manager
 - Create: `mcp-gateway/internal/mcpproxy/pool_test.go` — tests
 
-- [ ] Define `MCPConnectionPool` struct: map of `instanceID → *MCPConnection` (thread-safe)
-- [ ] `GetOrConnect(ctx, instanceID, config)` — return existing connection or establish new one
-- [ ] Support SSE transport: HTTP client connecting to external MCP server's SSE endpoint
-- [ ] Support stdio transport: spawn subprocess, communicate via stdin/stdout
-- [ ] Idle timeout: 5 minutes, background goroutine closes idle connections
-- [ ] On connect, fetch `tools/list` from external server, cache tool schemas
-- [ ] Connection health check with automatic reconnect on failure
-- [ ] `Close(instanceID)` for manual connection teardown
-- [ ] Write tests: lazy connection, reuse existing, idle cleanup, reconnect on failure
-- [ ] Run `make test-mcp` — must pass before task 4.2
+- [x] Define `MCPConnectionPool` struct: map of `instanceID → *MCPConnection` (thread-safe)
+- [x] `GetOrConnect(ctx, instanceID, config)` — return existing connection or establish new one
+- [x] Support SSE transport: HTTP client connecting to external MCP server's SSE endpoint
+- [x] Support stdio transport: spawn subprocess, communicate via stdin/stdout
+- [x] Idle timeout: 5 minutes, background goroutine closes idle connections
+- [x] On connect, fetch `tools/list` from external server, cache tool schemas
+- [x] Connection health check with automatic reconnect on failure
+- [x] `Close(instanceID)` for manual connection teardown
+- [x] Write tests: lazy connection, reuse existing, idle cleanup, reconnect on failure
+- [x] Run `make test-mcp` — must pass before task 4.2
 
 ### Task 4.2: Define MCP server registration model
 
