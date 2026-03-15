@@ -668,6 +668,7 @@ func TestTableNames(t *testing.T) {
 		{IncidentAlert{}, "incident_alerts"},
 		{IncidentMerge{}, "incident_merges"},
 		{AggregationSettings{}, "aggregation_settings"},
+		{HTTPConnector{}, "http_connectors"},
 	}
 
 	for _, tt := range tests {

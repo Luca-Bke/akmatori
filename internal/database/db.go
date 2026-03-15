@@ -105,6 +105,7 @@ func AutoMigrate() error {
 		&AggregationSettings{},
 		&GeneralSettings{},
 		&Runbook{},
+		&HTTPConnector{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)

@@ -225,12 +225,12 @@ Create database model for declarative HTTP connector definitions.
 - Modify: `internal/database/models_skills.go` — add `HTTPConnector` model
 - Create: `internal/database/migrations/add_http_connectors.go` — migration
 
-- [ ] Define `HTTPConnector` model: `ID`, `ToolTypeName` (string, unique), `AuthConfig` (JSONB: method, token_field, header_name), `BaseURLField` (string), `Tools` (JSONB: array of tool definitions with name, method, path, params)
-- [ ] Each tool definition: `name`, `http_method` (GET/POST/PUT/DELETE), `path` (with `{{param}}` templates), `params` (array with name, type, required, in: path/query/body/header, default), `read_only` (bool, default true)
-- [ ] Add migration to create `http_connectors` table
-- [ ] Add GORM AutoMigrate for HTTPConnector
-- [ ] Write tests for model validation (valid connector, missing fields, duplicate tool names)
-- [ ] Run `make test` — must pass before task 3.2
+- [x] Define `HTTPConnector` model: `ID`, `ToolTypeName` (string, unique), `AuthConfig` (JSONB: method, token_field, header_name), `BaseURLField` (string), `Tools` (JSONB: array of tool definitions with name, method, path, params)
+- [x] Each tool definition: `name`, `http_method` (GET/POST/PUT/DELETE), `path` (with `{{param}}` templates), `params` (array with name, type, required, in: path/query/body/header, default), `read_only` (bool, default true)
+- [x] Add migration to create `http_connectors` table
+- [x] Add GORM AutoMigrate for HTTPConnector
+- [x] Write tests for model validation (valid connector, missing fields, duplicate tool names)
+- [x] Run `make test` — must pass before task 3.2
 
 ### Task 3.2: Build generic HTTP executor in MCP Gateway
 
