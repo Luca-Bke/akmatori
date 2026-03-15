@@ -116,16 +116,16 @@ Register `execute_script` tool that runs agent-written scripts in an isolated ru
 - Modify: `agent-worker/src/gateway-tools.ts` — add execute_script tool definition
 - Create: `agent-worker/src/script-executor.test.ts` — tests
 
-- [ ] Implement `ScriptExecutor` class using Node.js `vm` module (or `vm2`/`isolated-vm` if security requires)
-- [ ] Create execution context with injected globals: `gateway_call(toolName, args, instance?)` as async function, `search_tools()`, `get_tool_detail()`
-- [ ] Inject `console.log()` that captures output for return value
-- [ ] Support both `return` value and stdout capture as script output
-- [ ] Enforce 5-minute timeout via `vm.Script` timeout option
-- [ ] Provide `fs` access scoped to incident workspace directory only
-- [ ] Define `execute_script` tool schema: params `code` (string, required)
-- [ ] Register in agent-runner alongside other gateway tools
-- [ ] Write tests: basic script execution, gateway_call within script, timeout enforcement, return value capture, error handling
-- [ ] Run `make test-agent` — must pass before task 1.7
+- [x] Implement `ScriptExecutor` class using Node.js `vm` module (or `vm2`/`isolated-vm` if security requires)
+- [x] Create execution context with injected globals: `gateway_call(toolName, args, instance?)` as async function, `search_tools()`, `get_tool_detail()`
+- [x] Inject `console.log()` that captures output for return value
+- [x] Support both `return` value and stdout capture as script output
+- [x] Enforce 5-minute timeout via `vm.Script` timeout option
+- [x] Provide `fs` access scoped to incident workspace directory only
+- [x] Define `execute_script` tool schema: params `code` (string, required)
+- [x] Register in agent-runner alongside other gateway tools
+- [x] Write tests: basic script execution, gateway_call within script, timeout enforcement, return value capture, error handling
+- [x] Run `make test-agent` — must pass before task 1.7
 
 ### Task 1.7: Update SKILL.md generation for new tool system
 

@@ -1,0 +1,347 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ScriptExecutor, type ScriptExecutorOptions } from "../src/script-executor.js";
+import type { GatewayClient, CallResult } from "../src/gateway-client.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+
+// ---------------------------------------------------------------------------
+// Mock GatewayClient
+// ---------------------------------------------------------------------------
+
+function createMockClient(overrides?: Partial<GatewayClient>): GatewayClient {
+  return {
+    call: vi.fn(async (_toolName: string, _args?: Record<string, unknown>, _instance?: string) => ({
+      data: { status: "ok", result: "mock-result" },
+    } as CallResult)),
+    searchTools: vi.fn(async () => ({
+      tools: [
+        { name: "ssh.execute_command", description: "Execute SSH", instances: [{ id: 1, logical_name: "prod-ssh" }] },
+      ],
+    })),
+    getToolDetail: vi.fn(async () => ({
+      name: "ssh.execute_command",
+      description: "Execute SSH command",
+      params: { command: { type: "string" } },
+      instances: [{ id: 1, logical_name: "prod-ssh" }],
+    })),
+    ...overrides,
+  } as unknown as GatewayClient;
+}
+
+// ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+let tmpDir: string;
+
+function createExecutor(
+  clientOverrides?: Partial<GatewayClient>,
+  opts?: Partial<ScriptExecutorOptions>,
+): { executor: ScriptExecutor; client: GatewayClient } {
+  const client = createMockClient(clientOverrides);
+  const executor = new ScriptExecutor({
+    client,
+    workDir: tmpDir,
+    ...opts,
+  });
+  return { executor, client };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("ScriptExecutor", () => {
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "script-exec-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe("basic script execution", () => {
+    it("should execute simple return value", async () => {
+      const { executor } = createExecutor();
+      const result = await executor.execute('return 42');
+      expect(result.output).toBe("42");
+    });
+
+    it("should execute and return string", async () => {
+      const { executor } = createExecutor();
+      const result = await executor.execute('return "hello world"');
+      expect(result.output).toBe("hello world");
+    });
+
+    it("should return JSON for object return values", async () => {
+      const { executor } = createExecutor();
+      const result = await executor.execute('return { a: 1, b: "two" }');
+      const parsed = JSON.parse(result.output);
+      expect(parsed.a).toBe(1);
+      expect(parsed.b).toBe("two");
+    });
+
+    it("should capture console.log output when no return value", async () => {
+      const { executor } = createExecutor();
+      const result = await executor.execute('console.log("line 1"); console.log("line 2");');
+      expect(result.output).toBe("line 1\nline 2");
+      expect(result.logs).toEqual(["line 1", "line 2"]);
+    });
+
+    it("should capture console.warn and console.error", async () => {
+      const { executor } = createExecutor();
+      const result = await executor.execute('console.warn("warning"); console.error("error");');
+      expect(result.logs).toEqual(["[warn] warning", "[error] error"]);
+    });
+
+    it("should return '(no output)' for empty scripts", async () => {
+      const { executor } = createExecutor();
+      const result = await executor.execute('const x = 1;');
+      expect(result.output).toBe("(no output)");
+    });
+
+    it("should support top-level await", async () => {
+      const { executor } = createExecutor();
+      const result = await executor.execute('const x = await Promise.resolve(99); return x;');
+      expect(result.output).toBe("99");
+    });
+  });
+
+  describe("gateway_call within script", () => {
+    it("should call gateway_call and return result", async () => {
+      const { executor, client } = createExecutor({
+        call: vi.fn(async () => ({ data: { uptime: "42 days" } })) as any,
+      });
+
+      const result = await executor.execute(
+        'const r = await gateway_call("ssh.execute_command", { command: "uptime" }, "prod-ssh"); return r;',
+      );
+
+      expect(client.call).toHaveBeenCalledWith(
+        "ssh.execute_command",
+        { command: "uptime" },
+        "prod-ssh",
+      );
+      const parsed = JSON.parse(result.output);
+      expect(parsed.uptime).toBe("42 days");
+    });
+
+    it("should call gateway_call without instance", async () => {
+      const { executor, client } = createExecutor();
+
+      await executor.execute(
+        'await gateway_call("zabbix.get_problems", { severity_min: 3 });',
+      );
+
+      expect(client.call).toHaveBeenCalledWith(
+        "zabbix.get_problems",
+        { severity_min: 3 },
+        undefined,
+      );
+    });
+
+    it("should handle multiple gateway_call invocations", async () => {
+      let callCount = 0;
+      const { executor, client } = createExecutor({
+        call: vi.fn(async (name: string) => {
+          callCount++;
+          return { data: { call: callCount, tool: name } };
+        }) as any,
+      });
+
+      const result = await executor.execute(`
+        const r1 = await gateway_call("ssh.execute_command", { command: "uptime" });
+        const r2 = await gateway_call("zabbix.get_problems", { severity_min: 3 });
+        return [r1, r2];
+      `);
+
+      expect(client.call).toHaveBeenCalledTimes(2);
+      const parsed = JSON.parse(result.output);
+      expect(parsed).toHaveLength(2);
+      expect(parsed[0].call).toBe(1);
+      expect(parsed[1].call).toBe(2);
+    });
+  });
+
+  describe("search_tools and get_tool_detail within script", () => {
+    it("should call search_tools", async () => {
+      const { executor, client } = createExecutor();
+
+      const result = await executor.execute(
+        'const tools = await search_tools("ssh"); return tools;',
+      );
+
+      expect(client.searchTools).toHaveBeenCalledWith("ssh", undefined);
+      const parsed = JSON.parse(result.output);
+      expect(parsed.tools).toHaveLength(1);
+      expect(parsed.tools[0].name).toBe("ssh.execute_command");
+    });
+
+    it("should call search_tools with tool_type", async () => {
+      const { executor, client } = createExecutor();
+
+      await executor.execute(
+        'await search_tools("metrics", "victoriametrics");',
+      );
+
+      expect(client.searchTools).toHaveBeenCalledWith("metrics", "victoriametrics");
+    });
+
+    it("should call get_tool_detail", async () => {
+      const { executor, client } = createExecutor();
+
+      const result = await executor.execute(
+        'const detail = await get_tool_detail("ssh.execute_command"); return detail;',
+      );
+
+      expect(client.getToolDetail).toHaveBeenCalledWith("ssh.execute_command");
+      const parsed = JSON.parse(result.output);
+      expect(parsed.name).toBe("ssh.execute_command");
+    });
+  });
+
+  describe("scoped filesystem access", () => {
+    it("should write and read files within workDir", async () => {
+      const { executor } = createExecutor();
+
+      const result = await executor.execute(`
+        fs.writeFileSync("test-output.txt", "hello from script");
+        return fs.readFileSync("test-output.txt");
+      `);
+
+      expect(result.output).toBe("hello from script");
+      // Verify file actually exists on disk
+      expect(fs.existsSync(path.join(tmpDir, "test-output.txt"))).toBe(true);
+    });
+
+    it("should support existsSync", async () => {
+      const { executor } = createExecutor();
+      fs.writeFileSync(path.join(tmpDir, "existing.txt"), "data");
+
+      const result = await executor.execute(`
+        return { exists: fs.existsSync("existing.txt"), missing: fs.existsSync("nope.txt") };
+      `);
+
+      const parsed = JSON.parse(result.output);
+      expect(parsed.exists).toBe(true);
+      expect(parsed.missing).toBe(false);
+    });
+
+    it("should support readdirSync", async () => {
+      const { executor } = createExecutor();
+      fs.writeFileSync(path.join(tmpDir, "a.txt"), "a");
+      fs.writeFileSync(path.join(tmpDir, "b.txt"), "b");
+
+      const result = await executor.execute('return fs.readdirSync(".");');
+      const parsed = JSON.parse(result.output);
+      expect(parsed).toContain("a.txt");
+      expect(parsed).toContain("b.txt");
+    });
+
+    it("should support mkdirSync with recursive", async () => {
+      const { executor } = createExecutor();
+
+      await executor.execute('fs.mkdirSync("sub/dir", { recursive: true });');
+      expect(fs.existsSync(path.join(tmpDir, "sub/dir"))).toBe(true);
+    });
+
+    it("should auto-create parent directories for writeFileSync", async () => {
+      const { executor } = createExecutor();
+
+      await executor.execute('fs.writeFileSync("deep/nested/file.txt", "deep data");');
+      expect(fs.readFileSync(path.join(tmpDir, "deep/nested/file.txt"), "utf-8")).toBe("deep data");
+    });
+
+    it("should deny access outside workDir", async () => {
+      const { executor } = createExecutor();
+
+      await expect(
+        executor.execute('fs.readFileSync("../../etc/passwd");'),
+      ).rejects.toThrow("outside workspace");
+    });
+
+    it("should deny absolute paths outside workDir", async () => {
+      const { executor } = createExecutor();
+
+      await expect(
+        executor.execute('fs.readFileSync("/etc/passwd");'),
+      ).rejects.toThrow("outside workspace");
+    });
+  });
+
+  describe("timeout enforcement", () => {
+    it("should timeout long-running scripts", async () => {
+      const { executor } = createExecutor({}, { timeoutMs: 200 });
+
+      await expect(
+        executor.execute('await new Promise(resolve => setTimeout(resolve, 5000)); return "done";'),
+      ).rejects.toThrow("timed out");
+    }, 10_000);
+  });
+
+  describe("error handling", () => {
+    it("should throw on syntax errors", async () => {
+      const { executor } = createExecutor();
+
+      await expect(
+        executor.execute('return {{{'),
+      ).rejects.toThrow("Script compilation error");
+    });
+
+    it("should throw on runtime errors", async () => {
+      const { executor } = createExecutor();
+
+      await expect(
+        executor.execute('throw new Error("custom error");'),
+      ).rejects.toThrow("Script execution error: custom error");
+    });
+
+    it("should throw on gateway_call errors within script", async () => {
+      const { executor } = createExecutor({
+        call: vi.fn(async () => { throw new Error("Connection refused"); }) as any,
+      });
+
+      await expect(
+        executor.execute('await gateway_call("ssh.execute_command", { command: "uptime" });'),
+      ).rejects.toThrow("Connection refused");
+    });
+
+    it("should propagate undefined variable errors", async () => {
+      const { executor } = createExecutor();
+
+      await expect(
+        executor.execute('return undefinedVariable.foo;'),
+      ).rejects.toThrow("Script execution error");
+    });
+  });
+
+  describe("return value vs console output", () => {
+    it("should prefer return value over console output", async () => {
+      const { executor } = createExecutor();
+
+      const result = await executor.execute(`
+        console.log("log line");
+        return "return value";
+      `);
+
+      expect(result.output).toBe("return value");
+      expect(result.logs).toEqual(["log line"]);
+    });
+
+    it("should return array values as JSON", async () => {
+      const { executor } = createExecutor();
+
+      const result = await executor.execute('return [1, 2, 3];');
+      expect(JSON.parse(result.output)).toEqual([1, 2, 3]);
+    });
+
+    it("should handle null return", async () => {
+      const { executor } = createExecutor();
+
+      const result = await executor.execute('console.log("only log"); return null;');
+      // null return → falls through to logs
+      expect(result.output).toBe("only log");
+    });
+  });
+});

@@ -8,6 +8,7 @@
 
 import { Type, type TSchema, type Static } from "@sinclair/typebox";
 import type { GatewayClient, CallResult, SearchToolsResult, ToolDetailResult } from "./gateway-client.js";
+import { ScriptExecutor } from "./script-executor.js";
 
 // Re-export the ToolDefinition type from pi-coding-agent for convenience.
 // We define our own compatible interface to avoid tight coupling with the
@@ -50,6 +51,16 @@ export const GetToolDetailParams = Type.Object({
 });
 
 export type GetToolDetailInput = Static<typeof GetToolDetailParams>;
+
+// ---------------------------------------------------------------------------
+// execute_script tool schema
+// ---------------------------------------------------------------------------
+
+export const ExecuteScriptParams = Type.Object({
+  code: Type.String({ description: "JavaScript code to execute. Has access to gateway_call(), search_tools(), get_tool_detail(), console.log(), and a scoped fs object. Top-level await is supported." }),
+});
+
+export type ExecuteScriptInput = Static<typeof ExecuteScriptParams>;
 
 // ---------------------------------------------------------------------------
 // Tool definition factory
@@ -202,6 +213,72 @@ export function createGetToolDetailTool(ctx: GatewayToolContext) {
         );
 
         const text = JSON.stringify(result, null, 2);
+        return {
+          content: [{ type: "text" as const, text }],
+          details: {},
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `Error: ${message}` }],
+          details: {},
+        };
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// execute_script tool factory
+// ---------------------------------------------------------------------------
+
+export interface ExecuteScriptToolContext {
+  client: GatewayClient;
+  workDir: string;
+}
+
+/**
+ * Create the `execute_script` tool definition for registration with pi-mono.
+ *
+ * Runs agent-written JavaScript in an isolated vm context with built-in
+ * gateway_call(), search_tools(), and get_tool_detail() functions.
+ */
+export function createExecuteScriptTool(ctx: ExecuteScriptToolContext) {
+  const executor = new ScriptExecutor({
+    client: ctx.client,
+    workDir: ctx.workDir,
+  });
+
+  return {
+    name: "execute_script",
+    label: "Execute Script",
+    description:
+      "Execute a JavaScript script in an isolated runtime with built-in gateway functions. " +
+      "Use this for batch operations, complex data processing, or orchestrating multiple tool calls. " +
+      "The script has access to gateway_call(), search_tools(), get_tool_detail(), console.log(), and a scoped fs object.",
+    promptGuidelines: [
+      "Use execute_script for batch operations that require multiple gateway_call invocations or data processing.",
+      "Top-level await is supported. The script runs in an async context.",
+      "Example: execute_script({ code: `const hosts = await gateway_call(\"zabbix.get_hosts\", {}); return hosts;` })",
+      "Example: execute_script({ code: `const results = []; for (const h of [\"web-01\",\"web-02\"]) { results.push(await gateway_call(\"ssh.execute_command\", {command: \"uptime\", servers: [h]}, \"prod-ssh\")); } return results;` })",
+      "The script has scoped fs access (readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync) within the incident workspace.",
+      "Scripts time out after 5 minutes.",
+    ],
+    parameters: ExecuteScriptParams,
+    execute: async (
+      _toolCallId: string,
+      params: ExecuteScriptInput,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+    ) => {
+      try {
+        const result = await executor.execute(params.code);
+
+        let text = result.output;
+        if (result.logs.length > 0 && result.output !== result.logs.join("\n")) {
+          text += `\n\n--- Console Output ---\n${result.logs.join("\n")}`;
+        }
+
         return {
           content: [{ type: "text" as const, text }],
           details: {},

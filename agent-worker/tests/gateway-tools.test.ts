@@ -1,16 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createGatewayCallTool,
   createSearchToolsTool,
   createGetToolDetailTool,
+  createExecuteScriptTool,
   GatewayCallParams,
   SearchToolsParams,
   GetToolDetailParams,
+  ExecuteScriptParams,
   type GatewayCallInput,
   type SearchToolsInput,
   type GetToolDetailInput,
+  type ExecuteScriptInput,
 } from "../src/gateway-tools.js";
 import type { GatewayClient, CallResult } from "../src/gateway-client.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 
 // ---------------------------------------------------------------------------
 // Mock GatewayClient
@@ -479,5 +485,132 @@ describe("createGetToolDetailTool", () => {
 describe("GetToolDetailParams schema", () => {
   it("should require tool_name as string", () => {
     expect(GetToolDetailParams.properties.tool_name.type).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// execute_script tool
+// ---------------------------------------------------------------------------
+
+describe("createExecuteScriptTool", () => {
+  let mockClient: GatewayClient;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    mockClient = createMockClient();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-script-tool-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe("tool definition", () => {
+    it("should have correct name and description", () => {
+      const tool = createExecuteScriptTool({ client: mockClient, workDir: tmpDir });
+
+      expect(tool.name).toBe("execute_script");
+      expect(tool.label).toBe("Execute Script");
+      expect(tool.description).toContain("isolated runtime");
+    });
+
+    it("should have correct parameter schema", () => {
+      const tool = createExecuteScriptTool({ client: mockClient, workDir: tmpDir });
+
+      expect(tool.parameters).toBe(ExecuteScriptParams);
+      expect(tool.parameters.properties.code).toBeDefined();
+    });
+
+    it("should have promptGuidelines", () => {
+      const tool = createExecuteScriptTool({ client: mockClient, workDir: tmpDir });
+
+      expect(tool.promptGuidelines).toBeDefined();
+      expect(Array.isArray(tool.promptGuidelines)).toBe(true);
+      expect(tool.promptGuidelines!.some((g: string) => g.includes("execute_script"))).toBe(true);
+    });
+  });
+
+  describe("execute handler", () => {
+    it("should execute script and return result", async () => {
+      const tool = createExecuteScriptTool({ client: mockClient, workDir: tmpDir });
+
+      const result = await tool.execute(
+        "tc-es1",
+        { code: 'return "hello from script"' },
+        undefined,
+        undefined,
+      );
+
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].type).toBe("text");
+      expect(result.content[0].text).toBe("hello from script");
+    });
+
+    it("should execute script with gateway_call", async () => {
+      const client = createMockClient({
+        call: vi.fn(async () => ({ data: { hosts: ["web-01"] } })) as any,
+      });
+      const tool = createExecuteScriptTool({ client, workDir: tmpDir });
+
+      const result = await tool.execute(
+        "tc-es2",
+        { code: 'const r = await gateway_call("zabbix.get_hosts", {}); return r;' },
+        undefined,
+        undefined,
+      );
+
+      expect(client.call).toHaveBeenCalledWith("zabbix.get_hosts", {}, undefined);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.hosts).toEqual(["web-01"]);
+    });
+
+    it("should include console output alongside return value", async () => {
+      const tool = createExecuteScriptTool({ client: mockClient, workDir: tmpDir });
+
+      const result = await tool.execute(
+        "tc-es3",
+        { code: 'console.log("debug info"); return "result value"' },
+        undefined,
+        undefined,
+      );
+
+      expect(result.content[0].text).toContain("result value");
+      expect(result.content[0].text).toContain("--- Console Output ---");
+      expect(result.content[0].text).toContain("debug info");
+    });
+
+    it("should handle script errors gracefully", async () => {
+      const tool = createExecuteScriptTool({ client: mockClient, workDir: tmpDir });
+
+      const result = await tool.execute(
+        "tc-es4",
+        { code: 'throw new Error("something broke")' },
+        undefined,
+        undefined,
+      );
+
+      expect(result.content[0].text).toContain("Error:");
+      expect(result.content[0].text).toContain("something broke");
+    });
+
+    it("should handle syntax errors gracefully", async () => {
+      const tool = createExecuteScriptTool({ client: mockClient, workDir: tmpDir });
+
+      const result = await tool.execute(
+        "tc-es5",
+        { code: 'return {{{' },
+        undefined,
+        undefined,
+      );
+
+      expect(result.content[0].text).toContain("Error:");
+      expect(result.content[0].text).toContain("compilation error");
+    });
+  });
+});
+
+describe("ExecuteScriptParams schema", () => {
+  it("should require code as string", () => {
+    expect(ExecuteScriptParams.properties.code.type).toBe("string");
   });
 });

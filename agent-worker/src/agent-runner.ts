@@ -27,7 +27,7 @@ import {
   type ToolExecutionTrace,
 } from "./tool-output-formatter.js";
 import { GatewayClient } from "./gateway-client.js";
-import { createGatewayCallTool, createSearchToolsTool, createGetToolDetailTool } from "./gateway-tools.js";
+import { createGatewayCallTool, createSearchToolsTool, createGetToolDetailTool, createExecuteScriptTool } from "./gateway-tools.js";
 
 // ---------------------------------------------------------------------------
 // Tool calling guidelines attached to the bash tool via promptGuidelines
@@ -46,6 +46,7 @@ import { createGatewayCallTool, createSearchToolsTool, createGetToolDetailTool }
 const BASH_TOOL_GUIDELINES = `\
 - You have access to infrastructure tools via Python wrappers. PYTHONPATH=/tools is pre-set.
 - PREFERRED: Use the gateway_call tool directly instead of Python wrappers when available. It is faster and does not require bash.
+- For batch operations across multiple hosts or complex data processing, use the execute_script tool. It runs JavaScript with built-in gateway_call(), search_tools(), and get_tool_detail() functions.
 - IMPORTANT: Each skill's SKILL.md lists assigned tools with their tool_instance_id/logical names and the exact call forms available. Read the SKILL.md first, then call tools using only the forms shown there. Do NOT explore the filesystem to discover tools.
 - Call tools with bash using python3 -c one-liners. SSH examples (check SKILL.md for which forms apply to your instance):
   python3 -c "from ssh import execute_command; print(execute_command('uptime', servers=['<hostname>'], tool_instance_id=<ID>))"
@@ -301,6 +302,10 @@ export class AgentRunner {
     const gatewayCallTool = createGatewayCallTool(gatewayToolCtx);
     const searchToolsTool = createSearchToolsTool(gatewayToolCtx);
     const getToolDetailTool = createGetToolDetailTool(gatewayToolCtx);
+    const executeScriptTool = createExecuteScriptTool({
+      client: gatewayClient,
+      workDir: params.workDir,
+    });
 
     const { session } = await createAgentSession({
       cwd: params.workDir,
@@ -309,7 +314,7 @@ export class AgentRunner {
       model,
       thinkingLevel,
       tools,
-      customTools: [gatewayCallTool, searchToolsTool, getToolDetailTool],
+      customTools: [gatewayCallTool, searchToolsTool, getToolDetailTool, executeScriptTool],
       resourceLoader,
       sessionManager,
       settingsManager,
