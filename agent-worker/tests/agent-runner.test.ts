@@ -445,12 +445,16 @@ describe("AgentRunner", () => {
       );
     });
 
-    it("should NOT pass customTools (Python wrappers used instead)", async () => {
+    it("should pass gateway_call as a customTool", async () => {
       const params = makeExecuteParams({ incidentId: "inc-tools" });
       await runner.execute(params);
 
       const opts = createAgentSessionCalls[0];
-      expect(opts.customTools).toBeUndefined();
+      expect(opts.customTools).toBeDefined();
+      expect(opts.customTools).toHaveLength(1);
+      expect(opts.customTools[0].name).toBe("gateway_call");
+      expect(opts.customTools[0].parameters).toBeDefined();
+      expect(typeof opts.customTools[0].execute).toBe("function");
     });
 
     it("should not pass appendSystemPrompt to DefaultResourceLoader", async () => {

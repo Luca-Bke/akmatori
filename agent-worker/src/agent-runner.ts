@@ -26,6 +26,8 @@ import {
   extractToolText,
   type ToolExecutionTrace,
 } from "./tool-output-formatter.js";
+import { GatewayClient } from "./gateway-client.js";
+import { createGatewayCallTool } from "./gateway-tools.js";
 
 // ---------------------------------------------------------------------------
 // Tool calling guidelines attached to the bash tool via promptGuidelines
@@ -43,7 +45,8 @@ import {
  */
 const BASH_TOOL_GUIDELINES = `\
 - You have access to infrastructure tools via Python wrappers. PYTHONPATH=/tools is pre-set.
-- IMPORTANT: Each skill's SKILL.md lists assigned tools with their tool_instance_id and the exact call forms available. Read the SKILL.md first, then call tools using only the forms shown there. Do NOT explore the filesystem to discover tools.
+- PREFERRED: Use the gateway_call tool directly instead of Python wrappers when available. It is faster and does not require bash.
+- IMPORTANT: Each skill's SKILL.md lists assigned tools with their tool_instance_id/logical names and the exact call forms available. Read the SKILL.md first, then call tools using only the forms shown there. Do NOT explore the filesystem to discover tools.
 - Call tools with bash using python3 -c one-liners. SSH examples (check SKILL.md for which forms apply to your instance):
   python3 -c "from ssh import execute_command; print(execute_command('uptime', servers=['<hostname>'], tool_instance_id=<ID>))"
   python3 -c "from ssh import test_connectivity; print(test_connectivity(servers=['<hostname>'], tool_instance_id=<ID>))"
@@ -288,6 +291,14 @@ export class AgentRunner {
       t.name === "bash" ? bashTool : t,
     );
 
+    // Create gateway client for this session and register gateway_call as a custom tool.
+    const gatewayClient = new GatewayClient({
+      gatewayUrl: this.mcpGatewayUrl,
+      incidentId: params.incidentId,
+      workDir: params.workDir,
+    });
+    const gatewayCallTool = createGatewayCallTool({ client: gatewayClient });
+
     const { session } = await createAgentSession({
       cwd: params.workDir,
       authStorage,
@@ -295,6 +306,7 @@ export class AgentRunner {
       model,
       thinkingLevel,
       tools,
+      customTools: [gatewayCallTool],
       resourceLoader,
       sessionManager,
       settingsManager,

@@ -85,13 +85,13 @@ Register `gateway_call` as a custom tool in the pi-mono coding agent, replacing 
 - Create: `agent-worker/src/gateway-tools.ts` — tool definitions and handlers for pi-mono extension
 - Modify: `agent-worker/src/agent-runner.ts` — register gateway tools via extension API, inject GatewayClient
 
-- [ ] Define `gateway_call` tool schema: params `tool_name` (string, required), `args` (object, required), `instance` (string, optional logical name)
-- [ ] Implement `gateway_call` handler: instantiate GatewayClient, call `client.call()`, return result (with output management)
-- [ ] Register tool via `ExtensionAPI.registerTool()` in agent-runner session setup
-- [ ] Pass `GatewayClient` instance to tool handler (created per-session with incidentId and workDir)
-- [ ] Update BASH_TOOL_GUIDELINES to mention `gateway_call` as the preferred tool invocation method
-- [ ] Write tests for tool registration and handler logic
-- [ ] Run `make test-agent` — must pass before task 1.5
+- [x] Define `gateway_call` tool schema: params `tool_name` (string, required), `args` (object, required), `instance` (string, optional logical name)
+- [x] Implement `gateway_call` handler: instantiate GatewayClient, call `client.call()`, return result (with output management)
+- [x] Register tool via `ExtensionAPI.registerTool()` in agent-runner session setup
+- [x] Pass `GatewayClient` instance to tool handler (created per-session with incidentId and workDir)
+- [x] Update BASH_TOOL_GUIDELINES to mention `gateway_call` as the preferred tool invocation method
+- [x] Write tests for tool registration and handler logic
+- [x] Run `make test-agent` — must pass before task 1.5
 
 ### Task 1.5: Register search_tools and get_tool_detail tools
 
