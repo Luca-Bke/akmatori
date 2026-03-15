@@ -122,7 +122,7 @@ func (t *VictoriaMetricsTool) getConfig(ctx context.Context, incidentID string, 
 	// Check cache first
 	if cached, ok := t.configCache.Get(cacheKey); ok {
 		if config, ok := cached.(*VMConfig); ok {
-			t.logger.Printf("Config cache hit for incident %s", incidentID)
+			t.logger.Printf("Config cache hit for key %s", cacheKey)
 			return config, nil
 		}
 	}
@@ -180,7 +180,7 @@ func (t *VictoriaMetricsTool) getConfig(ctx context.Context, incidentID string, 
 
 	// Cache the config
 	t.configCache.Set(cacheKey, config)
-	t.logger.Printf("Config cached for incident %s", incidentID)
+	t.logger.Printf("Config cached for key %s", cacheKey)
 
 	return config, nil
 }
@@ -243,7 +243,7 @@ func (t *VictoriaMetricsTool) doRequest(ctx context.Context, config *VMConfig, m
 	}
 
 	if !config.VerifySSL {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // User-opt-in via vm_verify_ssl setting
 	}
 
 	client := &http.Client{
