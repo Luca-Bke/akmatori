@@ -313,11 +313,11 @@ func (t *ZabbixTool) doRequest(ctx context.Context, config *ZabbixConfig, method
 	if config.UseProxy && config.ProxyURL != "" {
 		proxyURL, err := url.Parse(config.ProxyURL)
 		if err != nil {
-			t.logger.Printf("Invalid proxy URL %s: %v, proceeding without proxy", config.ProxyURL, err)
+			t.logger.Printf("Invalid proxy URL: %v, proceeding without proxy", err)
 			transport.Proxy = nil
 		} else {
 			transport.Proxy = http.ProxyURL(proxyURL)
-			t.logger.Printf("Zabbix using proxy: %s", config.ProxyURL)
+			t.logger.Printf("Zabbix using proxy: %s", proxyURL.Host)
 		}
 	} else {
 		// Explicitly disable proxy (ignore HTTP_PROXY env vars)

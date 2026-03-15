@@ -231,11 +231,11 @@ func (t *VictoriaMetricsTool) doRequest(ctx context.Context, config *VMConfig, m
 	if config.UseProxy && config.ProxyURL != "" {
 		proxyURL, err := url.Parse(config.ProxyURL)
 		if err != nil {
-			t.logger.Printf("Invalid proxy URL %s: %v, proceeding without proxy", config.ProxyURL, err)
+			t.logger.Printf("Invalid proxy URL: %v, proceeding without proxy", err)
 			transport.Proxy = nil
 		} else {
 			transport.Proxy = http.ProxyURL(proxyURL)
-			t.logger.Printf("VictoriaMetrics using proxy: %s", config.ProxyURL)
+			t.logger.Printf("VictoriaMetrics using proxy: %s", proxyURL.Host)
 		}
 	} else {
 		// Explicitly disable proxy (ignore HTTP_PROXY env vars)
@@ -289,7 +289,7 @@ func (t *VictoriaMetricsTool) doRequest(ctx context.Context, config *VMConfig, m
 	}
 	defer resp.Body.Close()
 
-	const maxResponseBytes = 50 * 1024 * 1024 // 50 MB
+	const maxResponseBytes = 5 * 1024 * 1024 // 5 MB
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
@@ -519,8 +519,19 @@ func (t *VictoriaMetricsTool) APIRequest(ctx context.Context, incidentID string,
 		return "", fmt.Errorf("path is required")
 	}
 
-	decodedPath, err := url.PathUnescape(path)
-	if err != nil || !strings.HasPrefix(decodedPath, "/") || strings.Contains(decodedPath, "..") {
+	// Decode path repeatedly until stable to prevent double-encoding bypass
+	decodedPath := path
+	for {
+		next, err := url.PathUnescape(decodedPath)
+		if err != nil {
+			return "", fmt.Errorf("invalid path: %w", err)
+		}
+		if next == decodedPath {
+			break
+		}
+		decodedPath = next
+	}
+	if !strings.HasPrefix(decodedPath, "/") || strings.Contains(decodedPath, "..") {
 		return "", fmt.Errorf("invalid path: must start with / and not contain '..'")
 	}
 	// Reject paths containing query strings or fragments to prevent URL manipulation
@@ -547,7 +558,7 @@ func (t *VictoriaMetricsTool) APIRequest(ctx context.Context, incidentID string,
 					params.Add(k, fmt.Sprintf("%v", item))
 				}
 			default:
-				params.Set(k, fmt.Sprintf("%v", v))
+				params.Set(k, fmt.Sprintf("%v", val))
 			}
 		}
 	}
