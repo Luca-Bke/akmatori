@@ -267,6 +267,32 @@ func GetToolInstanceByType(ctx context.Context, typeName string) (*ToolInstance,
 	return &instance, nil
 }
 
+// HTTPConnector represents a declarative HTTP connector definition (mirrors main app model)
+type HTTPConnector struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	ToolTypeName string    `gorm:"uniqueIndex;size:128;not null" json:"tool_type_name"`
+	Description  string    `gorm:"size:1024" json:"description"`
+	BaseURLField string    `gorm:"size:128;not null" json:"base_url_field"`
+	AuthConfig   JSONB     `gorm:"type:jsonb" json:"auth_config"`
+	Tools        JSONB     `gorm:"type:jsonb;not null" json:"tools"`
+	Enabled      bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (HTTPConnector) TableName() string {
+	return "http_connectors"
+}
+
+// GetAllEnabledHTTPConnectors returns all enabled HTTP connector definitions
+func GetAllEnabledHTTPConnectors(ctx context.Context) ([]HTTPConnector, error) {
+	var connectors []HTTPConnector
+	err := DB.WithContext(ctx).
+		Where("enabled = ?", true).
+		Find(&connectors).Error
+	return connectors, err
+}
+
 // ProxySettings stores HTTP proxy configuration with per-service toggles
 type ProxySettings struct {
 	ID                      uint      `gorm:"primaryKey" json:"id"`

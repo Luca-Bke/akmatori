@@ -259,13 +259,13 @@ Register HTTP connector tools in the gateway registry dynamically on startup and
 - Modify: `mcp-gateway/internal/tools/registry.go` — add `RegisterHTTPConnectors()` and `ReloadHTTPConnectors()`
 - Modify: `mcp-gateway/cmd/gateway/main.go` — call registration on startup
 
-- [ ] On startup, query all HTTPConnector definitions from database
-- [ ] For each connector, register tools with names `{connector.ToolTypeName}.{tool.Name}` (e.g., `internal-billing.get_invoice`)
-- [ ] Tool handlers delegate to HTTPConnectorExecutor with connector definition and resolved credentials
-- [ ] Add `ReloadHTTPConnectors()` to re-register after CRUD (called via API or signal)
-- [ ] Ensure discovery endpoints include HTTP connector tools in search/detail results
-- [ ] Write tests for dynamic registration and execution flow
-- [ ] Run `make test-mcp` — must pass before task 3.4
+- [x] On startup, query all HTTPConnector definitions from database
+- [x] For each connector, register tools with names `{connector.ToolTypeName}.{tool.Name}` (e.g., `internal-billing.get_invoice`)
+- [x] Tool handlers delegate to HTTPConnectorExecutor with connector definition and resolved credentials
+- [x] Add `ReloadHTTPConnectors()` to re-register after CRUD (called via API or signal)
+- [x] Ensure discovery endpoints include HTTP connector tools in search/detail results
+- [x] Write tests for dynamic registration and execution flow
+- [x] Run `make test-mcp` — must pass before task 3.4
 
 ### Task 3.4: Admin API and UI for HTTP connectors
 

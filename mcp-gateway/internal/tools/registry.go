@@ -2,12 +2,16 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/akmatori/mcp-gateway/internal/database"
 	"github.com/akmatori/mcp-gateway/internal/mcp"
 	"github.com/akmatori/mcp-gateway/internal/ratelimit"
+	"github.com/akmatori/mcp-gateway/internal/tools/httpconnector"
 	"github.com/akmatori/mcp-gateway/internal/tools/ssh"
 	"github.com/akmatori/mcp-gateway/internal/tools/victoriametrics"
 	"github.com/akmatori/mcp-gateway/internal/tools/zabbix"
@@ -29,6 +33,11 @@ type Registry struct {
 	zabbixLimit *ratelimit.Limiter
 	vmTool      *victoriametrics.VictoriaMetricsTool
 	vmLimit     *ratelimit.Limiter
+
+	// HTTP connector state
+	httpExecutor      *httpconnector.HTTPConnectorExecutor
+	httpConnectorTools []string // track registered tool names for reload cleanup
+	httpMu            sync.Mutex
 }
 
 // NewRegistry creates a new tool registry
@@ -70,6 +79,270 @@ func (r *Registry) Stop() {
 	}
 	if r.vmTool != nil {
 		r.vmTool.Stop()
+	}
+	if r.httpExecutor != nil {
+		r.httpExecutor.Stop()
+	}
+}
+
+// HTTPConnectorLoader is a function that loads enabled HTTP connectors from the database.
+// This abstraction allows tests to provide mock loaders without needing a real database.
+type HTTPConnectorLoader func(ctx context.Context) ([]database.HTTPConnector, error)
+
+// DefaultHTTPConnectorLoader loads connectors from the database.
+func DefaultHTTPConnectorLoader(ctx context.Context) ([]database.HTTPConnector, error) {
+	return database.GetAllEnabledHTTPConnectors(ctx)
+}
+
+// RegisterHTTPConnectors queries the database for enabled HTTP connector definitions
+// and registers their tools in the gateway registry.
+func (r *Registry) RegisterHTTPConnectors(loader HTTPConnectorLoader) {
+	r.httpMu.Lock()
+	defer r.httpMu.Unlock()
+
+	if r.httpExecutor == nil {
+		r.httpExecutor = httpconnector.New()
+	}
+
+	ctx := context.Background()
+	connectors, err := loader(ctx)
+	if err != nil {
+		r.logger.Printf("Failed to load HTTP connectors: %v", err)
+		return
+	}
+
+	registered := 0
+	for _, conn := range connectors {
+		n := r.registerHTTPConnectorTools(conn)
+		registered += n
+	}
+
+	r.logger.Printf("Registered %d HTTP connector tools from %d connectors", registered, len(connectors))
+}
+
+// ReloadHTTPConnectors unregisters all previously registered HTTP connector tools
+// and re-registers them from the database. Call this after connector CRUD operations.
+func (r *Registry) ReloadHTTPConnectors(loader HTTPConnectorLoader) {
+	r.httpMu.Lock()
+	defer r.httpMu.Unlock()
+
+	// Unregister all previously registered HTTP connector tools
+	for _, name := range r.httpConnectorTools {
+		r.server.UnregisterTool(name)
+	}
+	r.httpConnectorTools = nil
+
+	if r.httpExecutor == nil {
+		r.httpExecutor = httpconnector.New()
+	}
+
+	ctx := context.Background()
+	connectors, err := loader(ctx)
+	if err != nil {
+		r.logger.Printf("Failed to reload HTTP connectors: %v", err)
+		return
+	}
+
+	registered := 0
+	for _, conn := range connectors {
+		n := r.registerHTTPConnectorTools(conn)
+		registered += n
+	}
+
+	r.logger.Printf("Reloaded %d HTTP connector tools from %d connectors", registered, len(connectors))
+}
+
+// registerHTTPConnectorTools registers tools for a single HTTP connector.
+// Returns the number of tools registered.
+func (r *Registry) registerHTTPConnectorTools(conn database.HTTPConnector) int {
+	// Parse tool definitions from JSONB
+	toolDefs, err := parseHTTPConnectorToolDefs(conn.Tools)
+	if err != nil {
+		r.logger.Printf("Failed to parse tools for connector %q: %v", conn.ToolTypeName, err)
+		return 0
+	}
+
+	// Parse auth config
+	authConfig := parseHTTPConnectorAuthConfig(conn.AuthConfig)
+
+	count := 0
+	for _, toolDef := range toolDefs {
+		fullName := conn.ToolTypeName + "." + toolDef.Name
+		description := toolDef.Description
+		if description == "" {
+			description = fmt.Sprintf("%s %s %s", toolDef.HTTPMethod, toolDef.Path, conn.ToolTypeName)
+		}
+
+		// Build input schema from tool params
+		inputSchema := buildHTTPConnectorInputSchema(toolDef)
+
+		// Build the connector definition for the executor
+		connectorDef := httpconnector.ConnectorDef{
+			ToolTypeName: conn.ToolTypeName,
+			AuthConfig:   authConfig,
+			Tools:        []httpconnector.ToolDef{convertToolDef(toolDef)},
+		}
+
+		baseURLField := conn.BaseURLField
+		toolName := toolDef.Name
+		executor := r.httpExecutor
+
+		r.server.RegisterTool(
+			mcp.Tool{
+				Name:        fullName,
+				Description: description,
+				InputSchema: inputSchema,
+			},
+			func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+				instanceID := extractInstanceID(args)
+				logicalName := extractLogicalName(args)
+
+				// Resolve credentials for this connector's tool type
+				creds, err := database.ResolveToolCredentials(ctx, incidentID, connectorDef.ToolTypeName, instanceID, logicalName)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve credentials for %s: %w", connectorDef.ToolTypeName, err)
+				}
+
+				// Set base URL from instance settings
+				def := connectorDef
+				if baseURL, ok := creds.Settings[baseURLField].(string); ok {
+					def.BaseURL = baseURL
+				} else {
+					return nil, fmt.Errorf("base URL field %q not found in instance settings", baseURLField)
+				}
+
+				// Convert settings to credentials map
+				credMap := httpconnector.Credentials{}
+				for k, v := range creds.Settings {
+					if s, ok := v.(string); ok {
+						credMap[k] = s
+					}
+				}
+
+				return executor.Execute(ctx, def, toolName, args, credMap)
+			},
+		)
+
+		r.httpConnectorTools = append(r.httpConnectorTools, fullName)
+		count++
+	}
+
+	return count
+}
+
+// parseHTTPConnectorToolDefs parses the JSONB tools field into typed definitions
+func parseHTTPConnectorToolDefs(tools database.JSONB) ([]httpConnectorToolDef, error) {
+	if tools == nil {
+		return nil, nil
+	}
+
+	toolsRaw, ok := tools["tools"]
+	if !ok {
+		return nil, nil
+	}
+
+	// Marshal and unmarshal for reliable type conversion
+	data, err := json.Marshal(toolsRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tools: %w", err)
+	}
+
+	var defs []httpConnectorToolDef
+	if err := json.Unmarshal(data, &defs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tools: %w", err)
+	}
+
+	return defs, nil
+}
+
+// httpConnectorToolDef mirrors the main app's HTTPConnectorToolDef for JSON parsing
+type httpConnectorToolDef struct {
+	Name        string                    `json:"name"`
+	Description string                    `json:"description,omitempty"`
+	HTTPMethod  string                    `json:"http_method"`
+	Path        string                    `json:"path"`
+	Params      []httpConnectorToolParam  `json:"params,omitempty"`
+	ReadOnly    *bool                     `json:"read_only,omitempty"`
+}
+
+type httpConnectorToolParam struct {
+	Name     string      `json:"name"`
+	Type     string      `json:"type"`
+	Required bool        `json:"required"`
+	In       string      `json:"in"`
+	Default  interface{} `json:"default,omitempty"`
+}
+
+// parseHTTPConnectorAuthConfig parses the JSONB auth config
+func parseHTTPConnectorAuthConfig(authCfg database.JSONB) *httpconnector.AuthConfig {
+	if authCfg == nil {
+		return nil
+	}
+
+	method, _ := authCfg["method"].(string)
+	if method == "" {
+		return nil
+	}
+
+	config := &httpconnector.AuthConfig{
+		Method: httpconnector.AuthMethod(method),
+	}
+	if v, ok := authCfg["token_field"].(string); ok {
+		config.TokenField = v
+	}
+	if v, ok := authCfg["header_name"].(string); ok {
+		config.HeaderName = v
+	}
+	return config
+}
+
+// buildHTTPConnectorInputSchema creates an MCP input schema from HTTP connector tool params
+func buildHTTPConnectorInputSchema(toolDef httpConnectorToolDef) mcp.InputSchema {
+	properties := map[string]mcp.Property{
+		"tool_instance_id": toolInstanceIDProperty,
+	}
+	var required []string
+
+	for _, param := range toolDef.Params {
+		prop := mcp.Property{
+			Type:        param.Type,
+			Description: fmt.Sprintf("Parameter (%s)", param.In),
+		}
+		if param.Default != nil {
+			prop.Default = param.Default
+		}
+		properties[param.Name] = prop
+		if param.Required {
+			required = append(required, param.Name)
+		}
+	}
+
+	return mcp.InputSchema{
+		Type:       "object",
+		Properties: properties,
+		Required:   required,
+	}
+}
+
+// convertToolDef converts the parsed tool def to the executor's ToolDef type
+func convertToolDef(def httpConnectorToolDef) httpconnector.ToolDef {
+	var params []httpconnector.ToolParam
+	for _, p := range def.Params {
+		params = append(params, httpconnector.ToolParam{
+			Name:     p.Name,
+			Type:     p.Type,
+			Required: p.Required,
+			In:       p.In,
+			Default:  p.Default,
+		})
+	}
+	return httpconnector.ToolDef{
+		Name:       def.Name,
+		Description: def.Description,
+		HTTPMethod: def.HTTPMethod,
+		Path:       def.Path,
+		Params:     params,
+		ReadOnly:   def.ReadOnly,
 	}
 }
 

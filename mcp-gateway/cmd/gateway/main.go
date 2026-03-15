@@ -59,6 +59,9 @@ func main() {
 	registry := tools.NewRegistry(server, stdLogger)
 	registry.RegisterAllTools()
 
+	// Register HTTP connector tools from database
+	registry.RegisterHTTPConnectors(tools.DefaultHTTPConnectorLoader)
+
 	// Wire up tool discovery (search/detail JSON-RPC methods)
 	server.SetDiscoverer(registry)
 	server.SetInstanceLookup(tools.BuildInstanceLookup())

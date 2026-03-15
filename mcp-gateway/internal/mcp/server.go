@@ -88,6 +88,14 @@ func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	s.logger.Printf("Registered tool: %s", tool.Name)
 }
 
+// UnregisterTool removes a tool and its handler by name.
+func (s *Server) UnregisterTool(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tools, name)
+	delete(s.handlers, name)
+}
+
 // HandleHTTP handles HTTP requests for MCP protocol
 // Supports both regular HTTP POST and SSE for streaming
 func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
