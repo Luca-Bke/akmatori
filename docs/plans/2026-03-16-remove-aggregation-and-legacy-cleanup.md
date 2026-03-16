@@ -178,11 +178,11 @@ Remove the non-working alert aggregation/correlation system entirely and clean u
 - Modify: `internal/handlers/api.go` (remove `CreateIncidentRequest` type alias)
 - Modify: any test files referencing `ModelConfigs` or the type alias (update to use direct types)
 
-- [ ] Remove `ModelConfigs` map from api_settings_llm.go
-- [ ] Update tests that reference `ModelConfigs` to use inline data or remove
-- [ ] Remove `CreateIncidentRequest` type alias from handlers/api.go
-- [ ] Update test files to use `api.CreateIncidentRequest` directly
-- [ ] Run `make test` - must pass before Task 11
+- [x] Remove `ModelConfigs` map from api_settings_llm.go
+- [x] Update tests that reference `ModelConfigs` to use inline data or remove
+- [x] Remove `CreateIncidentRequest` type alias from handlers/api.go
+- [x] Update test files to use `api.CreateIncidentRequest` directly
+- [x] Run `make test` - must pass before Task 11
 
 ### Task 11: Remove Legacy Grafana Alert Format
 

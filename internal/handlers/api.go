@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/akmatori/akmatori/internal/api"
 	"github.com/akmatori/akmatori/internal/executor"
 	"github.com/akmatori/akmatori/internal/services"
 	slackutil "github.com/akmatori/akmatori/internal/slack"
@@ -150,6 +149,3 @@ func containsString(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-// CreateIncidentRequest is kept for backward compatibility with tests.
-// New code should use api.CreateIncidentRequest.
-type CreateIncidentRequest = api.CreateIncidentRequest
