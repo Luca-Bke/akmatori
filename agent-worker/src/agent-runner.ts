@@ -57,7 +57,7 @@ export interface ExecuteParams {
   workDir: string;
   /** Names of enabled skills — only these will be loaded from the shared skills directory */
   enabledSkills?: string[];
-  /** Tool instances the incident is authorized to use (nil = allow all for backward compat) */
+  /** Tool instances the incident is authorized to use. When undefined, the gateway allows all tools (safe default for direct/debug calls). */
   toolAllowlist?: ToolAllowlistEntry[];
   onOutput: (text: string) => void;
   onEvent?: (event: AgentSessionEvent) => void;
@@ -72,7 +72,7 @@ export interface ResumeParams {
   workDir: string;
   /** Names of enabled skills — only these will be loaded from the shared skills directory */
   enabledSkills?: string[];
-  /** Tool instances the incident is authorized to use (nil = allow all for backward compat) */
+  /** Tool instances the incident is authorized to use. When undefined, the gateway allows all tools (safe default for direct/debug calls). */
   toolAllowlist?: ToolAllowlistEntry[];
   onOutput: (text: string) => void;
   onEvent?: (event: AgentSessionEvent) => void;

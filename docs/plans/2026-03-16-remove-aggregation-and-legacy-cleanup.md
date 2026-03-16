@@ -224,10 +224,10 @@ Remove the non-working alert aggregation/correlation system entirely and clean u
 - Review: `agent-worker/tests/types.test.ts` (backward compat test)
 - Review: `mcp-gateway/internal/mcp/server_test.go` (backward compat test)
 
-- [ ] Evaluate if nil-allowlist backward compat is still needed (are there incidents without allowlists?)
-- [ ] If no longer needed: enforce allowlist requirement, remove nil-allows-all path
-- [ ] If still needed: update comments to explain why (not just "backward compat")
-- [ ] Run `make test` and `make test-agent` and `make test-mcp` - must pass before Task 14
+- [x] Evaluate if nil-allowlist backward compat is still needed (are there incidents without allowlists?)
+- [x] If no longer needed: enforce allowlist requirement, remove nil-allows-all path
+- [x] If still needed: update comments to explain why (not just "backward compat")
+- [x] Run `make test` and `make test-agent` and `make test-mcp` - must pass before Task 14
 
 ### Task 14: Verify Acceptance Criteria
 

@@ -502,7 +502,7 @@ describe("ToolAllowlistEntry type", () => {
     expect(msg.tool_allowlist![0].tool_type).toBe("ssh");
   });
 
-  it("omits tool_allowlist when not present (backward compat)", () => {
+  it("omits tool_allowlist when not present", () => {
     const msg: WebSocketMessage = {
       type: "new_incident",
       incident_id: "inc-no-allowlist",
