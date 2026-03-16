@@ -291,14 +291,16 @@ func (h *ProxyHandler) StartSchemaRefreshLoop(interval time.Duration) {
 			"tools", len(tools),
 		)
 
-		// Release h.mu before calling onToolsChanged to avoid lock inversion.
-		// onToolsChanged acquires r.proxyMu → s.mu, while registerProxyToolsFromHandler
-		// acquires r.proxyMu → h.mu (via GetTools). Holding h.mu here would deadlock.
+		// Capture callback under lock, then release h.mu before calling it
+		// to avoid lock inversion. onToolsChanged acquires r.proxyMu → s.mu,
+		// while registerProxyToolsFromHandler acquires r.proxyMu → h.mu (via
+		// GetTools). Holding h.mu here would deadlock.
+		cb := h.onToolsChanged
 		h.mu.Unlock()
 
 		// Notify the registry to re-register proxy tools in the MCP server
-		if h.onToolsChanged != nil {
-			h.onToolsChanged()
+		if cb != nil {
+			cb()
 		}
 	})
 }

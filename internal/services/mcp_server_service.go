@@ -43,6 +43,11 @@ func (s *MCPServerService) CreateMCPServer(config *database.MCPServerConfig) (*d
 		return nil, fmt.Errorf("MCP server with namespace_prefix %q already exists", config.NamespacePrefix)
 	}
 
+	// Check for cross-type namespace collision with HTTP connectors
+	if namespaceConflictsWithHTTPConnector(s.db, config.NamespacePrefix) {
+		return nil, fmt.Errorf("namespace_prefix %q conflicts with an existing HTTP connector namespace", config.NamespacePrefix)
+	}
+
 	config.Enabled = true
 	if err := s.db.Create(config).Error; err != nil {
 		return nil, fmt.Errorf("failed to create MCP server config: %w", err)
@@ -115,6 +120,10 @@ func (s *MCPServerService) UpdateMCPServer(id uint, updates map[string]interface
 				s.db.Model(&database.MCPServerConfig{}).Where("namespace_prefix = ? AND id != ?", ns, id).Count(&count)
 				if count > 0 {
 					return nil, fmt.Errorf("MCP server with namespace_prefix %q already exists", ns)
+				}
+				// Check cross-type namespace collision with HTTP connectors
+				if namespaceConflictsWithHTTPConnector(s.db, ns) {
+					return nil, fmt.Errorf("namespace_prefix %q conflicts with an existing HTTP connector namespace", ns)
 				}
 			}
 			config.NamespacePrefix = ns

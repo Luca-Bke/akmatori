@@ -21,6 +21,20 @@ func isReservedToolNamespace(name string) bool {
 	return false
 }
 
+// namespaceConflictsWithMCPServer checks if a namespace is already used by an MCP server.
+func namespaceConflictsWithMCPServer(db *gorm.DB, namespace string) bool {
+	var count int64
+	db.Model(&database.MCPServerConfig{}).Where("namespace_prefix = ?", namespace).Count(&count)
+	return count > 0
+}
+
+// namespaceConflictsWithHTTPConnector checks if a namespace is already used by an HTTP connector.
+func namespaceConflictsWithHTTPConnector(db *gorm.DB, namespace string) bool {
+	var count int64
+	db.Model(&database.HTTPConnector{}).Where("tool_type_name = ?", namespace).Count(&count)
+	return count > 0
+}
+
 // HTTPConnectorService manages HTTP connector CRUD operations
 type HTTPConnectorService struct {
 	db *gorm.DB
@@ -49,6 +63,11 @@ func (s *HTTPConnectorService) CreateHTTPConnector(connector *database.HTTPConne
 	s.db.Model(&database.HTTPConnector{}).Where("tool_type_name = ?", connector.ToolTypeName).Count(&count)
 	if count > 0 {
 		return nil, fmt.Errorf("connector with tool_type_name %q already exists", connector.ToolTypeName)
+	}
+
+	// Check for cross-type namespace collision with MCP servers
+	if namespaceConflictsWithMCPServer(s.db, connector.ToolTypeName) {
+		return nil, fmt.Errorf("tool_type_name %q conflicts with an existing MCP server namespace", connector.ToolTypeName)
 	}
 
 	connector.Enabled = true
@@ -88,6 +107,10 @@ func (s *HTTPConnectorService) UpdateHTTPConnector(id uint, updates map[string]i
 				s.db.Model(&database.HTTPConnector{}).Where("tool_type_name = ? AND id != ?", name, id).Count(&count)
 				if count > 0 {
 					return nil, fmt.Errorf("connector with tool_type_name %q already exists", name)
+				}
+				// Check cross-type namespace collision with MCP servers
+				if namespaceConflictsWithMCPServer(s.db, name) {
+					return nil, fmt.Errorf("tool_type_name %q conflicts with an existing MCP server namespace", name)
 				}
 			}
 			connector.ToolTypeName = name
