@@ -253,7 +253,9 @@ func main() {
 	httpHandler := handlers.NewHTTPHandler(alertHandler)
 
 	// Initialize API handler for skill communication and management
-	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, codexExecutor, agentWSHandler, slackManager, runbookService)
+	httpConnectorService := services.NewHTTPConnectorService()
+	mcpServerService := services.NewMCPServerService()
+	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, codexExecutor, agentWSHandler, slackManager, runbookService, httpConnectorService, mcpServerService)
 
 	// Wire alert channel reload: when alert sources are created/updated/deleted via API,
 	// reload the Slack handler's channel mappings so changes take effect immediately.
@@ -262,6 +264,15 @@ func main() {
 			slackHandler.ReloadAlertChannels()
 		}
 	})
+
+	// Wire MCP Gateway reload: when HTTP connectors are created/updated/deleted via API,
+	// reload the gateway's tool registrations so changes take effect immediately.
+	mcpGatewayURL := os.Getenv("MCP_GATEWAY_URL")
+	if mcpGatewayURL == "" {
+		mcpGatewayURL = "http://mcp-gateway:8080"
+	}
+	apiHandler.SetGatewayReloader(handlers.GatewayReloadFunc(mcpGatewayURL))
+	apiHandler.SetMCPServerReloader(handlers.GatewayMCPReloadFunc(mcpGatewayURL))
 
 	// Initialize auth handler
 	authHandler := handlers.NewAuthHandler(jwtAuthMiddleware)

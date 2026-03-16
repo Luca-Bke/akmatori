@@ -125,6 +125,7 @@ type ListToolsResult struct {
 type CallToolParams struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments,omitempty"`
+	Instance  string                 `json:"instance,omitempty"` // logical name hint from gateway_call
 }
 
 // CallToolResult represents tools/call response
@@ -154,6 +155,46 @@ func NewResponse(id interface{}, result interface{}) Response {
 		ID:      id,
 		Result:  result,
 	}
+}
+
+// SearchToolsParams represents tools/search request params
+type SearchToolsParams struct {
+	Query    string `json:"query"`
+	ToolType string `json:"tool_type,omitempty"`
+}
+
+// SearchToolsResultItem represents a single tool in search results (compact)
+type SearchToolsResultItem struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	ToolType    string   `json:"tool_type"`
+	Instances   []string `json:"instances,omitempty"` // logical names of enabled instances
+}
+
+// SearchToolsResult represents tools/search response
+type SearchToolsResult struct {
+	Tools []SearchToolsResultItem `json:"tools"`
+}
+
+// GetToolDetailParams represents tools/detail request params
+type GetToolDetailParams struct {
+	ToolName string `json:"tool_name"`
+}
+
+// ToolDetailInstance represents an instance in tool detail response
+type ToolDetailInstance struct {
+	ID          uint   `json:"id"`
+	LogicalName string `json:"logical_name"`
+	Name        string `json:"name"`
+}
+
+// GetToolDetailResult represents tools/detail response
+type GetToolDetailResult struct {
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	ToolType    string               `json:"tool_type"`
+	InputSchema InputSchema          `json:"input_schema"`
+	Instances   []ToolDetailInstance  `json:"instances,omitempty"`
 }
 
 // NewErrorResponse creates an error JSON-RPC response

@@ -2,11 +2,19 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/akmatori/mcp-gateway/internal/database"
 	"github.com/akmatori/mcp-gateway/internal/mcp"
+	"github.com/akmatori/mcp-gateway/internal/mcpproxy"
 	"github.com/akmatori/mcp-gateway/internal/ratelimit"
+	"github.com/akmatori/mcp-gateway/internal/tools/httpconnector"
 	"github.com/akmatori/mcp-gateway/internal/tools/ssh"
 	"github.com/akmatori/mcp-gateway/internal/tools/victoriametrics"
 	"github.com/akmatori/mcp-gateway/internal/tools/zabbix"
@@ -28,6 +36,16 @@ type Registry struct {
 	zabbixLimit *ratelimit.Limiter
 	vmTool      *victoriametrics.VictoriaMetricsTool
 	vmLimit     *ratelimit.Limiter
+
+	// HTTP connector state
+	httpExecutor      *httpconnector.HTTPConnectorExecutor
+	httpConnectorTools []string // track registered tool names for reload cleanup
+	httpMu            sync.Mutex
+
+	// MCP proxy state
+	proxyHandler   *mcpproxy.ProxyHandler
+	proxyToolNames []string // track registered proxy tool names for reload cleanup
+	proxyMu        sync.Mutex
 }
 
 // NewRegistry creates a new tool registry
@@ -70,6 +88,422 @@ func (r *Registry) Stop() {
 	if r.vmTool != nil {
 		r.vmTool.Stop()
 	}
+	if r.httpExecutor != nil {
+		r.httpExecutor.Stop()
+	}
+	if r.proxyHandler != nil {
+		r.proxyHandler.Stop()
+	}
+}
+
+// DefaultMCPProxyLoader loads MCP server configs from the database and converts them
+// to proxy handler registrations.
+func DefaultMCPProxyLoader(ctx context.Context) ([]mcpproxy.ServerRegistration, error) {
+	configs, err := database.GetAllEnabledMCPServerConfigs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var regs []mcpproxy.ServerRegistration
+	for _, cfg := range configs {
+		// Convert database Args JSONB to string slice
+		var args []string
+		if cfg.Args != nil {
+			if argsRaw, ok := cfg.Args["args"]; ok {
+				if argsJSON, err := json.Marshal(argsRaw); err == nil {
+					if err := json.Unmarshal(argsJSON, &args); err != nil {
+						slog.Warn("failed to parse MCP server args", "config_id", cfg.ID, "error", err)
+					}
+				}
+			}
+		}
+
+		// Convert database EnvVars JSONB to string map
+		envVars := make(map[string]string)
+		for k, v := range cfg.EnvVars {
+			if s, ok := v.(string); ok {
+				envVars[k] = s
+			}
+		}
+
+		var authConfig json.RawMessage
+		if cfg.AuthConfig != nil {
+			authConfig, _ = json.Marshal(cfg.AuthConfig)
+		}
+
+		regs = append(regs, mcpproxy.ServerRegistration{
+			InstanceID:      cfg.ID,
+			NamespacePrefix: cfg.NamespacePrefix,
+			AuthConfig:      authConfig,
+			Config: mcpproxy.MCPServerConfig{
+				Transport:       mcpproxy.TransportType(cfg.Transport),
+				URL:             cfg.URL,
+				Command:         cfg.Command,
+				Args:            args,
+				EnvVars:         envVars,
+				NamespacePrefix: cfg.NamespacePrefix,
+				AuthConfig:      authConfig,
+			},
+		})
+	}
+
+	return regs, nil
+}
+
+// HTTPConnectorLoader is a function that loads enabled HTTP connectors from the database.
+// This abstraction allows tests to provide mock loaders without needing a real database.
+type HTTPConnectorLoader func(ctx context.Context) ([]database.HTTPConnector, error)
+
+// DefaultHTTPConnectorLoader loads connectors from the database.
+func DefaultHTTPConnectorLoader(ctx context.Context) ([]database.HTTPConnector, error) {
+	return database.GetAllEnabledHTTPConnectors(ctx)
+}
+
+// RegisterHTTPConnectors queries the database for enabled HTTP connector definitions
+// and registers their tools in the gateway registry.
+func (r *Registry) RegisterHTTPConnectors(loader HTTPConnectorLoader) {
+	r.httpMu.Lock()
+	defer r.httpMu.Unlock()
+
+	if r.httpExecutor == nil {
+		r.httpExecutor = httpconnector.New()
+	}
+
+	ctx := context.Background()
+	connectors, err := loader(ctx)
+	if err != nil {
+		r.logger.Printf("Failed to load HTTP connectors: %v", err)
+		return
+	}
+
+	registered := 0
+	for _, conn := range connectors {
+		n := r.registerHTTPConnectorTools(conn)
+		registered += n
+	}
+
+	r.logger.Printf("Registered %d HTTP connector tools from %d connectors", registered, len(connectors))
+}
+
+// ReloadHTTPConnectors unregisters all previously registered HTTP connector tools
+// and re-registers them from the database. Call this after connector CRUD operations.
+func (r *Registry) ReloadHTTPConnectors(loader HTTPConnectorLoader) {
+	r.httpMu.Lock()
+	defer r.httpMu.Unlock()
+
+	// Unregister all previously registered HTTP connector tools
+	for _, name := range r.httpConnectorTools {
+		r.server.UnregisterTool(name)
+	}
+	r.httpConnectorTools = nil
+
+	if r.httpExecutor == nil {
+		r.httpExecutor = httpconnector.New()
+	}
+
+	ctx := context.Background()
+	connectors, err := loader(ctx)
+	if err != nil {
+		r.logger.Printf("Failed to reload HTTP connectors: %v", err)
+		return
+	}
+
+	registered := 0
+	for _, conn := range connectors {
+		n := r.registerHTTPConnectorTools(conn)
+		registered += n
+	}
+
+	r.logger.Printf("Reloaded %d HTTP connector tools from %d connectors", registered, len(connectors))
+}
+
+// SetProxyHandler sets the MCP proxy handler for this registry.
+func (r *Registry) SetProxyHandler(h *mcpproxy.ProxyHandler) {
+	r.proxyHandler = h
+	// When the proxy handler's schema refresh discovers new/removed tools,
+	// re-register them in the MCP server so they become callable.
+	h.SetOnToolsChanged(func() {
+		r.proxyMu.Lock()
+		defer r.proxyMu.Unlock()
+		// Unregister old proxy tools
+		for _, name := range r.proxyToolNames {
+			r.server.UnregisterTool(name)
+		}
+		r.proxyToolNames = nil
+		r.registerProxyToolsFromHandler()
+	})
+}
+
+// RegisterMCPProxyTools loads MCP server registrations and registers their discovered
+// tools in the gateway. Each tool is namespaced with the server's prefix.
+func (r *Registry) RegisterMCPProxyTools(loader mcpproxy.MCPServerConfigLoader) {
+	r.proxyMu.Lock()
+	defer r.proxyMu.Unlock()
+
+	if r.proxyHandler == nil {
+		r.logger.Println("MCP proxy handler not configured, skipping proxy tool registration")
+		return
+	}
+
+	ctx := context.Background()
+	if err := r.proxyHandler.LoadAndRegister(ctx, loader); err != nil {
+		r.logger.Printf("Failed to load MCP proxy tools: %v", err)
+		return
+	}
+
+	r.registerProxyToolsFromHandler()
+}
+
+// ReloadMCPProxyTools unregisters all proxy tools and re-registers from the database.
+func (r *Registry) ReloadMCPProxyTools(loader mcpproxy.MCPServerConfigLoader) {
+	r.proxyMu.Lock()
+	defer r.proxyMu.Unlock()
+
+	// Unregister previously registered proxy tools
+	for _, name := range r.proxyToolNames {
+		r.server.UnregisterTool(name)
+	}
+	r.proxyToolNames = nil
+
+	if r.proxyHandler == nil {
+		return
+	}
+
+	ctx := context.Background()
+	if err := r.proxyHandler.Reload(ctx, loader); err != nil {
+		r.logger.Printf("Failed to reload MCP proxy tools: %v", err)
+		return
+	}
+
+	r.registerProxyToolsFromHandler()
+}
+
+// registerProxyToolsFromHandler registers all tools from the proxy handler in the MCP server.
+func (r *Registry) registerProxyToolsFromHandler() {
+	tools := r.proxyHandler.GetTools()
+	handler := r.proxyHandler
+
+	for _, tool := range tools {
+		toolName := tool.Name
+		r.server.RegisterTool(tool, func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			result, err := handler.CallTool(ctx, toolName, args)
+			if err != nil {
+				return nil, err
+			}
+			// Return the call result content as JSON
+			if len(result.Content) == 1 {
+				return result.Content[0].Text, nil
+			}
+			return result, nil
+		})
+		r.proxyToolNames = append(r.proxyToolNames, tool.Name)
+	}
+
+	r.logger.Printf("Registered %d MCP proxy tools", len(tools))
+}
+
+// registerHTTPConnectorTools registers tools for a single HTTP connector.
+// Returns the number of tools registered.
+func (r *Registry) registerHTTPConnectorTools(conn database.HTTPConnector) int {
+	// Parse tool definitions from JSONB
+	toolDefs, err := parseHTTPConnectorToolDefs(conn.Tools)
+	if err != nil {
+		r.logger.Printf("Failed to parse tools for connector %q: %v", conn.ToolTypeName, err)
+		return 0
+	}
+
+	// Parse auth config
+	authConfig := parseHTTPConnectorAuthConfig(conn.AuthConfig)
+
+	count := 0
+	for _, toolDef := range toolDefs {
+		fullName := conn.ToolTypeName + "." + toolDef.Name
+
+		// Validate: read-only tools (default) must use GET. Reject at registration
+		// rather than failing every call at execution time.
+		isReadOnly := toolDef.ReadOnly == nil || *toolDef.ReadOnly
+		if isReadOnly && toolDef.HTTPMethod != "GET" {
+			r.logger.Printf("Skipping tool %q: read_only (default) but uses HTTP method %s; set read_only to false to allow writes",
+				fullName, toolDef.HTTPMethod)
+			continue
+		}
+
+		description := toolDef.Description
+		if description == "" {
+			description = fmt.Sprintf("%s %s %s", toolDef.HTTPMethod, toolDef.Path, conn.ToolTypeName)
+		}
+
+		// Build input schema from tool params
+		inputSchema := buildHTTPConnectorInputSchema(toolDef)
+
+		// Build the connector definition for the executor
+		connectorDef := httpconnector.ConnectorDef{
+			ToolTypeName: conn.ToolTypeName,
+			AuthConfig:   authConfig,
+			Tools:        []httpconnector.ToolDef{convertToolDef(toolDef)},
+		}
+
+		baseURLField := conn.BaseURLField
+		toolName := toolDef.Name
+		executor := r.httpExecutor
+
+		r.server.RegisterTool(
+			mcp.Tool{
+				Name:        fullName,
+				Description: description,
+				InputSchema: inputSchema,
+			},
+			func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+				instanceID := extractInstanceID(args)
+				logicalName := extractLogicalName(args)
+
+				// Resolve credentials for this connector's tool type
+				creds, err := database.ResolveToolCredentials(ctx, incidentID, connectorDef.ToolTypeName, instanceID, logicalName)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve credentials for %s: %w", connectorDef.ToolTypeName, err)
+				}
+
+				// Set base URL from instance settings
+				def := connectorDef
+				if baseURL, ok := creds.Settings[baseURLField].(string); ok {
+					def.BaseURL = baseURL
+				} else {
+					return nil, fmt.Errorf("base URL field %q not found in instance settings", baseURLField)
+				}
+
+				// Convert settings to credentials map
+				credMap := httpconnector.Credentials{}
+				for k, v := range creds.Settings {
+					if s, ok := v.(string); ok {
+						credMap[k] = s
+					}
+				}
+
+				return executor.Execute(ctx, def, toolName, args, credMap)
+			},
+		)
+
+		r.httpConnectorTools = append(r.httpConnectorTools, fullName)
+		count++
+	}
+
+	return count
+}
+
+// parseHTTPConnectorToolDefs parses the JSONB tools field into typed definitions
+func parseHTTPConnectorToolDefs(tools database.JSONB) ([]httpConnectorToolDef, error) {
+	if tools == nil {
+		return nil, nil
+	}
+
+	toolsRaw, ok := tools["tools"]
+	if !ok {
+		return nil, nil
+	}
+
+	// Marshal and unmarshal for reliable type conversion
+	data, err := json.Marshal(toolsRaw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tools: %w", err)
+	}
+
+	var defs []httpConnectorToolDef
+	if err := json.Unmarshal(data, &defs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tools: %w", err)
+	}
+
+	return defs, nil
+}
+
+// httpConnectorToolDef mirrors the main app's HTTPConnectorToolDef for JSON parsing
+type httpConnectorToolDef struct {
+	Name        string                    `json:"name"`
+	Description string                    `json:"description,omitempty"`
+	HTTPMethod  string                    `json:"http_method"`
+	Path        string                    `json:"path"`
+	Params      []httpConnectorToolParam  `json:"params,omitempty"`
+	ReadOnly    *bool                     `json:"read_only,omitempty"`
+}
+
+type httpConnectorToolParam struct {
+	Name     string      `json:"name"`
+	Type     string      `json:"type"`
+	Required bool        `json:"required"`
+	In       string      `json:"in"`
+	Default  interface{} `json:"default,omitempty"`
+}
+
+// parseHTTPConnectorAuthConfig parses the JSONB auth config
+func parseHTTPConnectorAuthConfig(authCfg database.JSONB) *httpconnector.AuthConfig {
+	if authCfg == nil {
+		return nil
+	}
+
+	method, _ := authCfg["method"].(string)
+	if method == "" {
+		return nil
+	}
+
+	config := &httpconnector.AuthConfig{
+		Method: httpconnector.AuthMethod(method),
+	}
+	if v, ok := authCfg["token_field"].(string); ok {
+		config.TokenField = v
+	}
+	if v, ok := authCfg["header_name"].(string); ok {
+		config.HeaderName = v
+	}
+	return config
+}
+
+// buildHTTPConnectorInputSchema creates an MCP input schema from HTTP connector tool params
+func buildHTTPConnectorInputSchema(toolDef httpConnectorToolDef) mcp.InputSchema {
+	properties := map[string]mcp.Property{
+		"tool_instance_id": toolInstanceIDProperty,
+	}
+	var required []string
+
+	for _, param := range toolDef.Params {
+		prop := mcp.Property{
+			Type:        param.Type,
+			Description: fmt.Sprintf("Parameter (%s)", param.In),
+		}
+		if param.Default != nil {
+			prop.Default = param.Default
+		}
+		properties[param.Name] = prop
+		if param.Required {
+			required = append(required, param.Name)
+		}
+	}
+
+	return mcp.InputSchema{
+		Type:       "object",
+		Properties: properties,
+		Required:   required,
+	}
+}
+
+// convertToolDef converts the parsed tool def to the executor's ToolDef type
+func convertToolDef(def httpConnectorToolDef) httpconnector.ToolDef {
+	var params []httpconnector.ToolParam
+	for _, p := range def.Params {
+		params = append(params, httpconnector.ToolParam{
+			Name:     p.Name,
+			Type:     p.Type,
+			Required: p.Required,
+			In:       p.In,
+			Default:  p.Default,
+		})
+	}
+	return httpconnector.ToolDef{
+		Name:       def.Name,
+		Description: def.Description,
+		HTTPMethod: def.HTTPMethod,
+		Path:       def.Path,
+		Params:     params,
+		ReadOnly:   def.ReadOnly,
+	}
 }
 
 // extractInstanceID extracts the optional tool_instance_id from tool arguments.
@@ -79,6 +513,14 @@ func extractInstanceID(args map[string]interface{}) *uint {
 		return &id
 	}
 	return nil
+}
+
+// extractLogicalName extracts the optional logical_name from tool arguments.
+func extractLogicalName(args map[string]interface{}) string {
+	if v, ok := args["logical_name"].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // extractServers extracts the optional servers string list from tool arguments.
@@ -130,9 +572,10 @@ func (r *Registry) registerSSHTools() {
 		},
 		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
 			instanceID := extractInstanceID(args)
+			logicalName := extractLogicalName(args)
 			command, _ := args["command"].(string)
 			servers := extractServers(args)
-			return sshTool.ExecuteCommand(ctx, incidentID, command, servers, instanceID)
+			return sshTool.ExecuteCommand(ctx, incidentID, command, servers, instanceID, logicalName)
 		},
 	)
 
@@ -155,8 +598,9 @@ func (r *Registry) registerSSHTools() {
 		},
 		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
 			instanceID := extractInstanceID(args)
+			logicalName := extractLogicalName(args)
 			servers := extractServers(args)
-			return sshTool.TestConnectivity(ctx, incidentID, servers, instanceID)
+			return sshTool.TestConnectivity(ctx, incidentID, servers, instanceID, logicalName)
 		},
 	)
 
@@ -179,8 +623,9 @@ func (r *Registry) registerSSHTools() {
 		},
 		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
 			instanceID := extractInstanceID(args)
+			logicalName := extractLogicalName(args)
 			servers := extractServers(args)
-			return sshTool.GetServerInfo(ctx, incidentID, servers, instanceID)
+			return sshTool.GetServerInfo(ctx, incidentID, servers, instanceID, logicalName)
 		},
 	)
 }
@@ -457,9 +902,10 @@ func (r *Registry) registerZabbixTools() {
 		},
 		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
 			instanceID := extractInstanceID(args)
+			logicalName := extractLogicalName(args)
 			method, _ := args["method"].(string)
 			params, _ := args["params"].(map[string]interface{})
-			return r.zabbixTool.APIRequest(ctx, incidentID, method, params, instanceID)
+			return r.zabbixTool.APIRequest(ctx, incidentID, method, params, instanceID, logicalName)
 		},
 	)
 }
@@ -471,7 +917,7 @@ func (r *Registry) registerVictoriaMetricsTools() {
 	// victoriametrics.instant_query
 	r.server.RegisterTool(
 		mcp.Tool{
-			Name:        "victoriametrics.instant_query",
+			Name:        "victoria_metrics.instant_query",
 			Description: "Execute a PromQL instant query against VictoriaMetrics",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -505,7 +951,7 @@ func (r *Registry) registerVictoriaMetricsTools() {
 	// victoriametrics.range_query
 	r.server.RegisterTool(
 		mcp.Tool{
-			Name:        "victoriametrics.range_query",
+			Name:        "victoria_metrics.range_query",
 			Description: "Execute a PromQL range query against VictoriaMetrics",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -543,7 +989,7 @@ func (r *Registry) registerVictoriaMetricsTools() {
 	// victoriametrics.label_values
 	r.server.RegisterTool(
 		mcp.Tool{
-			Name:        "victoriametrics.label_values",
+			Name:        "victoria_metrics.label_values",
 			Description: "Get label values for a given label name from VictoriaMetrics",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -577,7 +1023,7 @@ func (r *Registry) registerVictoriaMetricsTools() {
 	// victoriametrics.series
 	r.server.RegisterTool(
 		mcp.Tool{
-			Name:        "victoriametrics.series",
+			Name:        "victoria_metrics.series",
 			Description: "Find series matching a label set from VictoriaMetrics",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -607,7 +1053,7 @@ func (r *Registry) registerVictoriaMetricsTools() {
 	// victoriametrics.api_request
 	r.server.RegisterTool(
 		mcp.Tool{
-			Name:        "victoriametrics.api_request",
+			Name:        "victoria_metrics.api_request",
 			Description: "Make a generic HTTP request to VictoriaMetrics API",
 			InputSchema: mcp.InputSchema{
 				Type: "object",
@@ -633,6 +1079,98 @@ func (r *Registry) registerVictoriaMetricsTools() {
 			return r.vmTool.APIRequest(ctx, incidentID, args)
 		},
 	)
+}
+
+// SearchTools searches registered tools by query string and optional tool type filter.
+// It performs case-insensitive substring matching on tool name and description.
+func (r *Registry) SearchTools(query string, toolType string) []mcp.SearchToolsResultItem {
+	r.server.Mu().RLock()
+	defer r.server.Mu().RUnlock()
+
+	query = strings.ToLower(query)
+	var results []mcp.SearchToolsResultItem
+
+	for _, tool := range r.server.Tools() {
+		namespace, _ := mcp.ParseToolName(tool.Name)
+		// Apply tool type filter
+		if toolType != "" && namespace != toolType {
+			continue
+		}
+		// Match query against name and description
+		if query != "" &&
+			!strings.Contains(strings.ToLower(tool.Name), query) &&
+			!strings.Contains(strings.ToLower(tool.Description), query) {
+			continue
+		}
+
+		results = append(results, mcp.SearchToolsResultItem{
+			Name:        tool.Name,
+			Description: tool.Description,
+			ToolType:    namespace,
+		})
+	}
+
+	return results
+}
+
+// GetToolDetail returns full detail for a specific tool by name.
+func (r *Registry) GetToolDetail(toolName string) (*mcp.GetToolDetailResult, bool) {
+	r.server.Mu().RLock()
+	defer r.server.Mu().RUnlock()
+
+	tool, exists := r.server.Tools()[toolName]
+	if !exists {
+		return nil, false
+	}
+
+	namespace, _ := mcp.ParseToolName(tool.Name)
+
+	return &mcp.GetToolDetailResult{
+		Name:        tool.Name,
+		Description: tool.Description,
+		ToolType:    namespace,
+		InputSchema: tool.InputSchema,
+	}, true
+}
+
+// BuildInstanceLookup returns an InstanceLookup function that queries the database
+// for enabled tool instances of a given tool type. Results are cached for 30 seconds
+// to avoid repeated database queries on each search/detail call.
+func BuildInstanceLookup() mcp.InstanceLookup {
+	var (
+		mu        sync.Mutex
+		cached    []database.ToolInstance
+		cachedAt  time.Time
+		cacheTTL  = 30 * time.Second
+	)
+
+	return func(toolType string) []mcp.ToolDetailInstance {
+		mu.Lock()
+		if time.Since(cachedAt) > cacheTTL || cached == nil {
+			ctx := context.Background()
+			instances, err := database.GetAllEnabledToolInstances(ctx)
+			if err != nil {
+				mu.Unlock()
+				return nil
+			}
+			cached = instances
+			cachedAt = time.Now()
+		}
+		instances := cached
+		mu.Unlock()
+
+		var result []mcp.ToolDetailInstance
+		for _, inst := range instances {
+			if inst.ToolType.Name == toolType {
+				result = append(result, mcp.ToolDetailInstance{
+					ID:          inst.ID,
+					LogicalName: inst.LogicalName,
+					Name:        inst.Name,
+				})
+			}
+		}
+		return result
+	}
 }
 
 // GetToolCredentials is a helper to fetch credentials from database

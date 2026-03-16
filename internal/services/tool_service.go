@@ -38,13 +38,33 @@ func NewToolService() *ToolService {
 	}
 }
 
-// CreateToolInstance creates a new tool instance
-func (s *ToolService) CreateToolInstance(toolTypeID uint, name string, settings database.JSONB) (*database.ToolInstance, error) {
+// CreateToolInstance creates a new tool instance.
+// If logicalName is non-empty it is sanitized via SlugifyLogicalName; otherwise it is derived from name.
+func (s *ToolService) CreateToolInstance(toolTypeID uint, name string, logicalName string, settings database.JSONB) (*database.ToolInstance, error) {
+	// Validate that the tool type exists before attempting to create the instance.
+	var toolType database.ToolType
+	if err := s.db.First(&toolType, toolTypeID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("validation failed: tool type with ID %d not found", toolTypeID)
+		}
+		return nil, fmt.Errorf("failed to validate tool type: %w", err)
+	}
+
+	if logicalName == "" {
+		logicalName = database.SlugifyLogicalName(name)
+	} else {
+		logicalName = database.SlugifyLogicalName(logicalName)
+	}
+	if logicalName == "" {
+		return nil, fmt.Errorf("validation failed: logical name resolves to empty after sanitization")
+	}
+
 	instance := &database.ToolInstance{
-		ToolTypeID: toolTypeID,
-		Name:       name,
-		Settings:   settings,
-		Enabled:    true,
+		ToolTypeID:  toolTypeID,
+		Name:        name,
+		LogicalName: logicalName,
+		Settings:    settings,
+		Enabled:     true,
 	}
 
 	if err := s.db.Create(instance).Error; err != nil {
@@ -63,8 +83,9 @@ func (s *ToolService) GetToolInstance(id uint) (*database.ToolInstance, error) {
 	return &instance, nil
 }
 
-// UpdateToolInstance updates a tool instance
-func (s *ToolService) UpdateToolInstance(id uint, name string, settings database.JSONB, enabled bool) error {
+// UpdateToolInstance updates a tool instance.
+// If logicalName is non-empty it is sanitized via SlugifyLogicalName; otherwise it is re-derived from name.
+func (s *ToolService) UpdateToolInstance(id uint, name string, logicalName string, settings database.JSONB, enabled bool) error {
 	// Get existing instance to preserve ssh_keys
 	var existing database.ToolInstance
 	if err := s.db.First(&existing, id).Error; err != nil {
@@ -80,10 +101,20 @@ func (s *ToolService) UpdateToolInstance(id uint, name string, settings database
 		}
 	}
 
+	if logicalName == "" {
+		logicalName = database.SlugifyLogicalName(name)
+	} else {
+		logicalName = database.SlugifyLogicalName(logicalName)
+	}
+	if logicalName == "" {
+		return fmt.Errorf("validation failed: logical name resolves to empty after sanitization")
+	}
+
 	updates := map[string]interface{}{
-		"name":     name,
-		"settings": settings,
-		"enabled":  enabled,
+		"name":         name,
+		"logical_name": logicalName,
+		"settings":     settings,
+		"enabled":      enabled,
 	}
 
 	if err := s.db.Model(&database.ToolInstance{}).Where("id = ?", id).Updates(updates).Error; err != nil {

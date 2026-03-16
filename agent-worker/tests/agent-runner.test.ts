@@ -445,12 +445,24 @@ describe("AgentRunner", () => {
       );
     });
 
-    it("should NOT pass customTools (Python wrappers used instead)", async () => {
+    it("should pass gateway_call, search_tools, get_tool_detail, and execute_script as customTools", async () => {
       const params = makeExecuteParams({ incidentId: "inc-tools" });
       await runner.execute(params);
 
       const opts = createAgentSessionCalls[0];
-      expect(opts.customTools).toBeUndefined();
+      expect(opts.customTools).toBeDefined();
+      expect(opts.customTools).toHaveLength(4);
+
+      const toolNames = opts.customTools.map((t: any) => t.name);
+      expect(toolNames).toContain("gateway_call");
+      expect(toolNames).toContain("search_tools");
+      expect(toolNames).toContain("get_tool_detail");
+      expect(toolNames).toContain("execute_script");
+
+      for (const tool of opts.customTools) {
+        expect(tool.parameters).toBeDefined();
+        expect(typeof tool.execute).toBe("function");
+      }
     });
 
     it("should not pass appendSystemPrompt to DefaultResourceLoader", async () => {
@@ -476,11 +488,11 @@ describe("AgentRunner", () => {
       expect(bashTool).toBeDefined();
       expect(bashTool.promptGuidelines).toBeDefined();
       expect(typeof bashTool.promptGuidelines).toBe("string");
-      expect(bashTool.promptGuidelines).toContain("python3 -c");
+      expect(bashTool.promptGuidelines).toContain("gateway_call");
       expect(bashTool.promptGuidelines).toContain("SKILL.md");
-      expect(bashTool.promptGuidelines).toContain("tool_instance_id");
-      expect(bashTool.promptGuidelines).toContain("ssh");
-      expect(bashTool.promptGuidelines).toContain("zabbix");
+      expect(bashTool.promptGuidelines).toContain("search_tools");
+      expect(bashTool.promptGuidelines).not.toContain("python3 -c");
+      expect(bashTool.promptGuidelines).not.toContain("PYTHONPATH");
     });
 
     it("should configure bash spawnHook with MCP env vars", async () => {

@@ -20,20 +20,26 @@ type APIHandler struct {
 	agentWSHandler       *AgentWSHandler
 	slackManager         *slackutil.Manager
 	runbookService       services.RunbookManager
+	httpConnectorService services.HTTPConnectorManager
+	mcpServerService     services.MCPServerManager
 	alertChannelReloader func() // called after alert source create/update/delete to reload Slack channel mappings
+	gatewayReloader      func() error // called after HTTP connector CRUD to reload gateway tools
+	mcpServerReloader    func() error // called after MCP server CRUD to reload gateway MCP proxy tools
 }
 
 // NewAPIHandler creates a new API handler
-func NewAPIHandler(skillService services.SkillIncidentManager, toolService services.ToolManager, contextService services.ContextManager, alertService services.AlertManager, codexExecutor *executor.Executor, agentWSHandler *AgentWSHandler, slackManager *slackutil.Manager, runbookService services.RunbookManager) *APIHandler {
+func NewAPIHandler(skillService services.SkillIncidentManager, toolService services.ToolManager, contextService services.ContextManager, alertService services.AlertManager, codexExecutor *executor.Executor, agentWSHandler *AgentWSHandler, slackManager *slackutil.Manager, runbookService services.RunbookManager, httpConnectorService services.HTTPConnectorManager, mcpServerService services.MCPServerManager) *APIHandler {
 	return &APIHandler{
-		skillService:      skillService,
-		toolService:       toolService,
-		contextService:    contextService,
-		alertService:      alertService,
-		codexExecutor:     codexExecutor,
-		agentWSHandler:    agentWSHandler,
-		slackManager:      slackManager,
-		runbookService:    runbookService,
+		skillService:         skillService,
+		toolService:          toolService,
+		contextService:       contextService,
+		alertService:         alertService,
+		codexExecutor:        codexExecutor,
+		agentWSHandler:       agentWSHandler,
+		slackManager:         slackManager,
+		runbookService:       runbookService,
+		httpConnectorService: httpConnectorService,
+		mcpServerService:     mcpServerService,
 	}
 }
 
@@ -41,6 +47,18 @@ func NewAPIHandler(skillService services.SkillIncidentManager, toolService servi
 // to reload Slack channel mappings at runtime.
 func (h *APIHandler) SetAlertChannelReloader(fn func()) {
 	h.alertChannelReloader = fn
+}
+
+// SetGatewayReloader sets the callback invoked after HTTP connector create/update/delete
+// to reload MCP Gateway tool registrations.
+func (h *APIHandler) SetGatewayReloader(fn func() error) {
+	h.gatewayReloader = fn
+}
+
+// SetMCPServerReloader sets the callback invoked after MCP server create/update/delete
+// to reload MCP Gateway proxy tool registrations.
+func (h *APIHandler) SetMCPServerReloader(fn func() error) {
+	h.mcpServerReloader = fn
 }
 
 // reloadAlertChannels triggers the alert channel reload callback if set
@@ -96,6 +114,14 @@ func (h *APIHandler) SetupRoutes(mux *http.ServeMux) {
 	// Runbooks
 	mux.HandleFunc("/api/runbooks", h.handleRunbooks)
 	mux.HandleFunc("/api/runbooks/", h.handleRunbookByID)
+
+	// HTTP connectors
+	mux.HandleFunc("/api/http-connectors", h.handleHTTPConnectors)
+	mux.HandleFunc("/api/http-connectors/", h.handleHTTPConnectorByID)
+
+	// MCP servers (admin-only)
+	mux.HandleFunc("/api/mcp-servers", h.handleMCPServers)
+	mux.HandleFunc("/api/mcp-servers/", h.handleMCPServerByID)
 
 	// Alert source types and instances
 	mux.HandleFunc("/api/alert-source-types", h.handleAlertSourceTypes)

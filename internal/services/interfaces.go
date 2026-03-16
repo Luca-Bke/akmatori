@@ -14,6 +14,7 @@ type SkillManager interface {
 	ListSkills() ([]database.Skill, error)
 	ListEnabledSkills() ([]database.Skill, error)
 	GetEnabledSkillNames() []string
+	GetToolAllowlist() []ToolAllowlistEntry
 	GetSkill(name string) (*database.Skill, error)
 	AssignTools(skillName string, toolIDs []uint) error
 	GetSkillDir(skillName string) string
@@ -47,9 +48,9 @@ type SkillIncidentManager interface {
 
 // ToolManager defines the interface for tool instance CRUD and SSH key management.
 type ToolManager interface {
-	CreateToolInstance(toolTypeID uint, name string, settings database.JSONB) (*database.ToolInstance, error)
+	CreateToolInstance(toolTypeID uint, name string, logicalName string, settings database.JSONB) (*database.ToolInstance, error)
 	GetToolInstance(id uint) (*database.ToolInstance, error)
-	UpdateToolInstance(id uint, name string, settings database.JSONB, enabled bool) error
+	UpdateToolInstance(id uint, name string, logicalName string, settings database.JSONB, enabled bool) error
 	DeleteToolInstance(id uint) error
 	ListToolTypes() ([]database.ToolType, error)
 	ListToolInstances() ([]database.ToolInstance, error)
@@ -107,6 +108,24 @@ type ContextManager interface {
 	ResolveReferences(text string) string
 	ResolveReferencesToMarkdownLinks(text string) string
 	CopyReferencedFilesToDir(text string, targetDir string) error
+}
+
+// HTTPConnectorManager defines the interface for HTTP connector CRUD operations.
+type HTTPConnectorManager interface {
+	CreateHTTPConnector(connector *database.HTTPConnector) (*database.HTTPConnector, error)
+	GetHTTPConnector(id uint) (*database.HTTPConnector, error)
+	UpdateHTTPConnector(id uint, updates map[string]interface{}) (*database.HTTPConnector, error)
+	DeleteHTTPConnector(id uint) error
+	ListHTTPConnectors() ([]database.HTTPConnector, error)
+}
+
+// MCPServerManager defines the interface for MCP server configuration CRUD operations.
+type MCPServerManager interface {
+	CreateMCPServer(config *database.MCPServerConfig) (*database.MCPServerConfig, error)
+	GetMCPServer(id uint) (*database.MCPServerConfig, error)
+	UpdateMCPServer(id uint, updates map[string]interface{}) (*database.MCPServerConfig, error)
+	DeleteMCPServer(id uint) error
+	ListMCPServers() ([]database.MCPServerConfig, error)
 }
 
 // AggregationManager defines the interface for incident aggregation/correlation.

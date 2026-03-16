@@ -204,6 +204,57 @@ func (s *SkillService) GetEnabledSkillNames() []string {
 	return names
 }
 
+// ToolAllowlistEntry represents one authorized tool instance for an incident.
+type ToolAllowlistEntry struct {
+	InstanceID  uint   `json:"instance_id"`
+	LogicalName string `json:"logical_name"`
+	ToolType    string `json:"tool_type"`
+}
+
+// GetToolAllowlist builds an allowlist of tool instances from all enabled, non-system skills.
+// The allowlist is deduplicated by instance ID (a tool instance assigned to multiple skills
+// only appears once). Returns an empty slice (not nil) if no tools are assigned, so the
+// gateway receives an explicit empty allowlist and rejects all tool calls.
+func (s *SkillService) GetToolAllowlist() []ToolAllowlistEntry {
+	var skills []database.Skill
+	err := s.db.Preload("Tools.ToolType").Where("enabled = ?", true).Find(&skills).Error
+	if err != nil {
+		slog.Error("failed to list enabled skills for allowlist", "error", err)
+		return []ToolAllowlistEntry{}
+	}
+
+	seen := make(map[uint]bool)
+	entries := make([]ToolAllowlistEntry, 0)
+	for _, sk := range skills {
+		if sk.IsSystem {
+			continue
+		}
+		for _, tool := range sk.Tools {
+			if !tool.Enabled || seen[tool.ID] {
+				continue
+			}
+			seen[tool.ID] = true
+
+			// Resolve tool type name — it's already loaded via Preload in ListEnabledSkills,
+			// but the nested ToolType may not be preloaded. Query if needed.
+			toolTypeName := tool.ToolType.Name
+			if toolTypeName == "" {
+				var tt database.ToolType
+				if err := s.db.First(&tt, tool.ToolTypeID).Error; err == nil {
+					toolTypeName = tt.Name
+				}
+			}
+
+			entries = append(entries, ToolAllowlistEntry{
+				InstanceID:  tool.ID,
+				LogicalName: tool.LogicalName,
+				ToolType:    toolTypeName,
+			})
+		}
+	}
+	return entries
+}
+
 // GetSkill returns a skill by name
 func (s *SkillService) GetSkill(name string) (*database.Skill, error) {
 	var skill database.Skill

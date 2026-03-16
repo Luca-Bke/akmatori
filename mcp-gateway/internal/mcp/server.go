@@ -11,19 +11,33 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/akmatori/mcp-gateway/internal/auth"
 )
 
 // ToolHandler is a function that handles a tool call
 type ToolHandler func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error)
 
+// ToolDiscoverer provides tool search and detail capabilities.
+type ToolDiscoverer interface {
+	SearchTools(query string, toolType string) []SearchToolsResultItem
+	GetToolDetail(toolName string) (*GetToolDetailResult, bool)
+}
+
+// InstanceLookup provides instance information for tool discovery responses.
+type InstanceLookup func(toolType string) []ToolDetailInstance
+
 // Server represents an MCP server
 type Server struct {
-	name       string
-	version    string
-	tools      map[string]Tool
-	handlers   map[string]ToolHandler
-	mu         sync.RWMutex
-	logger     *log.Logger
+	name            string
+	version         string
+	tools           map[string]Tool
+	handlers        map[string]ToolHandler
+	mu              sync.RWMutex
+	logger          *log.Logger
+	discoverer      ToolDiscoverer
+	instanceLookup  InstanceLookup
+	authorizer      *auth.Authorizer
 }
 
 // NewServer creates a new MCP server
@@ -40,6 +54,31 @@ func NewServer(name, version string, logger *log.Logger) *Server {
 	}
 }
 
+// SetDiscoverer sets the tool discoverer for search/detail endpoints.
+func (s *Server) SetDiscoverer(d ToolDiscoverer) {
+	s.discoverer = d
+}
+
+// SetInstanceLookup sets the function used to look up enabled instances by tool type.
+func (s *Server) SetInstanceLookup(fn InstanceLookup) {
+	s.instanceLookup = fn
+}
+
+// SetAuthorizer sets the authorizer used to enforce per-incident tool allowlists.
+func (s *Server) SetAuthorizer(a *auth.Authorizer) {
+	s.authorizer = a
+}
+
+// Tools returns the tools map for external read access.
+func (s *Server) Tools() map[string]Tool {
+	return s.tools
+}
+
+// Mu returns the server's read-write mutex for external synchronization.
+func (s *Server) Mu() *sync.RWMutex {
+	return &s.mu
+}
+
 // RegisterTool registers a tool with its handler
 func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	s.mu.Lock()
@@ -47,6 +86,14 @@ func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	s.tools[tool.Name] = tool
 	s.handlers[tool.Name] = handler
 	s.logger.Printf("Registered tool: %s", tool.Name)
+}
+
+// UnregisterTool removes a tool and its handler by name.
+func (s *Server) UnregisterTool(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tools, name)
+	delete(s.handlers, name)
 }
 
 // HandleHTTP handles HTTP requests for MCP protocol
@@ -64,13 +111,27 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse and register tool allowlist from header (sent per-request by agent worker)
+	if s.authorizer != nil && incidentID != "" {
+		if allowlistHeader := r.Header.Get("X-Tool-Allowlist"); allowlistHeader != "" {
+			var entries []auth.AllowlistEntry
+			if err := json.Unmarshal([]byte(allowlistHeader), &entries); err != nil {
+				s.logger.Printf("WARN: malformed X-Tool-Allowlist header for incident %s: %v", incidentID, err)
+			} else {
+				s.authorizer.SetAllowlist(incidentID, entries)
+			}
+		}
+	}
+
 	// Handle regular HTTP POST for JSON-RPC
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	// Limit request body to 10MB to prevent memory exhaustion
+	const maxRequestBytes = 10 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes))
 	if err != nil {
 		s.sendHTTPError(w, nil, ParseError, "Failed to read request body", nil)
 		return
@@ -88,6 +149,18 @@ func (s *Server) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 
 // handleSSE handles Server-Sent Events connection for MCP
 func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request, incidentID string) {
+	// Parse and register tool allowlist from header (same as HTTP POST path)
+	if s.authorizer != nil && incidentID != "" {
+		if allowlistHeader := r.Header.Get("X-Tool-Allowlist"); allowlistHeader != "" {
+			var entries []auth.AllowlistEntry
+			if err := json.Unmarshal([]byte(allowlistHeader), &entries); err != nil {
+				s.logger.Printf("WARN: malformed X-Tool-Allowlist header for incident %s: %v", incidentID, err)
+			} else {
+				s.authorizer.SetAllowlist(incidentID, entries)
+			}
+		}
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "SSE not supported", http.StatusInternalServerError)
@@ -138,6 +211,10 @@ func (s *Server) handleRequest(ctx context.Context, req *Request, incidentID str
 		return s.handleListTools(req)
 	case "tools/call":
 		return s.handleCallTool(ctx, req, incidentID)
+	case "tools/search":
+		return s.handleSearchTools(req, incidentID)
+	case "tools/detail":
+		return s.handleGetToolDetail(req, incidentID)
 	case "ping":
 		return NewResponse(req.ID, map[string]interface{}{})
 	default:
@@ -190,6 +267,35 @@ func (s *Server) handleCallTool(ctx context.Context, req *Request, incidentID st
 		return NewErrorResponse(req.ID, MethodNotFound, fmt.Sprintf("Tool not found: %s", params.Name), nil)
 	}
 
+	// Inject instance hint into arguments so authorization and tool handlers can use it
+	if params.Instance != "" {
+		if params.Arguments == nil {
+			params.Arguments = make(map[string]interface{})
+		}
+		if _, exists := params.Arguments["logical_name"]; !exists {
+			params.Arguments["logical_name"] = params.Instance
+		}
+	}
+
+	// Enforce tool allowlist authorization.
+	// MCP proxy tools use compound namespaces (e.g., "ext.github") that contain dots.
+	// Standard tool types (ssh, zabbix, victoria_metrics) never contain dots.
+	// Proxy tools are admin-configured and don't participate in skill-based tool
+	// assignment, so they bypass the per-incident allowlist.
+	if s.authorizer != nil && incidentID != "" {
+		toolType, _ := ParseToolName(params.Name)
+		if !strings.Contains(toolType, ".") {
+			instanceID := extractInstanceIDFromArgs(params.Arguments)
+			logicalName := extractLogicalNameFromArgs(params.Arguments)
+
+			if !s.authorizer.IsAuthorized(incidentID, toolType, instanceID, logicalName) {
+				return NewErrorResponse(req.ID, InvalidRequest,
+					fmt.Sprintf("Unauthorized: incident %s is not authorized to use tool %s", incidentID, params.Name),
+					nil)
+			}
+		}
+	}
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -224,6 +330,86 @@ func (s *Server) handleCallTool(ctx context.Context, req *Request, incidentID st
 	return NewResponse(req.ID, CallToolResult{
 		Content: []Content{NewTextContent(textResult)},
 	})
+}
+
+// handleSearchTools handles the tools/search request
+func (s *Server) handleSearchTools(req *Request, incidentID string) Response {
+	if s.discoverer == nil {
+		return NewErrorResponse(req.ID, InternalError, "Tool discovery not configured", nil)
+	}
+
+	var params SearchToolsParams
+	if req.Params != nil {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return NewErrorResponse(req.ID, InvalidParams, "Invalid search params", err.Error())
+		}
+	}
+
+	results := s.discoverer.SearchTools(params.Query, params.ToolType)
+
+	// Populate instance logical names if lookup is available
+	if s.instanceLookup != nil {
+		for i := range results {
+			instances := s.instanceLookup(results[i].ToolType)
+			names := make([]string, 0, len(instances))
+			for _, inst := range instances {
+				if inst.LogicalName != "" {
+					names = append(names, inst.LogicalName)
+				}
+			}
+			results[i].Instances = names
+		}
+	}
+
+	// Filter by allowlist: only include tools with at least one authorized instance
+	if s.authorizer != nil && incidentID != "" {
+		allowlist := s.authorizer.GetAllowlist(incidentID)
+		if allowlist != nil {
+			results = filterSearchResultsByAllowlist(results, allowlist)
+		}
+	}
+
+	if results == nil {
+		results = []SearchToolsResultItem{}
+	}
+
+	return NewResponse(req.ID, SearchToolsResult{Tools: results})
+}
+
+// handleGetToolDetail handles the tools/detail request
+func (s *Server) handleGetToolDetail(req *Request, incidentID string) Response {
+	if s.discoverer == nil {
+		return NewErrorResponse(req.ID, InternalError, "Tool discovery not configured", nil)
+	}
+
+	var params GetToolDetailParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return NewErrorResponse(req.ID, InvalidParams, "Invalid detail params", err.Error())
+	}
+
+	if params.ToolName == "" {
+		return NewErrorResponse(req.ID, InvalidParams, "tool_name is required", nil)
+	}
+
+	detail, found := s.discoverer.GetToolDetail(params.ToolName)
+	if !found {
+		return NewErrorResponse(req.ID, MethodNotFound, fmt.Sprintf("Tool not found: %s", params.ToolName), nil)
+	}
+
+	// Populate instances if lookup is available
+	if s.instanceLookup != nil {
+		detail.Instances = s.instanceLookup(detail.ToolType)
+	}
+
+	// Filter instances by allowlist
+	if s.authorizer != nil && incidentID != "" {
+		allowlist := s.authorizer.GetAllowlist(incidentID)
+		if allowlist != nil {
+			detail.Instances = filterInstancesByAllowlist(detail.Instances, detail.ToolType, allowlist)
+		}
+	}
+
+	return NewResponse(req.ID, detail)
 }
 
 // sendHTTPResponse sends a JSON-RPC response over HTTP
@@ -262,12 +448,77 @@ func (s *Server) sendSSEError(w http.ResponseWriter, flusher http.Flusher, id in
 	s.sendSSEResponse(w, flusher, resp)
 }
 
-// ParseToolName parses a tool name into namespace and action
-// e.g., "ssh.execute_command" -> ("ssh", "execute_command")
+// ParseToolName parses a tool name into namespace (tool type) and action.
+// Splits on the last dot so multi-segment namespaces work correctly:
+//
+//	"ssh.execute_command"       -> ("ssh", "execute_command")
+//	"ext.github.create_issue"  -> ("ext.github", "create_issue")
 func ParseToolName(name string) (namespace, action string) {
-	parts := strings.SplitN(name, ".", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
+	idx := strings.LastIndex(name, ".")
+	if idx >= 0 {
+		return name[:idx], name[idx+1:]
 	}
 	return "", name
+}
+
+// extractInstanceIDFromArgs extracts the optional tool_instance_id from tool arguments.
+func extractInstanceIDFromArgs(args map[string]interface{}) uint {
+	if v, ok := args["tool_instance_id"].(float64); ok && v > 0 {
+		return uint(v)
+	}
+	return 0
+}
+
+// extractLogicalNameFromArgs extracts the optional logical_name from tool arguments.
+func extractLogicalNameFromArgs(args map[string]interface{}) string {
+	if v, ok := args["logical_name"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// filterSearchResultsByAllowlist removes tools that have no authorized instances.
+// A tool is kept if any allowlist entry matches its tool type.
+func filterSearchResultsByAllowlist(results []SearchToolsResultItem, allowlist []auth.AllowlistEntry) []SearchToolsResultItem {
+	// Build set of authorized tool types
+	authorizedTypes := make(map[string]bool)
+	for _, e := range allowlist {
+		authorizedTypes[e.ToolType] = true
+	}
+
+	filtered := make([]SearchToolsResultItem, 0, len(results))
+	for _, item := range results {
+		if !authorizedTypes[item.ToolType] {
+			continue
+		}
+		// Also filter the instance names to only authorized ones
+		if len(item.Instances) > 0 {
+			authorizedNames := make([]string, 0)
+			for _, name := range item.Instances {
+				for _, e := range allowlist {
+					if e.ToolType == item.ToolType && e.LogicalName == name {
+						authorizedNames = append(authorizedNames, name)
+						break
+					}
+				}
+			}
+			item.Instances = authorizedNames
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+// filterInstancesByAllowlist filters tool detail instances to only those in the allowlist.
+func filterInstancesByAllowlist(instances []ToolDetailInstance, toolType string, allowlist []auth.AllowlistEntry) []ToolDetailInstance {
+	filtered := make([]ToolDetailInstance, 0, len(instances))
+	for _, inst := range instances {
+		for _, e := range allowlist {
+			if e.ToolType == toolType && (e.InstanceID == inst.ID || (e.LogicalName != "" && e.LogicalName == inst.LogicalName)) {
+				filtered = append(filtered, inst)
+				break
+			}
+		}
+	}
+	return filtered
 }

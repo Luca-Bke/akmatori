@@ -101,6 +101,13 @@ func extractInstanceID(args map[string]interface{}) *uint {
 	return nil
 }
 
+func extractLogicalName(args map[string]interface{}) string {
+	if v, ok := args["logical_name"].(string); ok {
+		return v
+	}
+	return ""
+}
+
 // clampTimeout ensures timeout is within a safe range (1-300 seconds), defaulting to 30.
 func clampTimeout(timeout int) int {
 	if timeout <= 0 {
@@ -113,21 +120,27 @@ func clampTimeout(timeout int) int {
 }
 
 // getConfig fetches VictoriaMetrics configuration from database with caching.
-func (t *VictoriaMetricsTool) getConfig(ctx context.Context, incidentID string, instanceID *uint) (*VMConfig, error) {
+func (t *VictoriaMetricsTool) getConfig(ctx context.Context, incidentID string, instanceID *uint, logicalName ...string) (*VMConfig, error) {
 	cacheKey := configCacheKey(incidentID)
 	if instanceID != nil {
 		cacheKey = fmt.Sprintf("creds:instance:%d", *instanceID)
+	} else if len(logicalName) > 0 && logicalName[0] != "" {
+		cacheKey = fmt.Sprintf("creds:logical:%s:%s", "victoria_metrics", logicalName[0])
 	}
 
 	// Check cache first
 	if cached, ok := t.configCache.Get(cacheKey); ok {
 		if config, ok := cached.(*VMConfig); ok {
-			t.logger.Printf("Config cache hit for incident %s", incidentID)
+			t.logger.Printf("Config cache hit for key %s", cacheKey)
 			return config, nil
 		}
 	}
 
-	creds, err := database.ResolveToolCredentials(ctx, incidentID, "victoria_metrics", instanceID)
+	ln := ""
+	if len(logicalName) > 0 {
+		ln = logicalName[0]
+	}
+	creds, err := database.ResolveToolCredentials(ctx, incidentID, "victoria_metrics", instanceID, ln)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get VictoriaMetrics credentials: %w", err)
 	}
@@ -180,7 +193,7 @@ func (t *VictoriaMetricsTool) getConfig(ctx context.Context, incidentID string, 
 
 	// Cache the config
 	t.configCache.Set(cacheKey, config)
-	t.logger.Printf("Config cached for incident %s", incidentID)
+	t.logger.Printf("Config cached for key %s", cacheKey)
 
 	return config, nil
 }
@@ -243,7 +256,7 @@ func (t *VictoriaMetricsTool) doRequest(ctx context.Context, config *VMConfig, m
 	}
 
 	if !config.VerifySSL {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // User-opt-in via vm_verify_ssl setting
 	}
 
 	client := &http.Client{
@@ -337,10 +350,12 @@ func parsePrometheusResponse(body []byte) (json.RawMessage, error) {
 }
 
 // cachedRequest performs a cached HTTP request to VictoriaMetrics
-func (t *VictoriaMetricsTool) cachedRequest(ctx context.Context, incidentID, method, path string, params url.Values, ttl time.Duration, instanceID *uint) (json.RawMessage, error) {
+func (t *VictoriaMetricsTool) cachedRequest(ctx context.Context, incidentID, method, path string, params url.Values, ttl time.Duration, instanceID *uint, logicalName ...string) (json.RawMessage, error) {
 	cacheKey := responseCacheKey(path, params)
 	if instanceID != nil {
 		cacheKey = fmt.Sprintf("inst:%d:%s", *instanceID, cacheKey)
+	} else if len(logicalName) > 0 && logicalName[0] != "" {
+		cacheKey = fmt.Sprintf("logical:%s:%s", logicalName[0], cacheKey)
 	} else {
 		cacheKey = fmt.Sprintf("incident:%s:%s", incidentID, cacheKey)
 	}
@@ -354,7 +369,7 @@ func (t *VictoriaMetricsTool) cachedRequest(ctx context.Context, incidentID, met
 	}
 
 	// Resolve config and make request
-	config, err := t.getConfig(ctx, incidentID, instanceID)
+	config, err := t.getConfig(ctx, incidentID, instanceID, logicalName...)
 	if err != nil {
 		return nil, err
 	}
@@ -383,6 +398,7 @@ func (t *VictoriaMetricsTool) cachedRequest(ctx context.Context, incidentID, met
 // InstantQuery executes a PromQL instant query
 func (t *VictoriaMetricsTool) InstantQuery(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
 	instanceID := extractInstanceID(args)
+	logicalName := extractLogicalName(args)
 
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
@@ -402,7 +418,7 @@ func (t *VictoriaMetricsTool) InstantQuery(ctx context.Context, incidentID strin
 		params.Set("timeout", v)
 	}
 
-	result, err := t.cachedRequest(ctx, incidentID, http.MethodPost, "/api/v1/query", params, InstantQueryTTL, instanceID)
+	result, err := t.cachedRequest(ctx, incidentID, http.MethodPost, "/api/v1/query", params, InstantQueryTTL, instanceID, logicalName)
 	if err != nil {
 		return "", err
 	}
@@ -413,6 +429,7 @@ func (t *VictoriaMetricsTool) InstantQuery(ctx context.Context, incidentID strin
 // RangeQuery executes a PromQL range query
 func (t *VictoriaMetricsTool) RangeQuery(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
 	instanceID := extractInstanceID(args)
+	logicalName := extractLogicalName(args)
 
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
@@ -444,7 +461,7 @@ func (t *VictoriaMetricsTool) RangeQuery(ctx context.Context, incidentID string,
 		params.Set("timeout", v)
 	}
 
-	result, err := t.cachedRequest(ctx, incidentID, http.MethodPost, "/api/v1/query_range", params, RangeQueryTTL, instanceID)
+	result, err := t.cachedRequest(ctx, incidentID, http.MethodPost, "/api/v1/query_range", params, RangeQueryTTL, instanceID, logicalName)
 	if err != nil {
 		return "", err
 	}
@@ -455,6 +472,7 @@ func (t *VictoriaMetricsTool) RangeQuery(ctx context.Context, incidentID string,
 // LabelValues retrieves label values for a given label name
 func (t *VictoriaMetricsTool) LabelValues(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
 	instanceID := extractInstanceID(args)
+	logicalName := extractLogicalName(args)
 
 	labelName, ok := args["label_name"].(string)
 	if !ok || labelName == "" {
@@ -475,7 +493,7 @@ func (t *VictoriaMetricsTool) LabelValues(ctx context.Context, incidentID string
 
 	path := fmt.Sprintf("/api/v1/label/%s/values", url.PathEscape(labelName))
 
-	result, err := t.cachedRequest(ctx, incidentID, http.MethodGet, path, params, LabelValuesTTL, instanceID)
+	result, err := t.cachedRequest(ctx, incidentID, http.MethodGet, path, params, LabelValuesTTL, instanceID, logicalName)
 	if err != nil {
 		return "", err
 	}
@@ -486,6 +504,7 @@ func (t *VictoriaMetricsTool) LabelValues(ctx context.Context, incidentID string
 // Series finds series matching a set of label matchers
 func (t *VictoriaMetricsTool) Series(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
 	instanceID := extractInstanceID(args)
+	logicalName := extractLogicalName(args)
 
 	match, ok := args["match"].(string)
 	if !ok || match == "" {
@@ -502,7 +521,7 @@ func (t *VictoriaMetricsTool) Series(ctx context.Context, incidentID string, arg
 		params.Set("end", v)
 	}
 
-	result, err := t.cachedRequest(ctx, incidentID, http.MethodPost, "/api/v1/series", params, SeriesTTL, instanceID)
+	result, err := t.cachedRequest(ctx, incidentID, http.MethodPost, "/api/v1/series", params, SeriesTTL, instanceID, logicalName)
 	if err != nil {
 		return "", err
 	}
@@ -513,6 +532,7 @@ func (t *VictoriaMetricsTool) Series(ctx context.Context, incidentID string, arg
 // APIRequest performs a generic API request (not cached)
 func (t *VictoriaMetricsTool) APIRequest(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
 	instanceID := extractInstanceID(args)
+	logicalName := extractLogicalName(args)
 
 	path, ok := args["path"].(string)
 	if !ok || path == "" {
@@ -564,7 +584,7 @@ func (t *VictoriaMetricsTool) APIRequest(ctx context.Context, incidentID string,
 	}
 
 	// Resolve config and make request directly (no caching)
-	config, err := t.getConfig(ctx, incidentID, instanceID)
+	config, err := t.getConfig(ctx, incidentID, instanceID, logicalName)
 	if err != nil {
 		return "", err
 	}

@@ -30,6 +30,7 @@ type BatchResult struct {
 // that need items matching multiple patterns (e.g., cpu, memory, disk)
 func (t *ZabbixTool) GetItemsBatch(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
 	instanceID := extractInstanceID(args)
+	logicalName := extractLogicalName(args)
 
 	// Extract search patterns
 	var searches []string
@@ -89,7 +90,7 @@ func (t *ZabbixTool) GetItemsBatch(ctx context.Context, incidentID string, args 
 		}
 
 		// Use cached request for efficiency
-		result, err := t.cachedRequest(ctx, incidentID, "item.get", params, ResponseCacheTTL, instanceID)
+		result, err := t.cachedRequest(ctx, incidentID, "item.get", params, ResponseCacheTTL, instanceID, logicalName)
 		if err != nil {
 			t.logger.Printf("Batch search failed for pattern '%s': %v", pattern, err)
 			// Continue with other patterns
@@ -208,7 +209,8 @@ func (t *ZabbixTool) GetItemsBatchWithHistory(ctx context.Context, incidentID st
 	}
 
 	instanceID := extractInstanceID(args)
-	historyResult, err := t.cachedRequest(ctx, incidentID, "history.get", historyParams, 15*time.Second, instanceID)
+	logicalName2 := extractLogicalName(args)
+	historyResult, err := t.cachedRequest(ctx, incidentID, "history.get", historyParams, 15*time.Second, instanceID, logicalName2)
 	if err != nil {
 		// Return items without history if history fetch fails
 		t.logger.Printf("Failed to fetch history for batch items: %v", err)

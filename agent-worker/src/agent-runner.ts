@@ -19,13 +19,15 @@ import {
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
 import { getModel, type Model, type ThinkingLevel as PiThinkingLevel } from "@mariozechner/pi-ai";
-import type { LLMSettings, ExecuteResult, ProxyConfig, ThinkingLevel } from "./types.js";
+import type { LLMSettings, ExecuteResult, ProxyConfig, ThinkingLevel, ToolAllowlistEntry } from "./types.js";
 import {
   formatToolArgs,
   formatToolOutput,
   extractToolText,
   type ToolExecutionTrace,
 } from "./tool-output-formatter.js";
+import { GatewayClient } from "./gateway-client.js";
+import { createGatewayCallTool, createSearchToolsTool, createGetToolDetailTool, createExecuteScriptTool } from "./gateway-tools.js";
 
 // ---------------------------------------------------------------------------
 // Tool calling guidelines attached to the bash tool via promptGuidelines
@@ -42,19 +44,10 @@ import {
  * guidelines disappear from the prompt automatically.
  */
 const BASH_TOOL_GUIDELINES = `\
-- You have access to infrastructure tools via Python wrappers. PYTHONPATH=/tools is pre-set.
-- IMPORTANT: Each skill's SKILL.md lists assigned tools with their tool_instance_id and the exact call forms available. Read the SKILL.md first, then call tools using only the forms shown there. Do NOT explore the filesystem to discover tools.
-- Call tools with bash using python3 -c one-liners. SSH examples (check SKILL.md for which forms apply to your instance):
-  python3 -c "from ssh import execute_command; print(execute_command('uptime', servers=['<hostname>'], tool_instance_id=<ID>))"
-  python3 -c "from ssh import test_connectivity; print(test_connectivity(servers=['<hostname>'], tool_instance_id=<ID>))"
-  python3 -c "from ssh import get_server_info; print(get_server_info(servers=['<hostname>'], tool_instance_id=<ID>))"
-- Zabbix examples:
-  python3 -c "from zabbix import get_problems; print(get_problems(severity_min=3, tool_instance_id=<ID>))"
-  python3 -c "from zabbix import get_hosts; print(get_hosts(tool_instance_id=<ID>))"
-  python3 -c "from zabbix import get_items_batch; print(get_items_batch(searches=['cpu','memory'], hostids=['12345'], tool_instance_id=<ID>))"
-  python3 -c "from zabbix import get_history; print(get_history(itemids=['67890'], limit=10, tool_instance_id=<ID>))"
-  python3 -c "from zabbix import get_triggers; print(get_triggers(hostids=['12345'], only_true=True, tool_instance_id=<ID>))"
-- Do NOT search for Python files, read source code, or trial-and-error imports. If you get ModuleNotFoundError, prefix the command with PYTHONPATH=/tools.
+- Use the gateway_call tool to invoke infrastructure tools (SSH, Zabbix, VictoriaMetrics, etc.). It communicates directly with the MCP Gateway and does not require bash.
+- For batch operations across multiple hosts or complex data processing, use the execute_script tool. It runs JavaScript with built-in gateway_call(), search_tools(), and get_tool_detail() functions.
+- Use search_tools to discover available tools, and get_tool_detail to see full parameter schemas.
+- IMPORTANT: Each skill's SKILL.md lists assigned tools with their logical names and the exact call forms available. Read the SKILL.md first, then call tools using only the forms shown there. Do NOT explore the filesystem to discover tools.
 - SSH: Most servers are in read-only mode — only diagnostic commands are allowed (cat, head, tail, grep, find, ls, ps, top, df, free, netstat, ss, uptime, vmstat, iostat, journalctl, dmesg, docker ps/logs, systemctl status, nproc, lscpu, etc.)
 - SSH: For CPU core count, use nproc or lscpu (not /proc/cpuinfo parsing). Use the servers parameter to target specific hosts.
 - Zabbix: Prefer get_items_batch over multiple get_items calls. Use hostids to scope queries. Severity: 0=Not classified, 1=Info, 2=Warning, 3=Average, 4=High, 5=Disaster. Use severity_min=3 to filter noise.`;
@@ -71,6 +64,8 @@ export interface ExecuteParams {
   workDir: string;
   /** Names of enabled skills — only these will be loaded from the shared skills directory */
   enabledSkills?: string[];
+  /** Tool instances the incident is authorized to use (nil = allow all for backward compat) */
+  toolAllowlist?: ToolAllowlistEntry[];
   onOutput: (text: string) => void;
   onEvent?: (event: AgentSessionEvent) => void;
 }
@@ -84,6 +79,8 @@ export interface ResumeParams {
   workDir: string;
   /** Names of enabled skills — only these will be loaded from the shared skills directory */
   enabledSkills?: string[];
+  /** Tool instances the incident is authorized to use (nil = allow all for backward compat) */
+  toolAllowlist?: ToolAllowlistEntry[];
   onOutput: (text: string) => void;
   onEvent?: (event: AgentSessionEvent) => void;
 }
@@ -276,7 +273,6 @@ export class AgentRunner {
           ...ctx.env,
           MCP_GATEWAY_URL: this.mcpGatewayUrl,
           INCIDENT_ID: params.incidentId,
-          PYTHONPATH: ctx.env.PYTHONPATH ? `/tools:${ctx.env.PYTHONPATH}` : "/tools",
         },
       }),
     });
@@ -288,6 +284,23 @@ export class AgentRunner {
       t.name === "bash" ? bashTool : t,
     );
 
+    // Create gateway client for this session and register gateway tools as custom tools.
+    const toolAllowlist = "toolAllowlist" in params ? params.toolAllowlist : undefined;
+    const gatewayClient = new GatewayClient({
+      gatewayUrl: this.mcpGatewayUrl,
+      incidentId: params.incidentId,
+      workDir: params.workDir,
+      toolAllowlist,
+    });
+    const gatewayToolCtx = { client: gatewayClient };
+    const gatewayCallTool = createGatewayCallTool(gatewayToolCtx);
+    const searchToolsTool = createSearchToolsTool(gatewayToolCtx);
+    const getToolDetailTool = createGetToolDetailTool(gatewayToolCtx);
+    const executeScriptTool = createExecuteScriptTool({
+      client: gatewayClient,
+      workDir: params.workDir,
+    });
+
     const { session } = await createAgentSession({
       cwd: params.workDir,
       authStorage,
@@ -295,6 +308,7 @@ export class AgentRunner {
       model,
       thinkingLevel,
       tools,
+      customTools: [gatewayCallTool, searchToolsTool, getToolDetailTool, executeScriptTool],
       resourceLoader,
       sessionManager,
       settingsManager,

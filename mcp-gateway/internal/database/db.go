@@ -57,13 +57,14 @@ func (ToolType) TableName() string {
 
 // ToolInstance represents a configured tool instance
 type ToolInstance struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	ToolTypeID uint      `gorm:"not null;index" json:"tool_type_id"`
-	Name       string    `gorm:"uniqueIndex;not null" json:"name"`
-	Settings   JSONB     `gorm:"type:jsonb" json:"settings"`
-	Enabled    bool      `gorm:"default:true" json:"enabled"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	ToolTypeID  uint      `gorm:"not null;index" json:"tool_type_id"`
+	Name        string    `gorm:"uniqueIndex;not null" json:"name"`
+	LogicalName string    `gorm:"uniqueIndex;size:128" json:"logical_name"`
+	Settings    JSONB     `gorm:"type:jsonb" json:"settings"`
+	Enabled     bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 
 	ToolType ToolType `gorm:"foreignKey:ToolTypeID" json:"tool_type,omitempty"`
 }
@@ -131,10 +132,11 @@ func GetDB() *gorm.DB {
 
 // ToolCredentials holds credentials for a tool
 type ToolCredentials struct {
-	ToolType   string                 `json:"tool_type"`
-	ToolName   string                 `json:"tool_name"`
-	Settings   map[string]interface{} `json:"settings"`
-	InstanceID uint                   `json:"instance_id"`
+	ToolType    string                 `json:"tool_type"`
+	ToolName    string                 `json:"tool_name"`
+	Settings    map[string]interface{} `json:"settings"`
+	InstanceID  uint                   `json:"instance_id"`
+	LogicalName string                 `json:"logical_name,omitempty"`
 }
 
 // GetToolCredentialsForIncident fetches tool credentials for an incident
@@ -158,10 +160,11 @@ func GetToolCredentialsForIncident(ctx context.Context, incidentID string, toolT
 	}
 
 	return &ToolCredentials{
-		ToolType:   toolInstance.ToolType.Name,
-		ToolName:   toolInstance.Name,
-		Settings:   toolInstance.Settings,
-		InstanceID: toolInstance.ID,
+		ToolType:    toolInstance.ToolType.Name,
+		ToolName:    toolInstance.Name,
+		Settings:    toolInstance.Settings,
+		InstanceID:  toolInstance.ID,
+		LogicalName: toolInstance.LogicalName,
 	}, nil
 }
 
@@ -198,20 +201,53 @@ func GetToolCredentialsByInstanceID(ctx context.Context, instanceID uint, expect
 	}
 
 	return &ToolCredentials{
-		ToolType:   toolInstance.ToolType.Name,
-		ToolName:   toolInstance.Name,
-		Settings:   toolInstance.Settings,
-		InstanceID: toolInstance.ID,
+		ToolType:    toolInstance.ToolType.Name,
+		ToolName:    toolInstance.Name,
+		Settings:    toolInstance.Settings,
+		InstanceID:  toolInstance.ID,
+		LogicalName: toolInstance.LogicalName,
 	}, nil
 }
 
-// ResolveToolCredentials resolves tool credentials with optional instance-aware routing.
-// If instanceID is provided, it fetches credentials for that specific instance and
-// validates that it matches the expected tool type. Otherwise, it falls back to
-// the existing type-based lookup.
-func ResolveToolCredentials(ctx context.Context, incidentID string, toolType string, instanceID *uint) (*ToolCredentials, error) {
+// GetToolCredentialsByLogicalName fetches tool credentials by logical name.
+// The expectedToolType parameter ensures the instance belongs to the requested tool type.
+func GetToolCredentialsByLogicalName(ctx context.Context, logicalName string, expectedToolType string) (*ToolCredentials, error) {
+	var toolInstance ToolInstance
+	err := DB.WithContext(ctx).
+		Preload("ToolType").
+		Where("logical_name = ? AND enabled = ?", logicalName, true).
+		First(&toolInstance).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("no enabled tool instance found with logical name: %s", logicalName)
+		}
+		return nil, err
+	}
+
+	if toolInstance.ToolType.Name != expectedToolType {
+		return nil, fmt.Errorf("tool instance %q is type %q, but %q was requested", logicalName, toolInstance.ToolType.Name, expectedToolType)
+	}
+
+	return &ToolCredentials{
+		ToolType:    toolInstance.ToolType.Name,
+		ToolName:    toolInstance.Name,
+		Settings:    toolInstance.Settings,
+		InstanceID:  toolInstance.ID,
+		LogicalName: toolInstance.LogicalName,
+	}, nil
+}
+
+// ResolveToolCredentials resolves tool credentials with priority:
+// 1. Explicit instance ID (if provided and > 0)
+// 2. Logical name (if provided and non-empty)
+// 3. First enabled instance of the given tool type
+func ResolveToolCredentials(ctx context.Context, incidentID string, toolType string, instanceID *uint, logicalName string) (*ToolCredentials, error) {
 	if instanceID != nil && *instanceID > 0 {
 		return GetToolCredentialsByInstanceID(ctx, *instanceID, toolType)
+	}
+	if logicalName != "" {
+		return GetToolCredentialsByLogicalName(ctx, logicalName, toolType)
 	}
 	return GetToolCredentialsForIncident(ctx, incidentID, toolType)
 }
@@ -229,6 +265,32 @@ func GetToolInstanceByType(ctx context.Context, typeName string) (*ToolInstance,
 		return nil, err
 	}
 	return &instance, nil
+}
+
+// HTTPConnector represents a declarative HTTP connector definition (mirrors main app model)
+type HTTPConnector struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	ToolTypeName string    `gorm:"uniqueIndex;size:128;not null" json:"tool_type_name"`
+	Description  string    `gorm:"size:1024" json:"description"`
+	BaseURLField string    `gorm:"size:128;not null" json:"base_url_field"`
+	AuthConfig   JSONB     `gorm:"type:jsonb" json:"auth_config"`
+	Tools        JSONB     `gorm:"type:jsonb;not null" json:"tools"`
+	Enabled      bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (HTTPConnector) TableName() string {
+	return "http_connectors"
+}
+
+// GetAllEnabledHTTPConnectors returns all enabled HTTP connector definitions
+func GetAllEnabledHTTPConnectors(ctx context.Context) ([]HTTPConnector, error) {
+	var connectors []HTTPConnector
+	err := DB.WithContext(ctx).
+		Where("enabled = ?", true).
+		Find(&connectors).Error
+	return connectors, err
 }
 
 // ProxySettings stores HTTP proxy configuration with per-service toggles
@@ -256,4 +318,43 @@ func GetProxySettings(ctx context.Context) (*ProxySettings, error) {
 		return nil, err
 	}
 	return &settings, nil
+}
+
+// MCPServerConfig represents a registered external MCP server for proxying.
+type MCPServerConfig struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	Name            string    `gorm:"uniqueIndex;size:128;not null" json:"name"`
+	Transport       string    `gorm:"type:varchar(16);not null" json:"transport"`
+	URL             string    `gorm:"size:512" json:"url,omitempty"`
+	Command         string    `gorm:"size:512" json:"command,omitempty"`
+	Args            JSONB     `gorm:"type:jsonb" json:"args,omitempty"`
+	EnvVars         JSONB     `gorm:"type:jsonb" json:"env_vars,omitempty"`
+	NamespacePrefix string    `gorm:"size:128;not null" json:"namespace_prefix"`
+	AuthConfig      JSONB     `gorm:"type:jsonb" json:"auth_config,omitempty"`
+	Enabled         bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+func (MCPServerConfig) TableName() string {
+	return "mcp_server_configs"
+}
+
+// GetAllEnabledMCPServerConfigs returns all enabled MCP server configurations.
+func GetAllEnabledMCPServerConfigs(ctx context.Context) ([]MCPServerConfig, error) {
+	var configs []MCPServerConfig
+	err := DB.WithContext(ctx).
+		Where("enabled = ?", true).
+		Find(&configs).Error
+	return configs, err
+}
+
+// GetMCPServerConfigByID returns an MCP server config by ID.
+func GetMCPServerConfigByID(ctx context.Context, id uint) (*MCPServerConfig, error) {
+	var config MCPServerConfig
+	err := DB.WithContext(ctx).First(&config, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
 }
