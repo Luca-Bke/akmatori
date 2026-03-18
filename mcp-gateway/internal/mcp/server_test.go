@@ -741,6 +741,49 @@ func TestHandleSearchTools_FilteredByAllowlist_FullAuthorization(t *testing.T) {
 	}
 }
 
+func TestHandleSearchTools_ProxyNamespaceBypassesAllowlistFilter(t *testing.T) {
+	s := newTestServer()
+	authorizer := auth.NewAuthorizer(time.Hour)
+	defer authorizer.Stop()
+	s.SetAuthorizer(authorizer)
+
+	// Register "qmd" as a proxy namespace
+	s.AddProxyNamespace("qmd")
+
+	s.SetDiscoverer(&mockDiscoverer{
+		tools: []SearchToolsResultItem{
+			{Name: "ssh.execute_command", Description: "Execute command", ToolType: "ssh"},
+			{Name: "qmd.query", Description: "Search runbooks", ToolType: "qmd"},
+		},
+	})
+
+	// Only allow SSH — no QMD in allowlist
+	allowlist := []auth.AllowlistEntry{
+		{InstanceID: 1, LogicalName: "prod-ssh", ToolType: "ssh"},
+	}
+	allowlistJSON, _ := json.Marshal(allowlist)
+
+	resp := sendJSONRPCWithHeaders(t, s, "tools/search",
+		SearchToolsParams{Query: ""},
+		map[string]string{
+			"X-Incident-ID":    "incident-proxy-filter",
+			"X-Tool-Allowlist": string(allowlistJSON),
+		},
+	)
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %s", resp.Error.Message)
+	}
+
+	resultBytes, _ := json.Marshal(resp.Result)
+	var result SearchToolsResult
+	json.Unmarshal(resultBytes, &result)
+
+	// Both SSH (in allowlist) and QMD (proxy namespace bypass) should appear
+	if len(result.Tools) != 2 {
+		t.Errorf("expected 2 tools (ssh + qmd proxy bypass), got %d", len(result.Tools))
+	}
+}
+
 func TestHandleSearchTools_NoAllowlistReturnsAll(t *testing.T) {
 	s := newTestServer()
 	authorizer := auth.NewAuthorizer(time.Hour)

@@ -135,6 +135,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      qmd:
+        condition: service_healthy
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-akmatori}
       - POSTGRES_HOST=postgres

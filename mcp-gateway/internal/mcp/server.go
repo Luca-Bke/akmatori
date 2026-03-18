@@ -386,7 +386,7 @@ func (s *Server) handleSearchTools(req *Request, incidentID string) Response {
 	if s.authorizer != nil && incidentID != "" {
 		allowlist := s.authorizer.GetAllowlist(incidentID)
 		if allowlist != nil {
-			results = filterSearchResultsByAllowlist(results, allowlist)
+			results = filterSearchResultsByAllowlist(results, allowlist, s.proxyNamespaces)
 		}
 	}
 
@@ -408,7 +408,7 @@ func (s *Server) handleSearchTools(req *Request, incidentID string) Response {
 				}
 				var filtered []string
 				for _, t := range availableTypes {
-					if authorizedTypes[t] {
+					if authorizedTypes[t] || s.isProxyNamespace(t) || strings.Contains(t, ".") {
 						filtered = append(filtered, t)
 					}
 				}
@@ -480,7 +480,7 @@ func (s *Server) handleListToolTypes(req *Request, incidentID string) Response {
 			}
 			var filtered []string
 			for _, t := range types {
-				if authorizedTypes[t] {
+				if authorizedTypes[t] || s.isProxyNamespace(t) || strings.Contains(t, ".") {
 					filtered = append(filtered, t)
 				}
 			}
@@ -561,8 +561,9 @@ func extractLogicalNameFromArgs(args map[string]interface{}) string {
 }
 
 // filterSearchResultsByAllowlist removes tools that have no authorized instances.
-// A tool is kept if any allowlist entry matches its tool type.
-func filterSearchResultsByAllowlist(results []SearchToolsResultItem, allowlist []auth.AllowlistEntry) []SearchToolsResultItem {
+// A tool is kept if any allowlist entry matches its tool type, or if the tool
+// belongs to a registered proxy namespace (proxy tools bypass the allowlist).
+func filterSearchResultsByAllowlist(results []SearchToolsResultItem, allowlist []auth.AllowlistEntry, proxyNamespaces map[string]bool) []SearchToolsResultItem {
 	// Build set of authorized tool types
 	authorizedTypes := make(map[string]bool)
 	for _, e := range allowlist {
@@ -571,7 +572,8 @@ func filterSearchResultsByAllowlist(results []SearchToolsResultItem, allowlist [
 
 	filtered := make([]SearchToolsResultItem, 0, len(results))
 	for _, item := range results {
-		if !authorizedTypes[item.ToolType] {
+		// Proxy namespaces and multi-segment namespaces bypass the allowlist
+		if !authorizedTypes[item.ToolType] && !proxyNamespaces[item.ToolType] && !strings.Contains(item.ToolType, ".") {
 			continue
 		}
 		// Also filter the instance names to only authorized ones
