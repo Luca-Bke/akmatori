@@ -79,9 +79,9 @@ Rename the agent-facing `search_tools` tool to `list_tools_for_tool_type` across
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] Update the Gateway Tools table: `search_tools` → `list_tools_for_tool_type`
-- [ ] Update the execute_script description mentioning injected `search_tools()`
-- [ ] Update any other references in CLAUDE.md
+- [x] Update the Gateway Tools table: `search_tools` → `list_tools_for_tool_type`
+- [x] Update the execute_script description mentioning injected `search_tools()`
+- [x] Update any other references in CLAUDE.md
 
 ### Task 6: Verify acceptance criteria
 
