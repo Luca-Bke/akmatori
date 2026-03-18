@@ -386,7 +386,14 @@ func (s *Server) handleSearchTools(req *Request, incidentID string) Response {
 	if s.authorizer != nil && incidentID != "" {
 		allowlist := s.authorizer.GetAllowlist(incidentID)
 		if allowlist != nil {
-			results = filterSearchResultsByAllowlist(results, allowlist, s.proxyNamespaces)
+			// Snapshot proxyNamespaces under lock to avoid data race with AddProxyNamespace
+			s.mu.RLock()
+			pns := make(map[string]bool, len(s.proxyNamespaces))
+			for k, v := range s.proxyNamespaces {
+				pns[k] = v
+			}
+			s.mu.RUnlock()
+			results = filterSearchResultsByAllowlist(results, allowlist, pns)
 		}
 	}
 

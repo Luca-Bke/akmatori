@@ -1,6 +1,6 @@
 version: '3.8'
 
-# Secure 4-Container Architecture
+# Secure 5-Container Architecture
 # ================================
 # Network Isolation:
 # - frontend: nginx, frontend (external access)
@@ -136,7 +136,7 @@ services:
       postgres:
         condition: service_healthy
       qmd:
-        condition: service_healthy
+        condition: service_started
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-akmatori}
       - POSTGRES_HOST=postgres

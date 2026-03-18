@@ -1007,9 +1007,11 @@ func connectSSE(ctx context.Context, conn *MCPConnection) error {
 
 	// Try MCP Streamable HTTP initialize handshake first.
 	// Servers like QMD require this to establish a session before accepting tool calls.
-	if err := tryMCPInitialize(ctx, conn); err == nil {
+	initErr := tryMCPInitialize(ctx, conn)
+	if initErr == nil {
 		return nil
 	}
+	slog.Debug("MCP initialize handshake failed, falling back to basic reachability check", "url", conn.config.URL, "error", initErr)
 
 	// Fall back to basic reachability check for non-session servers
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, conn.config.URL, nil)
@@ -1051,7 +1053,10 @@ func tryMCPInitialize(ctx context.Context, conn *MCPConnection) error {
 	if err != nil {
 		return fmt.Errorf("initialize request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("initialize returned %d", resp.StatusCode)

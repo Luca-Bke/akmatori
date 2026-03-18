@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -220,7 +221,10 @@ func (s *RunbookService) triggerQMDReindex() {
 		slog.Warn("failed to trigger QMD re-index", "url", url, "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Warn("QMD re-index returned non-200 status", "url", url, "status", resp.StatusCode)
