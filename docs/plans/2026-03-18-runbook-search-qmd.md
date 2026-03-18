@@ -118,7 +118,7 @@ Integrate QMD (hybrid BM25 + vector + LLM reranking search engine) as a Docker s
 
 **Description**: Add a POST `/update` REST endpoint to QMD's HTTP server that triggers re-indexing (scan files + generate embeddings for new/changed documents).
 
-- [ ] In the HTTP handler section of `server.ts`, add handler for `POST /update`:
+- [x] In the HTTP handler section of `server.ts`, add handler for `POST /update`:
   ```typescript
   if (pathname === "/update" && nodeReq.method === "POST") {
     await store.update();   // re-scan filesystem
@@ -128,9 +128,9 @@ Integrate QMD (hybrid BM25 + vector + LLM reranking search engine) as a Docker s
     return;
   }
   ```
-- [ ] Ensure the endpoint is idempotent and safe to call frequently (QMD already handles no-op updates efficiently via content hashing)
-- [ ] Write test: call `/update` endpoint, verify 200 response
-- [ ] Run QMD tests: `cd /opt/qmd && npm test`
+- [x] Ensure the endpoint is idempotent and safe to call frequently (QMD already handles no-op updates efficiently via content hashing)
+- [x] Write test: call `/update` endpoint, verify 200 response
+- [x] Run QMD tests: `cd /opt/qmd && npm test`
 
 ### Task 5: Update agent incident prompt to use QMD search
 
