@@ -147,7 +147,7 @@ export function createListToolsForToolTypeTool(ctx: GatewayToolContext) {
       "Returns a list of matching tools with their descriptions and available instances. " +
       "Use this to discover what tools are available before calling them.",
     promptGuidelines: [
-      "Call list_tool_types first to see available tool types. Then list tools by type (e.g. list_tools_for_tool_type({query: 'ssh'}) or list_tools_for_tool_type({tool_type: 'victoria_metrics'})). Do NOT search for alert text or error messages — search for tool type names only.",
+      "Call list_tool_types first to see available tool types. Then list tools by type (e.g. list_tools_for_tool_type({query: 'ssh'}) or list_tools_for_tool_type({query: 'metrics', tool_type: 'victoria_metrics'})). Do NOT search for alert text or error messages — search for tool type names only.",
       "Example: list_tools_for_tool_type({ query: \"ssh\" }) — finds all SSH-related tools",
       "Example: list_tools_for_tool_type({ query: \"metrics\", tool_type: \"victoria_metrics\" }) — finds VictoriaMetrics tools",
       "After finding a tool, use get_tool_detail to see its full parameter schema before calling it.",
