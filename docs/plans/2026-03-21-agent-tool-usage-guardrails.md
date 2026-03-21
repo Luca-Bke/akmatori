@@ -71,13 +71,13 @@ Fix agent execution issues observed in incident logs: agents skip runbook lookup
 - Modify: `mcp-gateway/internal/tools/victoriametrics/registry.go` (toolInstanceIDProperty and all tool registrations)
 - Check: other tool implementations (SSH, Zabbix) for same pattern
 
-- [ ] Remove `tool_instance_id` and `logical_name` from individual tool input schemas - routing is handled by `gateway_call`'s `instance` parameter
-- [ ] Remove `extractInstanceID()` and `extractLogicalName()` helper functions
-- [ ] Update tool handler functions to not accept these routing params (routing is done at gateway_call level)
-- [ ] Check SSH and Zabbix tool schemas for the same pattern and remove there too
-- [ ] Update cache key generation if it references instance ID from args
-- [ ] Update all affected tests
-- [ ] Run `make test-mcp` - must pass before task 5
+- [x] Remove `tool_instance_id` and `logical_name` from individual tool input schemas - routing is handled by `gateway_call`'s `instance` parameter
+- [x] Remove `extractInstanceID()` and `extractLogicalName()` helper functions
+- [x] Update tool handler functions to not accept these routing params (routing is done at gateway_call level)
+- [x] Check SSH and Zabbix tool schemas for the same pattern and remove there too
+- [x] Update cache key generation if it references instance ID from args
+- [x] Update all affected tests
+- [x] Run `make test-mcp` - must pass before task 5
 
 ### Task 5: Strengthen BASH_TOOL_GUIDELINES in Agent Runner
 
