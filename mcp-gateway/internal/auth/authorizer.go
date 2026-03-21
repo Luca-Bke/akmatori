@@ -59,9 +59,9 @@ func (a *Authorizer) SetAllowlist(incidentID string, entries []AllowlistEntry) {
 // Authorization logic:
 //  1. No allowlist for this incident -> allow all (safe default for unregistered incidents)
 //  2. Empty allowlist -> reject everything
-//  3. Check tool_type matches at least one entry
-//  4. If instanceID > 0, that specific ID must be in the allowlist
-//  5. If logicalName is set, that specific name must be in the allowlist
+//  3. If both instanceID and logicalName are set, both must match the SAME entry
+//  4. If only instanceID > 0, that specific ID must be in the allowlist
+//  5. If only logicalName is set, that specific name must be in the allowlist
 //  6. If neither instanceID nor logicalName is specified, any entry matching
 //     the tool type is sufficient (the handler will pick an authorized instance)
 func (a *Authorizer) IsAuthorized(incidentID string, toolType string, instanceID uint, logicalName string) bool {
@@ -84,7 +84,20 @@ func (a *Authorizer) IsAuthorized(incidentID string, toolType string, instanceID
 		return false
 	}
 
-	// If a specific instance ID is requested, check it directly
+	// If both instance ID and logical name are provided, they must match the
+	// SAME allowlist entry. This prevents an attacker from passing an authorized
+	// instanceID alongside an unauthorized logicalName to bypass authorization
+	// (the handler resolves credentials from logicalName after instanceID is stripped).
+	if instanceID > 0 && logicalName != "" {
+		for _, e := range al.entries {
+			if e.InstanceID == instanceID && e.LogicalName == logicalName && e.ToolType == toolType {
+				return true
+			}
+		}
+		return false
+	}
+
+	// If only a specific instance ID is requested, check it directly
 	if instanceID > 0 {
 		for _, e := range al.entries {
 			if e.InstanceID == instanceID && e.ToolType == toolType {
@@ -94,7 +107,7 @@ func (a *Authorizer) IsAuthorized(incidentID string, toolType string, instanceID
 		return false
 	}
 
-	// If a logical name is requested, check it directly
+	// If only a logical name is requested, check it directly
 	if logicalName != "" {
 		for _, e := range al.entries {
 			if e.LogicalName == logicalName && e.ToolType == toolType {
@@ -127,6 +140,58 @@ func (a *Authorizer) GetAllowlist(incidentID string) []AllowlistEntry {
 		return nil
 	}
 	return al.entries
+}
+
+// IsAuthorizedFromEntries checks authorization against a pre-fetched allowlist
+// snapshot. This avoids TOCTOU races when the caller needs to use the same
+// snapshot for both authorization and subsequent operations (e.g., looking up
+// the logical_name for an authorized instance ID).
+//
+// A nil entries slice means no allowlist is active — all calls are allowed.
+func IsAuthorizedFromEntries(entries []AllowlistEntry, toolType string, instanceID uint, logicalName string) bool {
+	// No allowlist = allow all
+	if entries == nil {
+		return true
+	}
+
+	// Empty allowlist = reject all
+	if len(entries) == 0 {
+		return false
+	}
+
+	if instanceID > 0 && logicalName != "" {
+		for _, e := range entries {
+			if e.InstanceID == instanceID && e.LogicalName == logicalName && e.ToolType == toolType {
+				return true
+			}
+		}
+		return false
+	}
+
+	if instanceID > 0 {
+		for _, e := range entries {
+			if e.InstanceID == instanceID && e.ToolType == toolType {
+				return true
+			}
+		}
+		return false
+	}
+
+	if logicalName != "" {
+		for _, e := range entries {
+			if e.LogicalName == logicalName && e.ToolType == toolType {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, e := range entries {
+		if e.ToolType == toolType {
+			return true
+		}
+	}
+	return false
 }
 
 // RemoveAllowlist removes the allowlist for an incident.

@@ -28,7 +28,12 @@ const REGISTERED_TOOL_NAMES = new Set([
   "execute_script",
 ]);
 
-/** Known MCP tool type namespaces (the segment before the dot). */
+/**
+ * Known MCP tool type namespaces (the segment before the dot).
+ * Used for logging/diagnostics only — isDotNamespacedToolName accepts any
+ * valid identifier namespace to also cover dynamically registered HTTP
+ * connector tool types (e.g. "internal-billing.get_invoice").
+ */
 const KNOWN_TOOL_NAMESPACES = new Set([
   "ssh",
   "zabbix",
@@ -37,24 +42,37 @@ const KNOWN_TOOL_NAMESPACES = new Set([
   "http_connector",
 ]);
 
-/** Error patterns where the hint should NOT fire (agent already used gateway_call correctly). */
-const SUPPRESS_HINT_PATTERNS = [
-  /\bUnauthorized\b/i,
-  /\bnot authorized\b/i,
-  /\bforbidden\b/i,
+/** Error patterns that indicate a tool routing/discovery issue where the hint is relevant.
+ * Patterns are intentionally specific to tool/method routing errors to avoid
+ * false positives on general execution errors like "File not found: config.yaml"
+ * or "Tool execution failed: Module not found: node.js".
+ */
+const TOOL_ROUTING_ERROR_PATTERNS = [
+  /\bunknown tool\b/i,
+  /\bunknown method\b/i,
+  /\bmethod not found\b/i,
+  /\btool not found\b/i,
+  /\btool\s+\S+\s+not found\b/i,  // SDK format: "Tool <name> not found"
+  /\bno such tool\b/i,
+  /(?<!\d)-32601\b/,  // JSON-RPC method-not-found error code
 ];
 
 /**
  * Returns true if the given string looks like a dot-namespaced MCP tool name
- * (e.g. "victoria_metrics.instant_query", "ssh.execute_command").
- * Validates that the namespace segment is a known tool type.
+ * (e.g. "victoria_metrics.instant_query", "ssh.execute_command",
+ * "internal-billing.get_invoice").
+ *
+ * Accepts any namespace that looks like a valid identifier (alphanumeric,
+ * underscores, hyphens) so it also covers dynamically registered HTTP
+ * connector tool types, not just the hard-coded KNOWN_TOOL_NAMESPACES set.
  */
 export function isDotNamespacedToolName(name: string): boolean {
   if (!name || typeof name !== "string") return false;
   const dotIndex = name.indexOf(".");
   if (dotIndex <= 0 || dotIndex >= name.length - 1 || name.includes(" ")) return false;
+  // Accept any identifier-like namespace (covers known types + dynamic HTTP connectors)
   const namespace = name.substring(0, dotIndex);
-  return KNOWN_TOOL_NAMESPACES.has(namespace);
+  return /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(namespace);
 }
 
 /**
@@ -64,14 +82,17 @@ export function isDotNamespacedToolName(name: string): boolean {
  * Returns an empty string if no hint is applicable.
  */
 export function formatDirectToolCallHint(errorMessage: string): string {
-  // Don't hint on authorization errors — the agent is already using gateway_call,
-  // the problem is the tool instance isn't in the allowlist.
-  if (SUPPRESS_HINT_PATTERNS.some((p) => p.test(errorMessage))) return "";
+  // Only hint on tool routing/discovery errors (not-found, unknown tool, etc.)
+  // to avoid false positives on general execution errors like "node.js version 18".
+  if (!TOOL_ROUTING_ERROR_PATTERNS.some((p) => p.test(errorMessage))) return "";
 
   // Extract potential tool names from the error message.
   // Try quoted first, then fall back to unquoted (gateway errors don't quote tool names).
-  const quoted = errorMessage.match(/['"`]([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)['"`]/);
-  const unquoted = errorMessage.match(/\b([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)\b/);
+  // Namespace segments may contain hyphens (e.g., "internal-billing.get_invoice",
+  // "ext.github-enterprise.create_issue"). All dot-separated segments allow
+  // alphanumerics, underscores, and hyphens to support proxy namespace prefixes.
+  const quoted = errorMessage.match(/['"`]([a-zA-Z_][a-zA-Z0-9_-]*(?:\.[a-zA-Z_][a-zA-Z0-9_-]*)+)['"`]/);
+  const unquoted = errorMessage.match(/\b([a-zA-Z_][a-zA-Z0-9_-]*(?:\.[a-zA-Z_][a-zA-Z0-9_-]*)+)\b/);
   const match = quoted ?? unquoted;
   if (match && isDotNamespacedToolName(match[1]) && !REGISTERED_TOOL_NAMES.has(match[1])) {
     return (
@@ -185,9 +206,11 @@ export function createGatewayCallTool(ctx: GatewayToolContext) {
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        const hint = formatDirectToolCallHint(message);
+        // Do not append the "use gateway_call" hint here — the agent is
+        // already using gateway_call. The hint is only useful when the
+        // pi-mono framework itself rejects a direct tool call attempt.
         return {
-          content: [{ type: "text" as const, text: `Error: ${message}${hint}` }],
+          content: [{ type: "text" as const, text: `Error: ${message}` }],
           details: {},
         };
       }

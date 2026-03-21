@@ -700,6 +700,12 @@ describe("isDotNamespacedToolName", () => {
     expect(isDotNamespacedToolName("http_connector.some_tool")).toBe(true);
   });
 
+  it("should return true for dynamic HTTP connector tool types", () => {
+    expect(isDotNamespacedToolName("internal-billing.get_invoice")).toBe(true);
+    expect(isDotNamespacedToolName("company-api.list_users")).toBe(true);
+    expect(isDotNamespacedToolName("custom_service.health_check")).toBe(true);
+  });
+
   it("should return false for non-namespaced names", () => {
     expect(isDotNamespacedToolName("gateway_call")).toBe(false);
     expect(isDotNamespacedToolName("execute_script")).toBe(false);
@@ -714,12 +720,22 @@ describe("isDotNamespacedToolName", () => {
     expect(isDotNamespacedToolName("has space.tool")).toBe(false);
   });
 
-  it("should return false for unknown namespaces (hostnames, filenames, etc.)", () => {
-    expect(isDotNamespacedToolName("db.prod")).toBe(false);
-    expect(isDotNamespacedToolName("config.yaml")).toBe(false);
-    expect(isDotNamespacedToolName("node.js")).toBe(false);
-    expect(isDotNamespacedToolName("metrics.company")).toBe(false);
-    expect(isDotNamespacedToolName("host.get")).toBe(false);
+  it("should return true for any valid identifier namespace (permissive for dynamic tools)", () => {
+    // These match the identifier pattern and are accepted — the hint is
+    // best-effort and false positives in error messages are harmless.
+    expect(isDotNamespacedToolName("db.prod")).toBe(true);
+    expect(isDotNamespacedToolName("config.yaml")).toBe(true);
+    expect(isDotNamespacedToolName("host.get")).toBe(true);
+  });
+
+  it("should return true for multi-segment proxy tool names", () => {
+    expect(isDotNamespacedToolName("ext.github.create_issue")).toBe(true);
+    expect(isDotNamespacedToolName("ext.db.query")).toBe(true);
+  });
+
+  it("should return false for namespaces starting with digits or special chars", () => {
+    expect(isDotNamespacedToolName("123.tool")).toBe(false);
+    expect(isDotNamespacedToolName("@scope.tool")).toBe(false);
   });
 });
 
@@ -731,22 +747,29 @@ describe("formatDirectToolCallHint", () => {
     expect(hint).toContain("is a gateway tool");
   });
 
-  it("should suppress hint for authorization errors (agent already used gateway_call correctly)", () => {
+  it("should not hint on authorization errors (no routing error pattern)", () => {
     expect(formatDirectToolCallHint("Unauthorized: incident abc is not authorized to use tool ssh.execute_command")).toBe("");
     expect(formatDirectToolCallHint("MCP Error -32600: Unauthorized: not authorized to use tool victoria_metrics.instant_query")).toBe("");
     expect(formatDirectToolCallHint("Forbidden: access denied for zabbix.get_problems")).toBe("");
   });
 
-  it("should work with quoted tool names in error messages", () => {
-    const hint = formatDirectToolCallHint("Cannot call 'zabbix.get_problems' directly");
+  it("should work with quoted tool names in not-found error messages", () => {
+    const hint = formatDirectToolCallHint("Tool not found: 'zabbix.get_problems'");
     expect(hint).toContain("zabbix.get_problems");
     expect(hint).toContain("gateway_call");
   });
 
-  it("should return empty string when no dot-namespaced tool name is found", () => {
+  it("should return empty string when no routing error pattern is present", () => {
     expect(formatDirectToolCallHint("Connection refused")).toBe("");
     expect(formatDirectToolCallHint("Timeout error")).toBe("");
     expect(formatDirectToolCallHint("Generic error message")).toBe("");
+  });
+
+  it("should return empty string for general execution errors with dot-like words", () => {
+    // These contain dot-namespaced words but are NOT tool routing errors
+    expect(formatDirectToolCallHint("error in node.js version 18")).toBe("");
+    expect(formatDirectToolCallHint("process.exit called unexpectedly")).toBe("");
+    expect(formatDirectToolCallHint("failed to parse config.yaml")).toBe("");
   });
 
   it("should not return a hint for registered tool names", () => {
@@ -754,17 +777,70 @@ describe("formatDirectToolCallHint", () => {
     expect(formatDirectToolCallHint("Error with 'gateway_call'")).toBe("");
   });
 
-  it("should not return a hint for unknown namespaces (hostnames, filenames, etc.)", () => {
-    expect(formatDirectToolCallHint("Connection refused: db.prod.internal:5432")).toBe("");
-    expect(formatDirectToolCallHint("SSL error for metrics.company.com")).toBe("");
-    expect(formatDirectToolCallHint("config.yaml is missing")).toBe("");
+  it("should return a hint for dynamic HTTP connector tool names", () => {
+    const hint = formatDirectToolCallHint("Tool not found: internal-billing.get_invoice");
+    expect(hint).toContain("internal-billing.get_invoice");
+    expect(hint).toContain("gateway_call");
+  });
+
+  it("should not return a hint for non-routing errors even with dot patterns", () => {
+    expect(formatDirectToolCallHint("Connection refused: 10.0.0.1:5432")).toBe("");
     expect(formatDirectToolCallHint("error in node.js version 18")).toBe("");
-    expect(formatDirectToolCallHint("Host key verification failed for db.host")).toBe("");
+  });
+
+  it("should correctly extract multi-segment proxy tool names", () => {
+    const hint = formatDirectToolCallHint("Tool not found: ext.github.create_issue");
+    expect(hint).toContain("ext.github.create_issue");
+    expect(hint).toContain("gateway_call");
+    // Must NOT suggest the partial name "ext.github"
+    expect(hint).not.toContain('gateway_call("ext.github"');
+  });
+
+  it("should handle quoted multi-segment proxy tool names", () => {
+    const hint = formatDirectToolCallHint("Unknown tool 'ext.db.query'");
+    expect(hint).toContain("ext.db.query");
+    expect(hint).toContain("gateway_call");
+  });
+
+  it("should correctly extract multi-segment proxy names with hyphens in sub-segments", () => {
+    const hint = formatDirectToolCallHint("Tool not found: ext.github-enterprise.create_issue");
+    expect(hint).toContain("ext.github-enterprise.create_issue");
+    expect(hint).toContain("gateway_call");
+    // Must NOT truncate to "ext.github"
+    expect(hint).not.toContain('gateway_call("ext.github"');
+  });
+
+  it("should match pi-agent-core SDK error format: 'Tool <name> not found'", () => {
+    // pi-agent-core generates "Tool ${toolCall.name} not found" at agent-loop.js:327
+    // when the agent tries to call a tool that isn't registered
+    const hint = formatDirectToolCallHint("Tool ssh.execute_command not found");
+    expect(hint).toContain("ssh.execute_command");
+    expect(hint).toContain("gateway_call");
+
+    const hint2 = formatDirectToolCallHint("Tool victoria_metrics.instant_query not found");
+    expect(hint2).toContain("victoria_metrics.instant_query");
+    expect(hint2).toContain("gateway_call");
+  });
+
+  it("should match JSON-RPC error codes in error messages", () => {
+    // The regex should match -32601 (method not found) preceded by non-word chars
+    const hint = formatDirectToolCallHint("MCP Error -32601: victoria_metrics.instant_query");
+    expect(hint).toContain("victoria_metrics.instant_query");
+    expect(hint).toContain("gateway_call");
+  });
+
+  it("should not return a hint for generic 'not found' errors with dot-like filenames", () => {
+    // "File not found" and "Module not found" are NOT tool routing errors
+    // even though they contain "not found" and a dot-namespaced identifier
+    expect(formatDirectToolCallHint("File not found: config.yaml")).toBe("");
+    expect(formatDirectToolCallHint("Module not found: node.js")).toBe("");
+    expect(formatDirectToolCallHint("Command not found: db.migrate")).toBe("");
+    expect(formatDirectToolCallHint("Package not found: lodash.debounce")).toBe("");
   });
 });
 
-describe("gateway_call error messages with direct tool hints", () => {
-  it("should include gateway_call hint for tool-not-found errors", async () => {
+describe("gateway_call error messages suppress direct tool hints", () => {
+  it("should NOT include gateway_call hint even for tool-not-found errors (agent is already using gateway_call)", async () => {
     const client = createMockClient({
       call: vi.fn(async () => {
         throw new Error("MCP Error -32601: Method not found: victoria_metrics.instant_query");
@@ -781,12 +857,11 @@ describe("gateway_call error messages with direct tool hints", () => {
 
     expect(result.content[0].text).toContain("Error:");
     expect(result.content[0].text).toContain("Method not found");
-    expect(result.content[0].text).toContain("Hint:");
-    expect(result.content[0].text).toContain("gateway_call");
-    expect(result.content[0].text).toContain("victoria_metrics.instant_query");
+    // Hint should NOT be present — agent is already using gateway_call
+    expect(result.content[0].text).not.toContain("Hint:");
   });
 
-  it("should not include hint for authorization errors (agent used gateway_call correctly)", async () => {
+  it("should not include hint for authorization errors", async () => {
     const client = createMockClient({
       call: vi.fn(async () => {
         throw new Error("MCP Error -32600: Unauthorized: incident test is not authorized to use tool victoria_metrics.instant_query");
@@ -806,7 +881,7 @@ describe("gateway_call error messages with direct tool hints", () => {
     expect(result.content[0].text).not.toContain("Hint:");
   });
 
-  it("should not include hint for errors without dot-namespaced tool names", async () => {
+  it("should not include hint for connection errors", async () => {
     const client = createMockClient({
       call: vi.fn(async () => {
         throw new Error("MCP Error -32000: Connection refused");
