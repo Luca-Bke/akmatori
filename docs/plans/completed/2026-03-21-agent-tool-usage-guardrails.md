@@ -100,5 +100,5 @@ Fix agent execution issues observed in incident logs: agents skip runbook lookup
 
 ### Task 7: Update Documentation
 
-- [ ] Update CLAUDE.md if prompt patterns or tool schema conventions changed
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update CLAUDE.md if prompt patterns or tool schema conventions changed
+- [x] Move this plan to `docs/plans/completed/`
