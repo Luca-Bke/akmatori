@@ -57,12 +57,12 @@ Fix agent execution issues observed in incident logs: agents skip runbook lookup
 **Files:**
 - Modify: `agent-worker/src/gateway-tools.ts`
 
-- [ ] When the agent calls a tool name that isn't one of the 5 registered tools, the current error is generic ("Tool not found" or gateway error -32600)
-- [ ] Add a helper that detects tool-name-like patterns (contains a dot, e.g., `victoria_metrics.instant_query`) in error messages
-- [ ] Enhance the error message to suggest: "Tool 'X' is not a direct agent tool. Use gateway_call({tool_name: 'X', args: {...}}) instead."
-- [ ] This can be done in the gateway_call error handler or as a catch-all in the GatewayClient error path
-- [ ] Write tests that verify the enhanced error message appears for dot-namespaced tool names
-- [ ] Run `make test-agent` - must pass before task 4
+- [x] When the agent calls a tool name that isn't one of the 5 registered tools, the current error is generic ("Tool not found" or gateway error -32600)
+- [x] Add a helper that detects tool-name-like patterns (contains a dot, e.g., `victoria_metrics.instant_query`) in error messages
+- [x] Enhance the error message to suggest: "Tool 'X' is not a direct agent tool. Use gateway_call({tool_name: 'X', args: {...}}) instead."
+- [x] This can be done in the gateway_call error handler or as a catch-all in the GatewayClient error path
+- [x] Write tests that verify the enhanced error message appears for dot-namespaced tool names
+- [x] Run `make test-agent` - must pass before task 4
 
 ### Task 4: Remove or Clarify tool_instance_id in Tool Schemas
 

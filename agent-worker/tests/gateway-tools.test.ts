@@ -5,6 +5,8 @@ import {
   createGetToolDetailTool,
   createListToolTypesTool,
   createExecuteScriptTool,
+  isDotNamespacedToolName,
+  formatDirectToolCallHint,
   GatewayCallParams,
   ListToolsForToolTypeParams,
   GetToolDetailParams,
@@ -682,6 +684,109 @@ describe("createExecuteScriptTool", () => {
       expect(result.content[0].text).toContain("Error:");
       expect(result.content[0].text).toContain("compilation error");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Direct tool call detection helpers
+// ---------------------------------------------------------------------------
+
+describe("isDotNamespacedToolName", () => {
+  it("should return true for dot-namespaced tool names", () => {
+    expect(isDotNamespacedToolName("ssh.execute_command")).toBe(true);
+    expect(isDotNamespacedToolName("victoria_metrics.instant_query")).toBe(true);
+    expect(isDotNamespacedToolName("zabbix.get_problems")).toBe(true);
+    expect(isDotNamespacedToolName("qmd.query")).toBe(true);
+  });
+
+  it("should return false for non-namespaced names", () => {
+    expect(isDotNamespacedToolName("gateway_call")).toBe(false);
+    expect(isDotNamespacedToolName("execute_script")).toBe(false);
+    expect(isDotNamespacedToolName("list_tool_types")).toBe(false);
+  });
+
+  it("should return false for empty or invalid inputs", () => {
+    expect(isDotNamespacedToolName("")).toBe(false);
+    expect(isDotNamespacedToolName(".")).toBe(false);
+    expect(isDotNamespacedToolName(".leading_dot")).toBe(false);
+    expect(isDotNamespacedToolName("trailing_dot.")).toBe(false);
+    expect(isDotNamespacedToolName("has space.tool")).toBe(false);
+  });
+});
+
+describe("formatDirectToolCallHint", () => {
+  it("should return a hint for error messages containing dot-namespaced tool names", () => {
+    const hint = formatDirectToolCallHint("Tool not found: 'victoria_metrics.instant_query'");
+    expect(hint).toContain("victoria_metrics.instant_query");
+    expect(hint).toContain("gateway_call");
+    expect(hint).toContain("is not a direct agent tool");
+  });
+
+  it("should work with double-quoted tool names in error messages", () => {
+    const hint = formatDirectToolCallHint('Unknown tool "ssh.execute_command"');
+    expect(hint).toContain("ssh.execute_command");
+    expect(hint).toContain("gateway_call");
+  });
+
+  it("should work with backtick-quoted tool names", () => {
+    const hint = formatDirectToolCallHint("Cannot call `zabbix.get_problems` directly");
+    expect(hint).toContain("zabbix.get_problems");
+    expect(hint).toContain("gateway_call");
+  });
+
+  it("should return empty string when no dot-namespaced tool name is found", () => {
+    expect(formatDirectToolCallHint("Connection refused")).toBe("");
+    expect(formatDirectToolCallHint("Timeout error")).toBe("");
+    expect(formatDirectToolCallHint("Generic error message")).toBe("");
+  });
+
+  it("should not return a hint for registered tool names", () => {
+    // These are the 5 registered tools - should not trigger a hint
+    expect(formatDirectToolCallHint("Error with 'gateway_call'")).toBe("");
+  });
+});
+
+describe("gateway_call error messages with direct tool hints", () => {
+  it("should include gateway_call hint when gateway error mentions a dot-namespaced tool", async () => {
+    const client = createMockClient({
+      call: vi.fn(async () => {
+        throw new Error("MCP Error -32600: Tool 'victoria_metrics.instant_query' is not authorized");
+      }) as any,
+    });
+    const tool = createGatewayCallTool({ client });
+
+    const result = await tool.execute(
+      "tc-hint1",
+      { tool_name: "victoria_metrics.instant_query", args: {} },
+      undefined,
+      undefined,
+    );
+
+    expect(result.content[0].text).toContain("Error:");
+    expect(result.content[0].text).toContain("is not authorized");
+    expect(result.content[0].text).toContain("Hint:");
+    expect(result.content[0].text).toContain("gateway_call");
+    expect(result.content[0].text).toContain("victoria_metrics.instant_query");
+  });
+
+  it("should not include hint for errors without dot-namespaced tool names", async () => {
+    const client = createMockClient({
+      call: vi.fn(async () => {
+        throw new Error("MCP Error -32000: Connection refused");
+      }) as any,
+    });
+    const tool = createGatewayCallTool({ client });
+
+    const result = await tool.execute(
+      "tc-hint2",
+      { tool_name: "ssh.execute_command", args: { command: "uptime" } },
+      undefined,
+      undefined,
+    );
+
+    expect(result.content[0].text).toContain("Error:");
+    expect(result.content[0].text).toContain("Connection refused");
+    expect(result.content[0].text).not.toContain("Hint:");
   });
 });
 

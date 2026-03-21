@@ -15,6 +15,47 @@ import { ScriptExecutor } from "./script-executor.js";
 // extension system's full type surface (renderCall, renderResult, etc.).
 // The `customTools` option on createAgentSession accepts this shape.
 
+// ---------------------------------------------------------------------------
+// Direct tool call detection helpers
+// ---------------------------------------------------------------------------
+
+/** Known gateway tool names that the agent should invoke via gateway_call. */
+const REGISTERED_TOOL_NAMES = new Set([
+  "gateway_call",
+  "list_tools_for_tool_type",
+  "get_tool_detail",
+  "list_tool_types",
+  "execute_script",
+]);
+
+/**
+ * Returns true if the given string looks like a dot-namespaced MCP tool name
+ * (e.g. "victoria_metrics.instant_query", "ssh.execute_command").
+ */
+export function isDotNamespacedToolName(name: string): boolean {
+  if (!name || typeof name !== "string") return false;
+  // Must contain at least one dot with non-empty segments on both sides
+  const dotIndex = name.indexOf(".");
+  return dotIndex > 0 && dotIndex < name.length - 1 && !name.includes(" ");
+}
+
+/**
+ * If an error message contains a dot-namespaced tool name that isn't one of
+ * the 5 registered agent tools, return a hint suggesting gateway_call usage.
+ * Returns an empty string if no hint is applicable.
+ */
+export function formatDirectToolCallHint(errorMessage: string): string {
+  // Extract potential tool names from the error message
+  const match = errorMessage.match(/['"`]([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)['"`]/);
+  if (match && isDotNamespacedToolName(match[1]) && !REGISTERED_TOOL_NAMES.has(match[1])) {
+    return (
+      `\n\nHint: Tool '${match[1]}' is not a direct agent tool. ` +
+      `Use gateway_call({ tool_name: "${match[1]}", args: {...} }) instead.`
+    );
+  }
+  return "";
+}
+
 export interface GatewayToolContext {
   client: GatewayClient;
 }
@@ -118,8 +159,9 @@ export function createGatewayCallTool(ctx: GatewayToolContext) {
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        const hint = formatDirectToolCallHint(message);
         return {
-          content: [{ type: "text" as const, text: `Error: ${message}` }],
+          content: [{ type: "text" as const, text: `Error: ${message}${hint}` }],
           details: {},
         };
       }
