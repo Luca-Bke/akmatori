@@ -90,6 +90,16 @@ func extractLogicalName(args map[string]interface{}) string {
 	return ""
 }
 
+// escapeCSVPathSegment escapes each element in a comma-separated string for use in a URL path,
+// preserving commas as literal characters (e.g., "123,456" → "123,456", not "123%2C456").
+func escapeCSVPathSegment(csv string) string {
+	parts := strings.Split(csv, ",")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(strings.TrimSpace(part))
+	}
+	return strings.Join(parts, ",")
+}
+
 // clampTimeout ensures timeout is within a safe range (5-300 seconds), defaulting to 30.
 func clampTimeout(timeout int) int {
 	if timeout < 5 {
@@ -376,7 +386,7 @@ func (t *CatchpointTool) GetAlertDetails(ctx context.Context, incidentID string,
 		return "", fmt.Errorf("alert_ids is required%s", validation.SuggestParam("alert_ids", args))
 	}
 
-	path := fmt.Sprintf("/v4/tests/alerts/%s", url.PathEscape(alertIDs))
+	path := fmt.Sprintf("/v4/tests/alerts/%s", escapeCSVPathSegment(alertIDs))
 
 	body, err := t.cachedGet(ctx, incidentID, path, nil, AlertsCacheTTL, logicalName)
 	if err != nil {
@@ -473,7 +483,7 @@ func (t *CatchpointTool) GetTestDetails(ctx context.Context, incidentID string, 
 		return "", fmt.Errorf("test_ids is required%s", validation.SuggestParam("test_ids", args))
 	}
 
-	path := fmt.Sprintf("/v4/tests/%s", url.PathEscape(testIDs))
+	path := fmt.Sprintf("/v4/tests/%s", escapeCSVPathSegment(testIDs))
 
 	body, err := t.cachedGet(ctx, incidentID, path, nil, InventoryCacheTTL, logicalName)
 	if err != nil {
