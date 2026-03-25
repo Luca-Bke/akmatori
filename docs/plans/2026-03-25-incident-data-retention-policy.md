@@ -66,11 +66,11 @@ Add a background cleanup goroutine to the API server that periodically purges ol
 - Create: `internal/handlers/api_settings_retention.go`
 - Modify: `internal/handlers/api.go`
 
-- [ ] Add `UpdateRetentionSettingsRequest` struct to `types.go`
-- [ ] Create `handleRetentionSettings` handler supporting GET (read current settings) and PUT (update settings) following the `handleGeneralSettings` pattern
-- [ ] Register route `/api/settings/retention` in `api.go`
-- [ ] Write handler tests
-- [ ] Run `make test` - must pass before task 4
+- [x] Add `UpdateRetentionSettingsRequest` struct to `types.go`
+- [x] Create `handleRetentionSettings` handler supporting GET (read current settings) and PUT (update settings) following the `handleGeneralSettings` pattern
+- [x] Register route `/api/settings/retention` in `api.go`
+- [x] Write handler tests
+- [x] Run `make test` - must pass before task 4
 
 ### Task 4: Wire up background cleanup in main.go
 
