@@ -158,5 +158,5 @@ All methods follow signature: `(ctx context.Context, incidentID string, args map
 
 ### Task 10: Update documentation
 
-- [ ] Update CLAUDE.md: add PostgreSQL to key directories section, add to MCP Gateway coverage table
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update CLAUDE.md: add PostgreSQL to key directories section, add to MCP Gateway coverage table
+- [x] Move this plan to `docs/plans/completed/`
