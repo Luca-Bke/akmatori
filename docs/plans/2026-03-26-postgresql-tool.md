@@ -42,9 +42,9 @@ Add a PostgreSQL database integration to the MCP Gateway as a native tool. The t
 - Modify: `mcp-gateway/internal/database/db.go`
 - Modify: `internal/services/tool_service.go`
 
-- [ ] Add `PostgreSQLEnabled bool` field to `ProxySettings` struct in db.go (after `CatchpointEnabled`, following same pattern): `PostgreSQLEnabled bool \`gorm:"default:false" json:"postgresql_enabled"\``
-- [ ] Add postgresql to `EnsureToolTypes()` slice in tool_service.go: `{Name: "postgresql", Description: "PostgreSQL database integration for read-only queries and diagnostics"}`
-- [ ] Run `make test-mcp` and `make test` - must pass before task 2
+- [x] Add `PostgreSQLEnabled bool` field to `ProxySettings` struct in db.go (after `CatchpointEnabled`, following same pattern): `PostgreSQLEnabled bool \`gorm:"default:false" json:"postgresql_enabled"\``
+- [x] Add postgresql to `EnsureToolTypes()` slice in tool_service.go: `{Name: "postgresql", Description: "PostgreSQL database integration for read-only queries and diagnostics"}`
+- [x] Run `make test-mcp` and `make test` - must pass before task 2
 
 ### Task 2: Add pgx dependency
 
