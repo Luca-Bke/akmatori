@@ -45,9 +45,9 @@ Add a ClickHouse tool to the MCP Gateway, providing read-only query execution an
 - Modify: `mcp-gateway/go.mod`
 - Modify: `mcp-gateway/go.sum`
 
-- [ ] Run `cd mcp-gateway && go get github.com/ClickHouse/clickhouse-go/v2`
-- [ ] Verify the dependency resolves and `go mod tidy` succeeds
-- [ ] Run `make test-mcp` — must pass (no code changes yet, just dependency)
+- [x] Run `cd mcp-gateway && go get github.com/ClickHouse/clickhouse-go/v2`
+- [x] Verify the dependency resolves and `go mod tidy` succeeds
+- [x] Run `make test-mcp` — must pass (no code changes yet, just dependency)
 
 ### Task 2: Define ClickHouse tool type schema
 
