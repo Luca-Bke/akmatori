@@ -55,12 +55,12 @@ Add a first-class Grafana MCP tool type to the MCP Gateway, providing the AI age
 **Files:**
 - Modify: `mcp-gateway/internal/tools/grafana/grafana.go`
 
-- [ ] Implement `GetAlertRules()` - list alert rules (GET /api/v1/provisioning/alert-rules)
-- [ ] Implement `GetAlertInstances()` - get firing/pending alert instances (GET /api/alertmanager/grafana/api/v2/alerts)
-- [ ] Implement `GetAlertRuleByUID()` - get specific rule details (GET /api/v1/provisioning/alert-rules/:uid)
-- [ ] Implement `SilenceAlert()` - create a silence (POST /api/alertmanager/grafana/api/v2/silences) - no caching
-- [ ] Write tests for each alerting tool method
-- [ ] Run `make test-mcp` - must pass
+- [x] Implement `GetAlertRules()` - list alert rules (GET /api/v1/provisioning/alert-rules)
+- [x] Implement `GetAlertInstances()` - get firing/pending alert instances (GET /api/alertmanager/grafana/api/v2/alerts)
+- [x] Implement `GetAlertRuleByUID()` - get specific rule details (GET /api/v1/provisioning/alert-rules/:uid)
+- [x] Implement `SilenceAlert()` - create a silence (POST /api/alertmanager/grafana/api/v2/silences) - no caching
+- [x] Write tests for each alerting tool method
+- [x] Run `make test-mcp` - must pass
 
 ### Task 4: Data source proxy and annotation tools
 

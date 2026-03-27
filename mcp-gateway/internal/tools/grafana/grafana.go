@@ -460,3 +460,104 @@ func (t *GrafanaTool) GetDashboardPanels(ctx context.Context, incidentID string,
 	}
 	return string(result), nil
 }
+
+// GetAlertRules lists alert rules from Grafana Unified Alerting.
+// Returns all provisioned alert rules (GET /api/v1/provisioning/alert-rules).
+func (t *GrafanaTool) GetAlertRules(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	body, err := t.cachedGet(ctx, incidentID, "/api/v1/provisioning/alert-rules", nil, AlertsCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// GetAlertInstances retrieves firing and pending alert instances from Grafana Alertmanager.
+// Returns active alerts (GET /api/alertmanager/grafana/api/v2/alerts).
+func (t *GrafanaTool) GetAlertInstances(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	params := url.Values{}
+	if v, ok := args["filter"].(string); ok && v != "" {
+		params.Set("filter", v)
+	}
+	if v, ok := args["silenced"].(bool); ok {
+		params.Set("silenced", fmt.Sprintf("%t", v))
+	}
+	if v, ok := args["inhibited"].(bool); ok {
+		params.Set("inhibited", fmt.Sprintf("%t", v))
+	}
+	if v, ok := args["active"].(bool); ok {
+		params.Set("active", fmt.Sprintf("%t", v))
+	}
+
+	body, err := t.cachedGet(ctx, incidentID, "/api/alertmanager/grafana/api/v2/alerts", params, AlertsCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// GetAlertRuleByUID retrieves a specific alert rule by its UID.
+// Returns the full rule definition (GET /api/v1/provisioning/alert-rules/:uid).
+func (t *GrafanaTool) GetAlertRuleByUID(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	uid, ok := args["uid"].(string)
+	if !ok || uid == "" {
+		return "", fmt.Errorf("uid is required")
+	}
+
+	path := fmt.Sprintf("/api/v1/provisioning/alert-rules/%s", url.PathEscape(uid))
+
+	body, err := t.cachedGet(ctx, incidentID, path, nil, AlertsCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// SilenceAlert creates a silence in Grafana Alertmanager.
+// Requires matchers (label matchers), starts_at, ends_at, created_by, and comment.
+// This is a write operation - no caching (POST /api/alertmanager/grafana/api/v2/silences).
+func (t *GrafanaTool) SilenceAlert(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	// Validate required fields
+	matchers, ok := args["matchers"]
+	if !ok {
+		return "", fmt.Errorf("matchers is required (array of {name, value, isRegex, isEqual})")
+	}
+
+	startsAt, ok := args["starts_at"].(string)
+	if !ok || startsAt == "" {
+		return "", fmt.Errorf("starts_at is required (RFC3339 timestamp)")
+	}
+	endsAt, ok := args["ends_at"].(string)
+	if !ok || endsAt == "" {
+		return "", fmt.Errorf("ends_at is required (RFC3339 timestamp)")
+	}
+	createdBy, ok := args["created_by"].(string)
+	if !ok || createdBy == "" {
+		return "", fmt.Errorf("created_by is required")
+	}
+	comment, ok := args["comment"].(string)
+	if !ok || comment == "" {
+		return "", fmt.Errorf("comment is required")
+	}
+
+	reqBody := map[string]interface{}{
+		"matchers":  matchers,
+		"startsAt":  startsAt,
+		"endsAt":    endsAt,
+		"createdBy": createdBy,
+		"comment":   comment,
+	}
+
+	body, err := t.doPost(ctx, incidentID, "/api/alertmanager/grafana/api/v2/silences", reqBody, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}

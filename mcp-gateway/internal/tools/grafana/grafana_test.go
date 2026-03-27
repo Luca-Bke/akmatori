@@ -963,3 +963,429 @@ func TestGetDashboardPanels_InvalidDashboardJSON(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+// --- GetAlertRules tests ---
+
+func TestGetAlertRules_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/provisioning/alert-rules" {
+			t.Errorf("expected path /api/v1/provisioning/alert-rules, got %s", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[{"uid":"rule-1","title":"HighCPU","condition":"A","data":[]}]`)
+	})
+
+	result, err := tool.GetAlertRules(context.Background(), "test-incident", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "HighCPU") {
+		t.Errorf("expected result to contain 'HighCPU', got %s", result)
+	}
+	if !strings.Contains(result, "rule-1") {
+		t.Errorf("expected result to contain 'rule-1', got %s", result)
+	}
+}
+
+func TestGetAlertRules_Cached(t *testing.T) {
+	tool, _, counter := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[{"uid":"rule-1"}]`)
+	})
+
+	ctx := context.Background()
+	args := map[string]interface{}{}
+
+	_, err := tool.GetAlertRules(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = tool.GetAlertRules(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if counter.Load() != 1 {
+		t.Errorf("expected 1 HTTP request (cache hit), got %d", counter.Load())
+	}
+}
+
+func TestGetAlertRules_WithLogicalName(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[{"uid":"rule-1"}]`)
+	})
+
+	// Pre-populate logical name config
+	cached, _ := tool.configCache.Get(configCacheKey("test-incident"))
+	tool.configCache.Set("creds:logical:grafana:prod-grafana", cached)
+
+	result, err := tool.GetAlertRules(context.Background(), "test-incident", map[string]interface{}{
+		"logical_name": "prod-grafana",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "rule-1") {
+		t.Errorf("expected result to contain 'rule-1', got %s", result)
+	}
+}
+
+// --- GetAlertInstances tests ---
+
+func TestGetAlertInstances_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/alertmanager/grafana/api/v2/alerts" {
+			t.Errorf("expected path /api/alertmanager/grafana/api/v2/alerts, got %s", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[{"labels":{"alertname":"HighCPU"},"status":{"state":"active"}}]`)
+	})
+
+	result, err := tool.GetAlertInstances(context.Background(), "test-incident", map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "HighCPU") {
+		t.Errorf("expected result to contain 'HighCPU', got %s", result)
+	}
+	if !strings.Contains(result, "active") {
+		t.Errorf("expected result to contain 'active', got %s", result)
+	}
+}
+
+func TestGetAlertInstances_WithFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("filter") != `alertname="HighCPU"` {
+			t.Errorf("expected filter param, got %s", q.Get("filter"))
+		}
+		if q.Get("silenced") != "false" {
+			t.Errorf("expected silenced=false, got %s", q.Get("silenced"))
+		}
+		if q.Get("active") != "true" {
+			t.Errorf("expected active=true, got %s", q.Get("active"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[]`)
+	})
+
+	_, err := tool.GetAlertInstances(context.Background(), "test-incident", map[string]interface{}{
+		"filter":   `alertname="HighCPU"`,
+		"silenced": false,
+		"active":   true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetAlertInstances_WithInhibited(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("inhibited") != "true" {
+			t.Errorf("expected inhibited=true, got %s", q.Get("inhibited"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[]`)
+	})
+
+	_, err := tool.GetAlertInstances(context.Background(), "test-incident", map[string]interface{}{
+		"inhibited": true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetAlertInstances_Cached(t *testing.T) {
+	tool, _, counter := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `[{"labels":{"alertname":"test"}}]`)
+	})
+
+	ctx := context.Background()
+	args := map[string]interface{}{}
+
+	_, err := tool.GetAlertInstances(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = tool.GetAlertInstances(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if counter.Load() != 1 {
+		t.Errorf("expected 1 HTTP request (cache hit), got %d", counter.Load())
+	}
+}
+
+// --- GetAlertRuleByUID tests ---
+
+func TestGetAlertRuleByUID_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/provisioning/alert-rules/rule-abc" {
+			t.Errorf("expected path /api/v1/provisioning/alert-rules/rule-abc, got %s", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"uid":"rule-abc","title":"HighMemory","condition":"B","for":"5m"}`)
+	})
+
+	result, err := tool.GetAlertRuleByUID(context.Background(), "test-incident", map[string]interface{}{
+		"uid": "rule-abc",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "HighMemory") {
+		t.Errorf("expected result to contain 'HighMemory', got %s", result)
+	}
+	if !strings.Contains(result, "rule-abc") {
+		t.Errorf("expected result to contain 'rule-abc', got %s", result)
+	}
+}
+
+func TestGetAlertRuleByUID_MissingUID(t *testing.T) {
+	tool := NewGrafanaTool(testLogger(), nil)
+	defer tool.Stop()
+
+	_, err := tool.GetAlertRuleByUID(context.Background(), "test-incident", map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected error for missing uid")
+	}
+	if !strings.Contains(err.Error(), "uid is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestGetAlertRuleByUID_EmptyUID(t *testing.T) {
+	tool := NewGrafanaTool(testLogger(), nil)
+	defer tool.Stop()
+
+	_, err := tool.GetAlertRuleByUID(context.Background(), "test-incident", map[string]interface{}{
+		"uid": "",
+	})
+	if err == nil {
+		t.Fatal("expected error for empty uid")
+	}
+	if !strings.Contains(err.Error(), "uid is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestGetAlertRuleByUID_SpecialCharsInUID(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/provisioning/alert-rules/") {
+			t.Errorf("expected path prefix /api/v1/provisioning/alert-rules/, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"uid":"a/b","title":"Test Rule"}`)
+	})
+
+	_, err := tool.GetAlertRuleByUID(context.Background(), "test-incident", map[string]interface{}{
+		"uid": "a/b",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetAlertRuleByUID_Cached(t *testing.T) {
+	tool, _, counter := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"uid":"rule-1","title":"Test"}`)
+	})
+
+	ctx := context.Background()
+	args := map[string]interface{}{"uid": "rule-1"}
+
+	_, err := tool.GetAlertRuleByUID(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = tool.GetAlertRuleByUID(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if counter.Load() != 1 {
+		t.Errorf("expected 1 HTTP request (cache hit), got %d", counter.Load())
+	}
+}
+
+// --- SilenceAlert tests ---
+
+func TestSilenceAlert_Success(t *testing.T) {
+	var receivedMethod string
+	var receivedPath string
+	var receivedBody map[string]interface{}
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		receivedPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"silenceID":"silence-123"}`)
+	})
+
+	result, err := tool.SilenceAlert(context.Background(), "test-incident", map[string]interface{}{
+		"matchers": []interface{}{
+			map[string]interface{}{"name": "alertname", "value": "HighCPU", "isRegex": false, "isEqual": true},
+		},
+		"starts_at":  "2026-03-27T00:00:00Z",
+		"ends_at":    "2026-03-28T00:00:00Z",
+		"created_by": "akmatori-agent",
+		"comment":    "Silencing during maintenance",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if receivedMethod != http.MethodPost {
+		t.Errorf("expected POST, got %s", receivedMethod)
+	}
+	if receivedPath != "/api/alertmanager/grafana/api/v2/silences" {
+		t.Errorf("expected silences path, got %s", receivedPath)
+	}
+	if !strings.Contains(string(result), "silence-123") {
+		t.Errorf("expected result to contain silence ID, got %s", result)
+	}
+
+	// Verify body fields
+	if receivedBody["createdBy"] != "akmatori-agent" {
+		t.Errorf("expected createdBy=akmatori-agent, got %v", receivedBody["createdBy"])
+	}
+	if receivedBody["comment"] != "Silencing during maintenance" {
+		t.Errorf("expected comment, got %v", receivedBody["comment"])
+	}
+}
+
+func TestSilenceAlert_MissingMatchers(t *testing.T) {
+	tool := NewGrafanaTool(testLogger(), nil)
+	defer tool.Stop()
+
+	_, err := tool.SilenceAlert(context.Background(), "test-incident", map[string]interface{}{
+		"starts_at":  "2026-03-27T00:00:00Z",
+		"ends_at":    "2026-03-28T00:00:00Z",
+		"created_by": "agent",
+		"comment":    "test",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing matchers")
+	}
+	if !strings.Contains(err.Error(), "matchers is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSilenceAlert_MissingStartsAt(t *testing.T) {
+	tool := NewGrafanaTool(testLogger(), nil)
+	defer tool.Stop()
+
+	_, err := tool.SilenceAlert(context.Background(), "test-incident", map[string]interface{}{
+		"matchers":   []interface{}{map[string]interface{}{"name": "alertname", "value": "test"}},
+		"ends_at":    "2026-03-28T00:00:00Z",
+		"created_by": "agent",
+		"comment":    "test",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing starts_at")
+	}
+	if !strings.Contains(err.Error(), "starts_at is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSilenceAlert_MissingEndsAt(t *testing.T) {
+	tool := NewGrafanaTool(testLogger(), nil)
+	defer tool.Stop()
+
+	_, err := tool.SilenceAlert(context.Background(), "test-incident", map[string]interface{}{
+		"matchers":   []interface{}{map[string]interface{}{"name": "alertname", "value": "test"}},
+		"starts_at":  "2026-03-27T00:00:00Z",
+		"created_by": "agent",
+		"comment":    "test",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing ends_at")
+	}
+	if !strings.Contains(err.Error(), "ends_at is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSilenceAlert_MissingCreatedBy(t *testing.T) {
+	tool := NewGrafanaTool(testLogger(), nil)
+	defer tool.Stop()
+
+	_, err := tool.SilenceAlert(context.Background(), "test-incident", map[string]interface{}{
+		"matchers":  []interface{}{map[string]interface{}{"name": "alertname", "value": "test"}},
+		"starts_at": "2026-03-27T00:00:00Z",
+		"ends_at":   "2026-03-28T00:00:00Z",
+		"comment":   "test",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing created_by")
+	}
+	if !strings.Contains(err.Error(), "created_by is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSilenceAlert_MissingComment(t *testing.T) {
+	tool := NewGrafanaTool(testLogger(), nil)
+	defer tool.Stop()
+
+	_, err := tool.SilenceAlert(context.Background(), "test-incident", map[string]interface{}{
+		"matchers":   []interface{}{map[string]interface{}{"name": "alertname", "value": "test"}},
+		"starts_at":  "2026-03-27T00:00:00Z",
+		"ends_at":    "2026-03-28T00:00:00Z",
+		"created_by": "agent",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing comment")
+	}
+	if !strings.Contains(err.Error(), "comment is required") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSilenceAlert_NotCached(t *testing.T) {
+	tool, _, counter := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"silenceID":"s1"}`)
+	})
+
+	ctx := context.Background()
+	args := map[string]interface{}{
+		"matchers":   []interface{}{map[string]interface{}{"name": "alertname", "value": "test"}},
+		"starts_at":  "2026-03-27T00:00:00Z",
+		"ends_at":    "2026-03-28T00:00:00Z",
+		"created_by": "agent",
+		"comment":    "test",
+	}
+
+	_, err := tool.SilenceAlert(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err = tool.SilenceAlert(ctx, "test-incident", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Both calls should hit the server (write op, no caching)
+	if counter.Load() != 2 {
+		t.Errorf("expected 2 HTTP requests (no caching for POST), got %d", counter.Load())
+	}
+}
