@@ -97,11 +97,11 @@ Since 0.59.0, custom tools without `promptSnippet` are omitted from the system p
 
 The JSONL session export (0.61.0) enables exporting investigation history for post-mortems.
 
-- [ ] Add an `exportSession(incidentId: string, workDir: string): Promise<string>` method to AgentRunner that uses SessionManager to export the session as JSONL
-- [ ] Add `session_export` field to `ExecuteResult` type (optional string containing the JSONL path)
-- [ ] After each completed session, automatically export to `{workDir}/session_export.jsonl`
-- [ ] Write tests for the export functionality
-- [ ] Run `make test-agent` to verify tests pass
+- [x] Add an `exportSession(incidentId: string, workDir: string): Promise<string>` method to AgentRunner that uses SessionManager to export the session as JSONL
+- [x] Add `session_export` field to `ExecuteResult` type (optional string containing the JSONL path)
+- [x] After each completed session, automatically export to `{workDir}/session_export.jsonl`
+- [x] Write tests for the export functionality
+- [x] Run `make test-agent` to verify tests pass
 
 ### Task 6: Leverage sessionDir Setting for Workspace Simplification
 

@@ -130,6 +130,8 @@ export interface ExecuteResult {
   error?: string;
   tokens_used: number;
   execution_time_ms: number;
+  /** Path to JSONL session export file (for post-mortem analysis) */
+  session_export?: string;
 }
 
 // ---------------------------------------------------------------------------

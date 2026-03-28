@@ -442,6 +442,31 @@ describe("ExecuteResult type", () => {
 
     expect(result.error).toBe("API key invalid");
   });
+
+  it("includes session_export path when present", () => {
+    const result: ExecuteResult = {
+      session_id: "sess-456",
+      response: "Investigation complete",
+      full_log: "...",
+      tokens_used: 2000,
+      execution_time_ms: 45000,
+      session_export: "/workspace/inc-001/session_export.jsonl",
+    };
+
+    expect(result.session_export).toBe("/workspace/inc-001/session_export.jsonl");
+  });
+
+  it("omits session_export when not set", () => {
+    const result: ExecuteResult = {
+      session_id: "sess-789",
+      response: "Done",
+      full_log: "...",
+      tokens_used: 100,
+      execution_time_ms: 1000,
+    };
+
+    expect(result.session_export).toBeUndefined();
+  });
 });
 
 describe("ToolAllowlistEntry type", () => {

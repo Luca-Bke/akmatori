@@ -80,18 +80,22 @@ vi.mock("@mariozechner/pi-coding-agent", () => {
       inMemory: vi.fn(() => ({
         newSession: vi.fn(),
         getSessionId: vi.fn(() => "mock-session-123"),
+        getSessionFile: vi.fn(() => undefined),
       })),
       create: vi.fn(() => ({
         newSession: vi.fn(),
         getSessionId: vi.fn(() => "mock-session-123"),
+        getSessionFile: vi.fn(() => undefined),
       })),
       continueRecent: vi.fn(() => ({
         newSession: vi.fn(),
         getSessionId: vi.fn(() => "mock-session-123"),
+        getSessionFile: vi.fn(() => undefined),
       })),
       open: vi.fn(() => ({
         newSession: vi.fn(),
         getSessionId: vi.fn(() => "mock-session-123"),
+        getSessionFile: vi.fn(() => undefined),
       })),
     },
     SettingsManager: {
@@ -866,6 +870,95 @@ describe("AgentRunner", () => {
       const result = await runner.execute(makeExecuteParams());
 
       expect(result.tokens_used).toBe(800);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Session export
+  // -----------------------------------------------------------------------
+
+  describe("session export", () => {
+    it("should export session JSONL to workDir/session_export.jsonl on success", async () => {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const tmpDir = fs.mkdtempSync(path.join("/tmp", "agent-export-"));
+
+      // Create a fake session file that getSessionFile will point to
+      const fakeSessionFile = path.join(tmpDir, "session.jsonl");
+      fs.writeFileSync(fakeSessionFile, '{"type":"header","id":"h1"}\n{"type":"message","role":"user","content":"test"}\n');
+
+      // Make SessionManager.create return a mock with getSessionFile pointing to fake file
+      const { SessionManager } = await import("@mariozechner/pi-coding-agent");
+      (SessionManager.create as any).mockReturnValueOnce({
+        newSession: vi.fn(),
+        getSessionId: vi.fn(() => "mock-session-123"),
+        getSessionFile: vi.fn(() => fakeSessionFile),
+      });
+
+      const result = await runner.execute(makeExecuteParams({ workDir: tmpDir }));
+
+      const expectedExportPath = path.join(tmpDir, "session_export.jsonl");
+      expect(result.session_export).toBe(expectedExportPath);
+      expect(fs.existsSync(expectedExportPath)).toBe(true);
+
+      const exportedContent = fs.readFileSync(expectedExportPath, "utf-8");
+      expect(exportedContent).toContain('"type":"header"');
+      expect(exportedContent).toContain('"type":"message"');
+
+      // Cleanup
+      fs.rmSync(tmpDir, { recursive: true });
+    });
+
+    it("should export session JSONL even on execution error", async () => {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const tmpDir = fs.mkdtempSync(path.join("/tmp", "agent-export-err-"));
+
+      const fakeSessionFile = path.join(tmpDir, "session.jsonl");
+      fs.writeFileSync(fakeSessionFile, '{"type":"header","id":"h1"}\n');
+
+      const { SessionManager } = await import("@mariozechner/pi-coding-agent");
+      (SessionManager.create as any).mockReturnValueOnce({
+        newSession: vi.fn(),
+        getSessionId: vi.fn(() => "mock-session-123"),
+        getSessionFile: vi.fn(() => fakeSessionFile),
+      });
+
+      mockSession.prompt.mockRejectedValueOnce(new Error("API error"));
+
+      const result = await runner.execute(makeExecuteParams({ workDir: tmpDir }));
+
+      expect(result.error).toBe("API error");
+      const expectedExportPath = path.join(tmpDir, "session_export.jsonl");
+      expect(result.session_export).toBe(expectedExportPath);
+      expect(fs.existsSync(expectedExportPath)).toBe(true);
+
+      fs.rmSync(tmpDir, { recursive: true });
+    });
+
+    it("should return undefined session_export when no session file exists", async () => {
+      const result = await runner.execute(makeExecuteParams());
+
+      // Default mock returns undefined for getSessionFile
+      expect(result.session_export).toBeUndefined();
+    });
+
+    it("should not fail execution when session export fails", async () => {
+      const { SessionManager } = await import("@mariozechner/pi-coding-agent");
+      (SessionManager.create as any).mockReturnValueOnce({
+        newSession: vi.fn(),
+        getSessionId: vi.fn(() => "mock-session-123"),
+        // Point to a non-existent file — copyFileSync will throw
+        getSessionFile: vi.fn(() => "/nonexistent/path/session.jsonl"),
+      });
+
+      const result = await runner.execute(makeExecuteParams());
+
+      // Execution should still succeed
+      expect(result.session_id).toBe("mock-session-123");
+      expect(result.response).toBe("Analysis complete.");
+      expect(result.session_export).toBeUndefined();
+      expect(result.error).toBeUndefined();
     });
   });
 

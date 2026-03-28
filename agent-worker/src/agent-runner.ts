@@ -6,6 +6,8 @@
  * session lifecycle (execute / resume / cancel), and proxy configuration.
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   createAgentSession,
   AgentSession,
@@ -349,6 +351,7 @@ export class AgentRunner {
 
       // If the SDK reported an API-level error, propagate it
       if (lastErrorMessage && !responseText) {
+        const sessionExportPath = this.exportSession(sessionManager, params.workDir);
         return {
           session_id: session.sessionId,
           response: responseText,
@@ -356,6 +359,7 @@ export class AgentRunner {
           error: lastErrorMessage,
           tokens_used: totalTokens,
           execution_time_ms: Date.now() - startTime,
+          session_export: sessionExportPath,
         };
       }
 
@@ -366,14 +370,21 @@ export class AgentRunner {
       // investigation summary.
       const finalResponse = session.getLastAssistantText() ?? responseText;
 
+      // Export session as JSONL for post-mortem analysis
+      const sessionExportPath = this.exportSession(sessionManager, params.workDir);
+
       return {
         session_id: session.sessionId,
         response: finalResponse,
         full_log: fullLog,
         tokens_used: totalTokens,
         execution_time_ms: Date.now() - startTime,
+        session_export: sessionExportPath,
       };
     } catch (err) {
+      // Still attempt export on error for debugging
+      const sessionExportPath = this.exportSession(sessionManager, params.workDir);
+
       return {
         session_id: session.sessionId,
         response: responseText,
@@ -381,6 +392,7 @@ export class AgentRunner {
         error: (err as Error).message,
         tokens_used: totalTokens,
         execution_time_ms: Date.now() - startTime,
+        session_export: sessionExportPath,
       };
     } finally {
       unsubscribe();
@@ -423,6 +435,29 @@ export class AgentRunner {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Export the session as JSONL to {workDir}/session_export.jsonl for
+   * post-mortem analysis. Copies the pi-mono session file (already JSONL
+   * format) to a well-known location. Returns the export path on success,
+   * or undefined if export fails (non-fatal).
+   */
+  private exportSession(
+    sessionManager: SessionManager,
+    workDir: string,
+  ): string | undefined {
+    try {
+      const sessionFile = sessionManager.getSessionFile();
+      if (!sessionFile) return undefined;
+
+      const exportPath = path.join(workDir, "session_export.jsonl");
+      fs.copyFileSync(sessionFile, exportPath);
+      return exportPath;
+    } catch {
+      // Export failure is non-fatal — the investigation result is more important
+      return undefined;
+    }
+  }
 
   /**
    * Handle a pi-mono session event, dispatching to appropriate callbacks.
