@@ -148,6 +148,6 @@ New event types may have been added since 0.58.0 (e.g., improved compaction even
 
 ### Task 10: Update Documentation
 
-- [ ] Update CLAUDE.md to reflect the new pi-mono version (0.63.1) in relevant sections
-- [ ] Note any new SDK features available in the agent worker architecture section
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update CLAUDE.md to reflect the new pi-mono version (0.63.1) in relevant sections
+- [x] Note any new SDK features available in the agent worker architecture section
+- [x] Move this plan to `docs/plans/completed/`

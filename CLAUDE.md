@@ -8,7 +8,7 @@ Akmatori is an AI-powered AIOps platform that receives alerts from monitoring sy
 
 - **5-container Docker architecture**: API, Agent Worker, MCP Gateway, PostgreSQL, QMD (runbook search)
 - **Backend**: Go 1.24+ (API server, MCP gateway)
-- **Agent Worker**: Node.js 22+ / TypeScript using `@mariozechner/pi-coding-agent` SDK
+- **Agent Worker**: Node.js 22+ / TypeScript using `@mariozechner/pi-coding-agent` SDK (v0.63.1)
 - **Frontend**: React 19 + TypeScript + Vite + Tailwind
 - **Database**: PostgreSQL 16 with GORM
 - **LLM Providers**: Anthropic, OpenAI, Google, OpenRouter, Custom (configured via web UI)
@@ -123,7 +123,7 @@ make verify           # go vet + all tests (pre-commit)
 
 ## Agent Worker Architecture
 
-The `agent-worker/` uses `@mariozechner/pi-coding-agent` SDK:
+The `agent-worker/` uses `@mariozechner/pi-coding-agent` SDK (v0.63.1):
 
 | Component | File | Purpose |
 |-----------|------|---------|
@@ -132,6 +132,17 @@ The `agent-worker/` uses `@mariozechner/pi-coding-agent` SDK:
 | Agent Runner | `src/agent-runner.ts` | Creates pi-mono sessions |
 | Tool Formatter | `src/tool-output-formatter.ts` | Formats tool args/output for UI streaming |
 | WS Client | `src/ws-client.ts` | WebSocket to API server |
+
+### SDK Features (v0.63.1)
+
+- **ctx.signal forwarding**: Cancellation signals propagate to nested model calls and tool executions
+- **JSONL session export**: Investigation history exported to `{workDir}/session_export.jsonl` for post-mortems
+- **sessionDir isolation**: Session files stored in `{workDir}/.sessions/` subdirectory, separating session data from workspace files
+- **Typed ToolDefinition API**: Built-in tools (bash) use typed `ToolDefinition.promptGuidelines` instead of `as any` casts
+- **Typed session events**: Event handlers use typed fields (`event.summary`, `event.modelId`) instead of `as any` casts
+- **Lazy-loaded provider SDKs**: Faster startup by lazy-loading provider modules
+- **Auto-retry improvements**: Better retry handling for tool-using responses
+- **Multi-edit support**: Agent can edit multiple disjoint regions in a single file operation
 
 ### Tool Architecture (TypeScript Gateway Tools)
 
@@ -171,7 +182,7 @@ Tools are registered as pi-mono custom tools via `gateway-tools.ts`, communicati
 2. Orchestrator extracts LLM settings and proxy config
 3. AgentRunner creates pi-mono session with multi-provider auth
 4. Output streamed back to API via WebSocket
-5. On completion, metrics (tokens, time) reported
+5. On completion, metrics (tokens, time) reported, session exported to JSONL
 
 ## Slack Integration (`internal/slack/`)
 
