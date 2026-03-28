@@ -565,35 +565,41 @@ export class AgentRunner {
       }
 
       case "compaction_start": {
-        const reason = (event as any).reason ?? "context limit";
-        const compactLine = `\n📦 Compacting context (${reason})...\n`;
+        const compactLine = `\n📦 Compacting context (${event.reason})...\n`;
         onOutput(compactLine);
         onLogText(compactLine);
         break;
       }
 
       case "compaction_end": {
-        const aborted = (event as any).aborted;
-        const compactResult = aborted
-          ? "\n📦 Context compaction aborted\n"
-          : "\n📦 Context compaction complete\n";
+        let compactResult: string;
+        if (event.aborted) {
+          compactResult = "\n📦 Context compaction aborted";
+          if (event.errorMessage) {
+            compactResult += `: ${event.errorMessage}`;
+          }
+          if (event.willRetry) {
+            compactResult += " (will retry)";
+          }
+          compactResult += "\n";
+        } else {
+          compactResult = "\n📦 Context compaction complete\n";
+        }
         onOutput(compactResult);
         onLogText(compactResult);
         break;
       }
 
       case "auto_retry_start": {
-        const retryEvent = event as any;
-        const retryLine = `\n🔄 Retrying (attempt ${retryEvent.attempt ?? "?"}/${retryEvent.maxAttempts ?? "?"}): ${retryEvent.errorMessage ?? "unknown error"}\n`;
+        const retryLine = `\n🔄 Retrying (attempt ${event.attempt}/${event.maxAttempts}): ${event.errorMessage}\n`;
         onOutput(retryLine);
         onLogText(retryLine);
         break;
       }
 
       case "auto_retry_end": {
-        const retryEndEvent = event as any;
-        if (!retryEndEvent.success) {
-          const failLine = `\n🔄 All retries exhausted: ${retryEndEvent.finalError ?? "unknown error"}\n`;
+        if (!event.success) {
+          const failLine = `\n🔄 All retries exhausted after ${event.attempt} attempts: ${event.finalError ?? "unknown error"}\n`;
           onOutput(failLine);
           onLogText(failLine);
         }

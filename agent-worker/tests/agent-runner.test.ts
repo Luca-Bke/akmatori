@@ -797,8 +797,8 @@ describe("AgentRunner", () => {
       const onOutput = vi.fn();
       mockSession.prompt.mockImplementationOnce(async () => {
         for (const sub of mockSession._subscribers) {
-          sub({ type: "compaction_start", reason: "context limit" });
-          sub({ type: "compaction_end", aborted: false });
+          sub({ type: "compaction_start", reason: "threshold" });
+          sub({ type: "compaction_end", reason: "threshold", aborted: false, willRetry: false });
         }
       });
 
@@ -806,7 +806,7 @@ describe("AgentRunner", () => {
 
       const output = onOutput.mock.calls.map((call: any[]) => call[0]).join("");
       expect(output).toContain("Compacting context");
-      expect(output).toContain("context limit");
+      expect(output).toContain("threshold");
       expect(output).toContain("compaction complete");
     });
 
@@ -815,7 +815,7 @@ describe("AgentRunner", () => {
       mockSession.prompt.mockImplementationOnce(async () => {
         for (const sub of mockSession._subscribers) {
           sub({ type: "compaction_start", reason: "overflow" });
-          sub({ type: "compaction_end", aborted: true });
+          sub({ type: "compaction_end", reason: "overflow", aborted: true, willRetry: false });
         }
       });
 
@@ -823,6 +823,28 @@ describe("AgentRunner", () => {
 
       const output = onOutput.mock.calls.map((call: any[]) => call[0]).join("");
       expect(output).toContain("compaction aborted");
+    });
+
+    it("should include error message and willRetry in compaction_end when aborted", async () => {
+      const onOutput = vi.fn();
+      mockSession.prompt.mockImplementationOnce(async () => {
+        for (const sub of mockSession._subscribers) {
+          sub({
+            type: "compaction_end",
+            reason: "overflow",
+            aborted: true,
+            willRetry: true,
+            errorMessage: "token limit exceeded",
+          });
+        }
+      });
+
+      await runner.execute(makeExecuteParams({ onOutput }));
+
+      const output = onOutput.mock.calls.map((call: any[]) => call[0]).join("");
+      expect(output).toContain("compaction aborted");
+      expect(output).toContain("token limit exceeded");
+      expect(output).toContain("will retry");
     });
 
     it("should stream auto_retry_start events", async () => {
@@ -833,6 +855,7 @@ describe("AgentRunner", () => {
             type: "auto_retry_start",
             attempt: 2,
             maxAttempts: 3,
+            delayMs: 1000,
             errorMessage: "server_error",
           });
         }
@@ -846,13 +869,14 @@ describe("AgentRunner", () => {
       expect(output).toContain("server_error");
     });
 
-    it("should stream auto_retry_end failure events", async () => {
+    it("should stream auto_retry_end failure events with attempt count", async () => {
       const onOutput = vi.fn();
       mockSession.prompt.mockImplementationOnce(async () => {
         for (const sub of mockSession._subscribers) {
           sub({
             type: "auto_retry_end",
             success: false,
+            attempt: 3,
             finalError: "API quota exceeded",
           });
         }
@@ -862,6 +886,7 @@ describe("AgentRunner", () => {
 
       const output = onOutput.mock.calls.map((call: any[]) => call[0]).join("");
       expect(output).toContain("retries exhausted");
+      expect(output).toContain("3 attempts");
       expect(output).toContain("API quota exceeded");
     });
 
@@ -869,7 +894,7 @@ describe("AgentRunner", () => {
       const onOutput = vi.fn();
       mockSession.prompt.mockImplementationOnce(async () => {
         for (const sub of mockSession._subscribers) {
-          sub({ type: "auto_retry_end", success: true });
+          sub({ type: "auto_retry_end", success: true, attempt: 2 });
         }
       });
 

@@ -133,11 +133,11 @@ Since 0.62.0, built-in tools carry their own ToolDefinition metadata used by `bu
 
 New event types may have been added since 0.58.0 (e.g., improved compaction events, retry events). Ensure our handleEvent switch covers all events.
 
-- [ ] Check the AgentSessionEvent type union for any new event types added in 0.59.0-0.63.1
-- [ ] Add handlers for any new event types that provide useful output for incident investigation logs
-- [ ] Ensure the default case gracefully handles unknown events (already does)
-- [ ] Write tests for any new event handlers
-- [ ] Run `make test-agent` to verify tests pass
+- [x] Check the AgentSessionEvent type union for any new event types added in 0.59.0-0.63.1
+- [x] Add handlers for any new event types that provide useful output for incident investigation logs
+- [x] Ensure the default case gracefully handles unknown events (already does)
+- [x] Write tests for any new event handlers
+- [x] Run `make test-agent` to verify tests pass
 
 ### Task 9: Verify Acceptance Criteria
 
