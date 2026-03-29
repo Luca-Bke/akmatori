@@ -67,6 +67,10 @@ func (h *APIHandler) GetProxySettings(w http.ResponseWriter, r *http.Request) {
 				"enabled":   settings.NetBoxEnabled,
 				"supported": true,
 			},
+			"kubernetes": map[string]interface{}{
+				"enabled":   settings.K8sEnabled,
+				"supported": true,
+			},
 			"ssh": map[string]interface{}{
 				"enabled":   false,
 				"supported": false,
@@ -106,6 +110,7 @@ func (h *APIHandler) UpdateProxySettings(w http.ResponseWriter, r *http.Request)
 	settings.GrafanaEnabled = input.Services.Grafana.Enabled
 	settings.PagerDutyEnabled = input.Services.PagerDuty.Enabled
 	settings.NetBoxEnabled = input.Services.NetBox.Enabled
+	settings.K8sEnabled = input.Services.Kubernetes.Enabled
 
 	if err := database.UpdateProxySettings(settings); err != nil {
 		api.RespondError(w, http.StatusInternalServerError, "Failed to update proxy settings")

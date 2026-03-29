@@ -161,6 +161,8 @@ func (s *ToolService) EnsureToolTypes() error {
 		{Name: "grafana", Description: "Grafana observability platform integration"},
 		{Name: "pagerduty", Description: "PagerDuty incident management integration"},
 		{Name: "clickhouse", Description: "ClickHouse read-only query and OLAP diagnostics integration"},
+		{Name: "netbox", Description: "NetBox CMDB integration for DCIM, IPAM, circuits, virtualization, and tenancy"},
+		{Name: "kubernetes", Description: "Kubernetes read-only diagnostics for pods, deployments, nodes, services, events, and logs"},
 	}
 
 	for _, tt := range toolTypes {

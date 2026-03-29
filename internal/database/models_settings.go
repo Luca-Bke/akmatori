@@ -137,6 +137,7 @@ type ProxySettings struct {
 	GrafanaEnabled         bool      `gorm:"default:false" json:"grafana_enabled"`          // Use proxy for Grafana API
 	PagerDutyEnabled       bool      `gorm:"default:false" json:"pagerduty_enabled"`        // Use proxy for PagerDuty API
 	NetBoxEnabled          bool      `gorm:"default:false" json:"netbox_enabled"`           // Use proxy for NetBox API
+	K8sEnabled             bool      `gorm:"column:k8s_enabled;default:false" json:"k8s_enabled"` // Use proxy for Kubernetes API
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }

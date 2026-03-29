@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -369,8 +370,8 @@ func addSelectorParams(params url.Values, args map[string]interface{}) {
 
 // addLimitParam adds limit to query params if present
 func addLimitParam(params url.Values, args map[string]interface{}) {
-	if v, ok := args["limit"].(float64); ok && v > 0 {
-		limit := int(v)
+	if v, ok := args["limit"].(float64); ok && v >= 1 {
+		limit := int(math.Round(v))
 		if limit > 1000 {
 			limit = 1000
 		}
@@ -467,7 +468,7 @@ func (t *K8sTool) GetPodLogs(ctx context.Context, incidentID string, args map[st
 	// tail_lines defaults to 100
 	tailLines := 100
 	if v, ok := args["tail_lines"].(float64); ok && v > 0 {
-		tailLines = int(v)
+		tailLines = int(math.Round(v))
 		if tailLines < 1 {
 			tailLines = 1
 		}
@@ -477,8 +478,8 @@ func (t *K8sTool) GetPodLogs(ctx context.Context, incidentID string, args map[st
 	}
 	params.Set("tailLines", fmt.Sprintf("%d", tailLines))
 
-	if v, ok := args["since_seconds"].(float64); ok && v > 0 {
-		params.Set("sinceSeconds", fmt.Sprintf("%d", int(v)))
+	if v, ok := args["since_seconds"].(float64); ok && v >= 1 {
+		params.Set("sinceSeconds", fmt.Sprintf("%d", int(math.Round(v))))
 	}
 
 	if v, ok := args["previous"].(bool); ok && v {
