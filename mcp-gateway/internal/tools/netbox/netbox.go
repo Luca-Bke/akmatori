@@ -336,6 +336,8 @@ func addSearchParams(params url.Values, args map[string]interface{}, filters ...
 			params.Set(filter, v)
 		} else if v, ok := args[filter].(float64); ok {
 			params.Set(filter, fmt.Sprintf("%d", int(v)))
+		} else if v, ok := args[filter].(bool); ok {
+			params.Set(filter, fmt.Sprintf("%t", v))
 		}
 	}
 }

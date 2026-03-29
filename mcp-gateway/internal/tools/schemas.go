@@ -1174,7 +1174,7 @@ func getNetBoxSchema() ToolTypeSchema {
 			{
 				Name:        "api_request",
 				Description: "Generic read-only API request to any NetBox endpoint",
-				Parameters:  "path (required), query_params",
+				Parameters:  "path (required), query_params, limit, offset",
 				Returns:     "JSON response from the NetBox API",
 			},
 		},

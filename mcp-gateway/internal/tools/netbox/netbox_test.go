@@ -420,15 +420,16 @@ func TestAddPaginationParams(t *testing.T) {
 
 func TestAddSearchParams(t *testing.T) {
 	args := map[string]interface{}{
-		"name":   "web-server",
-		"site":   "dc1",
-		"q":      "search-term",
-		"empty":  "",
-		"number": float64(42),
+		"name":    "web-server",
+		"site":    "dc1",
+		"q":       "search-term",
+		"empty":   "",
+		"number":  float64(42),
+		"enabled": true,
 	}
 
 	params := url.Values{}
-	addSearchParams(params, args, "name", "site", "q", "empty", "number", "missing")
+	addSearchParams(params, args, "name", "site", "q", "empty", "number", "missing", "enabled")
 
 	if params.Get("name") != "web-server" {
 		t.Errorf("expected name=web-server, got %q", params.Get("name"))
@@ -447,6 +448,9 @@ func TestAddSearchParams(t *testing.T) {
 	}
 	if params.Get("missing") != "" {
 		t.Error("missing key should not be set")
+	}
+	if params.Get("enabled") != "true" {
+		t.Errorf("expected enabled=true, got %q", params.Get("enabled"))
 	}
 }
 

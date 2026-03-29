@@ -3737,7 +3737,15 @@ func (r *Registry) registerNetBoxTools() {
 					},
 					"query_params": {
 						Type:        "object",
-						Description: "Optional query parameters as key-value pairs (e.g. {\"status\": \"active\", \"limit\": \"50\"})",
+						Description: "Optional query parameters as key-value pairs (e.g. {\"status\": \"active\"})",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return (default: 50, max: 1000)",
+					},
+					"offset": {
+						Type:        "number",
+						Description: "Starting position for pagination",
 					},
 				},
 				Required: []string{"path"},
