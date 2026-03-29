@@ -141,16 +141,16 @@ NetBox is a CMDB (mostly static data), so longer TTLs are appropriate:
 **Files:**
 - Modify: `mcp-gateway/internal/tools/netbox/netbox.go`
 
-- [ ] Implement `GetCircuits()` - list with filters (provider, type, status, tenant, q)
-- [ ] Implement `GetProviders()` - list with filters (name, q)
-- [ ] Implement `GetVirtualMachines()` - list with filters (name, cluster, site, status, role, tenant, q)
-- [ ] Implement `GetClusters()` - list with filters (name, type, group, site, tenant, q)
-- [ ] Implement `GetVMInterfaces()` - list with filters (virtual_machine, name, enabled)
-- [ ] Implement `GetTenants()` - list with filters (name, group, q)
-- [ ] Implement `GetTenantGroups()` - list with filters (name, q)
-- [ ] Implement `APIRequest()` - generic GET to any `/api/{path}` with optional query params
-- [ ] Write tests for all methods in this task
-- [ ] Run `make test-mcp` - must pass before task 6
+- [x] Implement `GetCircuits()` - list with filters (provider, type, status, tenant, q)
+- [x] Implement `GetProviders()` - list with filters (name, q)
+- [x] Implement `GetVirtualMachines()` - list with filters (name, cluster, site, status, role, tenant, q)
+- [x] Implement `GetClusters()` - list with filters (name, type, group, site, tenant, q)
+- [x] Implement `GetVMInterfaces()` - list with filters (virtual_machine, name, enabled)
+- [x] Implement `GetTenants()` - list with filters (name, group, q)
+- [x] Implement `GetTenantGroups()` - list with filters (name, q)
+- [x] Implement `APIRequest()` - generic GET to any `/api/{path}` with optional query params
+- [x] Write tests for all methods in this task
+- [x] Run `make test-mcp` - must pass before task 6
 
 ### Task 6: Registry Integration
 

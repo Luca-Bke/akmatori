@@ -1084,6 +1084,281 @@ func TestAPIRequest_WithQueryParams(t *testing.T) {
 	}
 }
 
+// --- Circuits filter tests ---
+
+func TestGetCircuits_AllFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for _, param := range []string{"provider", "type", "status", "tenant", "q"} {
+			if q.Get(param) == "" {
+				t.Errorf("expected param %s to be set", param)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":0,"results":[]}`)
+	})
+
+	_, err := tool.GetCircuits(context.Background(), "test-incident", map[string]interface{}{
+		"provider": "Zayo",
+		"type":     "Transit",
+		"status":   "active",
+		"tenant":   "acme",
+		"q":        "circuit-search",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetCircuits_WithPagination(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("limit") != "10" {
+			t.Errorf("expected limit=10, got %q", q.Get("limit"))
+		}
+		if q.Get("offset") != "20" {
+			t.Errorf("expected offset=20, got %q", q.Get("offset"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":50,"results":[]}`)
+	})
+
+	_, err := tool.GetCircuits(context.Background(), "test-incident", map[string]interface{}{
+		"limit":  float64(10),
+		"offset": float64(20),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetProviders_AllFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for _, param := range []string{"name", "q"} {
+			if q.Get(param) == "" {
+				t.Errorf("expected param %s to be set", param)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":0,"results":[]}`)
+	})
+
+	_, err := tool.GetProviders(context.Background(), "test-incident", map[string]interface{}{
+		"name": "Zayo",
+		"q":    "search",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- Virtualization filter tests ---
+
+func TestGetVirtualMachines_AllFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for _, param := range []string{"name", "cluster", "site", "status", "role", "tenant", "q"} {
+			if q.Get(param) == "" {
+				t.Errorf("expected param %s to be set", param)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":0,"results":[]}`)
+	})
+
+	_, err := tool.GetVirtualMachines(context.Background(), "test-incident", map[string]interface{}{
+		"name":    "vm-web-01",
+		"cluster": "k8s-prod",
+		"site":    "dc1",
+		"status":  "active",
+		"role":    "web-server",
+		"tenant":  "acme",
+		"q":       "vm-search",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetVirtualMachines_WithPagination(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("limit") != "25" {
+			t.Errorf("expected limit=25, got %q", q.Get("limit"))
+		}
+		if q.Get("offset") != "50" {
+			t.Errorf("expected offset=50, got %q", q.Get("offset"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":100,"results":[]}`)
+	})
+
+	_, err := tool.GetVirtualMachines(context.Background(), "test-incident", map[string]interface{}{
+		"limit":  float64(25),
+		"offset": float64(50),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetClusters_AllFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for _, param := range []string{"name", "type", "group", "site", "tenant", "q"} {
+			if q.Get(param) == "" {
+				t.Errorf("expected param %s to be set", param)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":0,"results":[]}`)
+	})
+
+	_, err := tool.GetClusters(context.Background(), "test-incident", map[string]interface{}{
+		"name":   "k8s-prod",
+		"type":   "kubernetes",
+		"group":  "production",
+		"site":   "dc1",
+		"tenant": "acme",
+		"q":      "cluster-search",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetVMInterfaces_AllFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for _, param := range []string{"virtual_machine", "name", "enabled"} {
+			if q.Get(param) == "" {
+				t.Errorf("expected param %s to be set", param)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":0,"results":[]}`)
+	})
+
+	_, err := tool.GetVMInterfaces(context.Background(), "test-incident", map[string]interface{}{
+		"virtual_machine": "vm-01",
+		"name":            "eth0",
+		"enabled":         "true",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- Tenancy filter tests ---
+
+func TestGetTenants_AllFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for _, param := range []string{"name", "group", "q"} {
+			if q.Get(param) == "" {
+				t.Errorf("expected param %s to be set", param)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":0,"results":[]}`)
+	})
+
+	_, err := tool.GetTenants(context.Background(), "test-incident", map[string]interface{}{
+		"name":  "acme",
+		"group": "corporate",
+		"q":     "tenant-search",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetTenants_WithPagination(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("limit") != "5" {
+			t.Errorf("expected limit=5, got %q", q.Get("limit"))
+		}
+		if q.Get("offset") != "10" {
+			t.Errorf("expected offset=10, got %q", q.Get("offset"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":20,"results":[]}`)
+	})
+
+	_, err := tool.GetTenants(context.Background(), "test-incident", map[string]interface{}{
+		"limit":  float64(5),
+		"offset": float64(10),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetTenantGroups_AllFilters(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		for _, param := range []string{"name", "q"} {
+			if q.Get(param) == "" {
+				t.Errorf("expected param %s to be set", param)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":0,"results":[]}`)
+	})
+
+	_, err := tool.GetTenantGroups(context.Background(), "test-incident", map[string]interface{}{
+		"name": "corporate",
+		"q":    "group-search",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- APIRequest additional tests ---
+
+func TestAPIRequest_WithPagination(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("limit") != "50" {
+			t.Errorf("expected limit=50, got %q", q.Get("limit"))
+		}
+		if q.Get("offset") != "100" {
+			t.Errorf("expected offset=100, got %q", q.Get("offset"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"count":200,"results":[]}`)
+	})
+
+	_, err := tool.APIRequest(context.Background(), "test-incident", map[string]interface{}{
+		"path":   "/api/dcim/devices/",
+		"limit":  float64(50),
+		"offset": float64(100),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAPIRequest_ErrorResponse(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"detail":"Not found."}`)
+	})
+
+	_, err := tool.APIRequest(context.Background(), "test-incident", map[string]interface{}{
+		"path": "/api/nonexistent/endpoint/",
+	})
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("expected 404 in error, got: %v", err)
+	}
+}
+
 // --- Cache TTL verification ---
 
 func TestCacheTTLConstants(t *testing.T) {
