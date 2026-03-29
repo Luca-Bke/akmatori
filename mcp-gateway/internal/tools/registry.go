@@ -18,6 +18,7 @@ import (
 	"github.com/akmatori/mcp-gateway/internal/tools/clickhouse"
 	"github.com/akmatori/mcp-gateway/internal/tools/grafana"
 	"github.com/akmatori/mcp-gateway/internal/tools/httpconnector"
+	"github.com/akmatori/mcp-gateway/internal/tools/k8s"
 	"github.com/akmatori/mcp-gateway/internal/tools/netbox"
 	"github.com/akmatori/mcp-gateway/internal/tools/pagerduty"
 	"github.com/akmatori/mcp-gateway/internal/tools/postgresql"
@@ -44,6 +45,8 @@ const (
 	PagerDutyBurstCapacity   = 20 // burst capacity
 	NetBoxRatePerSecond      = 10 // requests per second
 	NetBoxBurstCapacity      = 20 // burst capacity
+	K8sRatePerSecond         = 10 // requests per second
+	K8sBurstCapacity         = 20 // burst capacity
 )
 
 // Registry manages tool registration
@@ -66,6 +69,8 @@ type Registry struct {
 	pagerdutyLimit   *ratelimit.Limiter
 	netboxTool       *netbox.NetBoxTool
 	netboxLimit      *ratelimit.Limiter
+	k8sTool          *k8s.K8sTool
+	k8sLimit         *ratelimit.Limiter
 
 	// HTTP connector state
 	httpExecutor       *httpconnector.HTTPConnectorExecutor
@@ -149,6 +154,13 @@ func (r *Registry) RegisterAllTools() {
 	// Register NetBox tools with rate limiter
 	r.registerNetBoxTools()
 
+	// Create rate limiter for Kubernetes: 10 req/sec, burst 20
+	r.k8sLimit = ratelimit.New(K8sRatePerSecond, K8sBurstCapacity)
+	r.logger.Printf("Kubernetes rate limiter created: %d req/sec, burst %d", K8sRatePerSecond, K8sBurstCapacity)
+
+	// Register Kubernetes tools with rate limiter
+	r.registerK8sTools()
+
 	r.logger.Println("All tools registered")
 }
 
@@ -178,6 +190,9 @@ func (r *Registry) Stop() {
 	if r.netboxTool != nil {
 		r.netboxTool.Stop()
 	}
+	if r.k8sTool != nil {
+		r.k8sTool.Stop()
+	}
 	if r.httpExecutor != nil {
 		r.httpExecutor.Stop()
 	}
@@ -186,8 +201,27 @@ func (r *Registry) Stop() {
 	}
 }
 
+// builtInToolNamespaces contains all namespaces used by built-in tool types.
+// Proxy configs with these namespaces are skipped to prevent bypassing the
+// per-incident tool allowlist.
+var builtInToolNamespaces = map[string]bool{
+	"ssh":              true,
+	"zabbix":           true,
+	"victoria_metrics": true,
+	"catchpoint":       true,
+	"postgresql":       true,
+	"grafana":          true,
+	"clickhouse":       true,
+	"pagerduty":        true,
+	"netbox":           true,
+	"kubernetes":       true,
+	"qmd":             true,
+}
+
 // DefaultMCPProxyLoader loads MCP server configs from the database and converts them
-// to proxy handler registrations.
+// to proxy handler registrations. Configs whose namespace_prefix matches a built-in
+// tool namespace are skipped to avoid overriding built-in tools with proxy namespaces
+// that bypass the per-incident allowlist.
 func DefaultMCPProxyLoader(ctx context.Context) ([]mcpproxy.ServerRegistration, error) {
 	configs, err := database.GetAllEnabledMCPServerConfigs(ctx)
 	if err != nil {
@@ -196,6 +230,11 @@ func DefaultMCPProxyLoader(ctx context.Context) ([]mcpproxy.ServerRegistration, 
 
 	var regs []mcpproxy.ServerRegistration
 	for _, cfg := range configs {
+		if builtInToolNamespaces[cfg.NamespacePrefix] {
+			slog.Warn("skipping MCP proxy config with reserved built-in namespace",
+				"config_id", cfg.ID, "namespace_prefix", cfg.NamespacePrefix)
+			continue
+		}
 		// Convert database Args JSONB to string slice
 		var args []string
 		if cfg.Args != nil {
@@ -423,6 +462,14 @@ func (r *Registry) registerProxyToolsFromHandler() {
 // registerHTTPConnectorTools registers tools for a single HTTP connector.
 // Returns the number of tools registered.
 func (r *Registry) registerHTTPConnectorTools(conn database.HTTPConnector) int {
+	// Defense-in-depth: reject connectors whose namespace collides with a built-in
+	// tool type. The API layer already prevents creation, but stale DB rows or
+	// direct DB inserts could still reach here.
+	if builtInToolNamespaces[conn.ToolTypeName] {
+		r.logger.Printf("Skipping HTTP connector %q: namespace conflicts with built-in tool type", conn.ToolTypeName)
+		return 0
+	}
+
 	// Parse tool definitions from JSONB
 	toolDefs, err := parseHTTPConnectorToolDefs(conn.Tools)
 	if err != nil {
@@ -3757,4 +3804,541 @@ func (r *Registry) registerNetBoxTools() {
 	)
 
 	r.logger.Println("NetBox tools registered (19 methods)")
+}
+
+func (r *Registry) registerK8sTools() {
+	r.k8sTool = k8s.NewK8sTool(r.logger, r.k8sLimit)
+
+	// kubernetes.get_namespaces
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_namespaces",
+			Description: "List all namespaces in the Kubernetes cluster",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter namespaces (e.g. 'env=production')",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter namespaces (e.g. 'metadata.name=default')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetNamespaces(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_pods
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_pods",
+			Description: "List pods in a namespace with optional filters. When 'name' is provided, returns the single pod detail instead of a list.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"name": {
+						Type:        "string",
+						Description: "Exact pod name. When provided, returns the single pod detail object (equivalent to get_pod_detail)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter pods (e.g. 'app=nginx')",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter pods (e.g. 'status.phase=Running')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetPods(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_pod_detail
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_pod_detail",
+			Description: "Get detailed information about a specific pod including status, containers, and conditions",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"name": {
+						Type:        "string",
+						Description: "Pod name (required)",
+					},
+				},
+				Required: []string{"namespace", "name"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetPodDetail(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_pod_logs
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_pod_logs",
+			Description: "Get logs from a pod's container",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"name": {
+						Type:        "string",
+						Description: "Pod name (required)",
+					},
+					"container": {
+						Type:        "string",
+						Description: "Container name (required for multi-container pods)",
+					},
+					"tail_lines": {
+						Type:        "number",
+						Description: "Number of lines from the end of the log to return (default: 100)",
+					},
+					"since_seconds": {
+						Type:        "number",
+						Description: "Return logs newer than this many seconds",
+					},
+					"previous": {
+						Type:        "boolean",
+						Description: "Return logs from the previous terminated container instance",
+					},
+				},
+				Required: []string{"namespace", "name"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetPodLogs(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_events
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_events",
+			Description: "List events in a namespace (warnings, errors, scheduling events)",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter events (e.g. 'app=nginx')",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter events (e.g. 'type=Warning')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetEvents(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_deployments
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_deployments",
+			Description: "List deployments in a namespace with optional filters. When 'name' is provided, returns the single deployment detail instead of a list.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"name": {
+						Type:        "string",
+						Description: "Exact deployment name. When provided, returns the single deployment detail object (equivalent to get_deployment_detail)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter deployments (e.g. 'app=nginx')",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter deployments (e.g. 'metadata.name=my-deploy')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetDeployments(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_deployment_detail
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_deployment_detail",
+			Description: "Get detailed information about a specific deployment including replicas, conditions, and strategy",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"name": {
+						Type:        "string",
+						Description: "Deployment name (required)",
+					},
+				},
+				Required: []string{"namespace", "name"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetDeploymentDetail(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_statefulsets
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_statefulsets",
+			Description: "List statefulsets in a namespace with optional filters",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter statefulsets",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter statefulsets",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetStatefulSets(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_daemonsets
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_daemonsets",
+			Description: "List daemonsets in a namespace with optional filters",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter daemonsets",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter daemonsets",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetDaemonSets(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_jobs
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_jobs",
+			Description: "List jobs in a namespace with optional filters",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter jobs",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter jobs",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetJobs(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_cronjobs
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_cronjobs",
+			Description: "List cronjobs in a namespace with optional filters",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter cronjobs",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter cronjobs",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetCronJobs(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_nodes
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_nodes",
+			Description: "List nodes with conditions and allocatable resources",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter nodes",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter nodes (e.g. 'metadata.name=node-1')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetNodes(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_node_detail
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_node_detail",
+			Description: "Get detailed information about a specific node including conditions, capacity, and taints",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"name": {
+						Type:        "string",
+						Description: "Node name (required)",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetNodeDetail(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_services
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_services",
+			Description: "List services in a namespace",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter services",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter services (e.g. 'metadata.name=my-svc')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetServices(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_configmaps
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_configmaps",
+			Description: "List configmaps in a namespace (names and metadata only, not data contents)",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter configmaps",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter configmaps (e.g. 'metadata.name=my-cm')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetConfigMaps(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.get_ingresses
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.get_ingresses",
+			Description: "List ingresses in a namespace",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"namespace": {
+						Type:        "string",
+						Description: "Kubernetes namespace (required)",
+					},
+					"label_selector": {
+						Type:        "string",
+						Description: "Label selector to filter ingresses",
+					},
+					"field_selector": {
+						Type:        "string",
+						Description: "Field selector to filter ingresses (e.g. 'metadata.name=my-ingress')",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results to return",
+					},
+				},
+				Required: []string{"namespace"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.GetIngresses(ctx, incidentID, args)
+		},
+	)
+
+	// kubernetes.api_request
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "kubernetes.api_request",
+			Description: "Generic read-only GET request to any Kubernetes API endpoint. Use for endpoints not covered by specific tools.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"path": {
+						Type:        "string",
+						Description: "API path starting with /api or /apis (e.g. '/api/v1/componentstatuses')",
+					},
+					"params": {
+						Type:        "object",
+						Description: "Optional query parameters as key-value pairs",
+					},
+				},
+				Required: []string{"path"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.k8sTool.APIRequest(ctx, incidentID, args)
+		},
+	)
+
+	r.logger.Println("Kubernetes tools registered (17 methods)")
 }

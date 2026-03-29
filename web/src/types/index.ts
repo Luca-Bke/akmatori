@@ -146,6 +146,8 @@ export interface ProxySettings {
     catchpoint: ProxyServiceConfig;
     grafana: ProxyServiceConfig;
     pagerduty: ProxyServiceConfig;
+    netbox: ProxyServiceConfig;
+    kubernetes: ProxyServiceConfig;
     ssh: ProxyServiceConfig;
   };
 }
@@ -161,6 +163,8 @@ export interface ProxySettingsUpdate {
     catchpoint: { enabled: boolean };
     grafana: { enabled: boolean };
     pagerduty: { enabled: boolean };
+    netbox: { enabled: boolean };
+    kubernetes: { enabled: boolean };
   };
 }
 

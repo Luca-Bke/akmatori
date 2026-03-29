@@ -133,6 +133,9 @@ type UpdateProxySettingsRequest struct {
 		NetBox struct {
 			Enabled bool `json:"enabled"`
 		} `json:"netbox"`
+		Kubernetes struct {
+			Enabled bool `json:"enabled"`
+		} `json:"kubernetes"`
 	} `json:"services"`
 }
 

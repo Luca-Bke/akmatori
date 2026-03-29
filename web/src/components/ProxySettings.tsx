@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Server, MessageSquare, Shield, Terminal, BarChart3, Activity, LayoutDashboard, Bell } from 'lucide-react';
+import { Save, Server, MessageSquare, Shield, Terminal, BarChart3, Activity, LayoutDashboard, Bell, Box, Network } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import ErrorMessage, { SuccessMessage } from './ErrorMessage';
 import { proxySettingsApi } from '../api/client';
@@ -63,6 +63,8 @@ export default function ProxySettings() {
   const [catchpointEnabled, setCatchpointEnabled] = useState(false);
   const [grafanaEnabled, setGrafanaEnabled] = useState(false);
   const [pagerdutyEnabled, setPagerdutyEnabled] = useState(false);
+  const [netboxEnabled, setNetboxEnabled] = useState(false);
+  const [kubernetesEnabled, setKubernetesEnabled] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -81,6 +83,8 @@ export default function ProxySettings() {
       setCatchpointEnabled(data.services.catchpoint?.enabled ?? false);
       setGrafanaEnabled(data.services.grafana?.enabled ?? false);
       setPagerdutyEnabled(data.services.pagerduty?.enabled ?? false);
+      setNetboxEnabled(data.services.netbox?.enabled ?? false);
+      setKubernetesEnabled(data.services.kubernetes?.enabled ?? false);
       setError(null);
     } catch (err) {
       setError('Failed to load proxy settings');
@@ -106,6 +110,8 @@ export default function ProxySettings() {
           catchpoint: { enabled: catchpointEnabled },
           grafana: { enabled: grafanaEnabled },
           pagerduty: { enabled: pagerdutyEnabled },
+          netbox: { enabled: netboxEnabled },
+          kubernetes: { enabled: kubernetesEnabled },
         },
       };
 
@@ -237,6 +243,24 @@ export default function ProxySettings() {
             supported={true}
             disabled={!hasProxy}
             onChange={setPagerdutyEnabled}
+          />
+          <ServiceToggle
+            name="NetBox"
+            description="CMDB / DCIM / IPAM"
+            icon={Box}
+            enabled={netboxEnabled}
+            supported={true}
+            disabled={!hasProxy}
+            onChange={setNetboxEnabled}
+          />
+          <ServiceToggle
+            name="Kubernetes"
+            description="Container orchestration"
+            icon={Network}
+            enabled={kubernetesEnabled}
+            supported={true}
+            disabled={!hasProxy}
+            onChange={setKubernetesEnabled}
           />
           <ServiceToggle
             name="SSH"
