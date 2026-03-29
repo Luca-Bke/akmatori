@@ -114,15 +114,15 @@ NetBox is a CMDB (mostly static data), so longer TTLs are appropriate:
 **Files:**
 - Modify: `mcp-gateway/internal/tools/netbox/netbox.go`
 
-- [ ] Implement `GetDevices()` - list/search with filters (name, site, role, status, tag, platform, tenant, q)
-- [ ] Implement `GetDevice()` - single device by ID
-- [ ] Implement `GetInterfaces()` - list with filters (device, device_id, name, type, enabled)
-- [ ] Implement `GetSites()` - list with filters (name, region, status, tag, tenant, q)
-- [ ] Implement `GetRacks()` - list with filters (site, name, status, role, tenant, q)
-- [ ] Implement `GetCables()` - list with filters (device, site, type, status)
-- [ ] Implement `GetDeviceTypes()` - list with filters (manufacturer, model, q)
-- [ ] Write tests for all DCIM methods (mock HTTP server, test params, error cases)
-- [ ] Run `make test-mcp` - must pass before task 4
+- [x] Implement `GetDevices()` - list/search with filters (name, site, role, status, tag, platform, tenant, q)
+- [x] Implement `GetDevice()` - single device by ID
+- [x] Implement `GetInterfaces()` - list with filters (device, device_id, name, type, enabled)
+- [x] Implement `GetSites()` - list with filters (name, region, status, tag, tenant, q)
+- [x] Implement `GetRacks()` - list with filters (site, name, status, role, tenant, q)
+- [x] Implement `GetCables()` - list with filters (device, site, type, status)
+- [x] Implement `GetDeviceTypes()` - list with filters (manufacturer, model, q)
+- [x] Write tests for all DCIM methods (mock HTTP server, test params, error cases)
+- [x] Run `make test-mcp` - must pass before task 4
 
 ### Task 4: IPAM Tool Methods
 
