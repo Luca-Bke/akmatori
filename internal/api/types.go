@@ -130,6 +130,9 @@ type UpdateProxySettingsRequest struct {
 		PagerDuty struct {
 			Enabled bool `json:"enabled"`
 		} `json:"pagerduty"`
+		NetBox struct {
+			Enabled bool `json:"enabled"`
+		} `json:"netbox"`
 	} `json:"services"`
 }
 

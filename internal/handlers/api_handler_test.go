@@ -393,7 +393,8 @@ func TestUpdateProxySettingsRequest_PagerDutyField(t *testing.T) {
 			"victoria_metrics": {"enabled": false},
 			"catchpoint": {"enabled": false},
 			"grafana": {"enabled": false},
-			"pagerduty": {"enabled": true}
+			"pagerduty": {"enabled": true},
+			"netbox": {"enabled": true}
 		}
 	}`
 
@@ -414,6 +415,7 @@ func TestUpdateProxySettingsRequest_PagerDutyField(t *testing.T) {
 	testhelpers.AssertEqual(t, false, input.Services.Catchpoint.Enabled, "catchpoint enabled")
 	testhelpers.AssertEqual(t, false, input.Services.Grafana.Enabled, "grafana enabled")
 	testhelpers.AssertEqual(t, true, input.Services.PagerDuty.Enabled, "pagerduty enabled")
+	testhelpers.AssertEqual(t, true, input.Services.NetBox.Enabled, "netbox enabled")
 }
 
 // TestUpdateProxySettingsRequest_PagerDutyDefault verifies PagerDuty defaults to false when omitted
@@ -440,6 +442,7 @@ func TestUpdateProxySettingsRequest_PagerDutyDefault(t *testing.T) {
 	}
 
 	testhelpers.AssertEqual(t, false, input.Services.PagerDuty.Enabled, "pagerduty should default to false when omitted")
+	testhelpers.AssertEqual(t, false, input.Services.NetBox.Enabled, "netbox should default to false when omitted")
 }
 
 // TestProxySettings_PagerDutyEnabled verifies PagerDuty field on database model
@@ -451,6 +454,19 @@ func TestProxySettings_PagerDutyEnabled(t *testing.T) {
 	}
 
 	testhelpers.AssertEqual(t, true, settings.PagerDutyEnabled, "pagerduty enabled")
+	testhelpers.AssertEqual(t, false, settings.GrafanaEnabled, "grafana enabled")
+	testhelpers.AssertEqual(t, true, settings.IsConfigured(), "should be configured with proxy URL")
+}
+
+// TestProxySettings_NetBoxEnabled verifies NetBox field on database model
+func TestProxySettings_NetBoxEnabled(t *testing.T) {
+	settings := database.ProxySettings{
+		ProxyURL:       "http://proxy:8080",
+		NetBoxEnabled:  true,
+		GrafanaEnabled: false,
+	}
+
+	testhelpers.AssertEqual(t, true, settings.NetBoxEnabled, "netbox enabled")
 	testhelpers.AssertEqual(t, false, settings.GrafanaEnabled, "grafana enabled")
 	testhelpers.AssertEqual(t, true, settings.IsConfigured(), "should be configured with proxy URL")
 }

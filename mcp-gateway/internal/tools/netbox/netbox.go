@@ -79,7 +79,7 @@ func configCacheKey(incidentID string) string {
 func responseCacheKey(path string, params interface{}) string {
 	paramsJSON, _ := json.Marshal(params)
 	hash := sha256.Sum256(paramsJSON)
-	return fmt.Sprintf("%s:%s", path, hex.EncodeToString(hash[:16]))
+	return fmt.Sprintf("%s:%s", path, hex.EncodeToString(hash[:8]))
 }
 
 // extractLogicalName extracts the optional logical_name from tool arguments.

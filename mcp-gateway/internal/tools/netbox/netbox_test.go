@@ -765,7 +765,7 @@ func TestGetVLANs(t *testing.T) {
 	})
 
 	result, err := tool.GetVLANs(context.Background(), "test-incident", map[string]interface{}{
-		"vid":  "100",
+		"vid":  float64(100),
 		"name": "mgmt",
 	})
 	if err != nil {
@@ -789,7 +789,7 @@ func TestGetVLANs_AllFilters(t *testing.T) {
 	})
 
 	_, err := tool.GetVLANs(context.Background(), "test-incident", map[string]interface{}{
-		"vid":    "100",
+		"vid":    float64(100),
 		"name":   "mgmt",
 		"site":   "dc1",
 		"group":  "core",
