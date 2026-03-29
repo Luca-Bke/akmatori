@@ -85,11 +85,11 @@ NetBox is a CMDB (mostly static data), so longer TTLs are appropriate:
 - Modify: `mcp-gateway/internal/database/db.go`
 - Modify: `mcp-gateway/internal/tools/schemas.go`
 
-- [ ] Add `NetBoxEnabled bool` field to `ProxySettings` struct in `db.go` (with `gorm:"default:false"` tag)
-- [ ] Add `getNetBoxSchema()` function in `schemas.go` with settings: `netbox_url` (required), `netbox_api_token` (required, secret), `netbox_verify_ssl` (advanced, default true), `netbox_timeout` (advanced, default 30)
-- [ ] Register `"netbox": getNetBoxSchema()` in `GetToolSchemas()`
-- [ ] Add all 21 tool functions to the schema's `Functions` slice
-- [ ] Run `make test-mcp` - must pass before task 2
+- [x] Add `NetBoxEnabled bool` field to `ProxySettings` struct in `db.go` (with `gorm:"default:false"` tag)
+- [x] Add `getNetBoxSchema()` function in `schemas.go` with settings: `netbox_url` (required), `netbox_api_token` (required, secret), `netbox_verify_ssl` (advanced, default true), `netbox_timeout` (advanced, default 30)
+- [x] Register `"netbox": getNetBoxSchema()` in `GetToolSchemas()`
+- [x] Add all 21 tool functions to the schema's `Functions` slice
+- [x] Run `make test-mcp` - must pass before task 2
 
 ### Task 2: Core NetBox Tool Implementation
 

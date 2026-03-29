@@ -615,7 +615,7 @@ func TestClickHouseSchema_Functions(t *testing.T) {
 func TestGetToolSchemas_AllPresent(t *testing.T) {
 	schemas := GetToolSchemas()
 
-	expected := []string{"ssh", "zabbix", "victoria_metrics", "catchpoint", "postgresql", "grafana", "clickhouse", "pagerduty"}
+	expected := []string{"ssh", "zabbix", "victoria_metrics", "catchpoint", "postgresql", "grafana", "clickhouse", "pagerduty", "netbox"}
 	for _, name := range expected {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("missing schema: %s", name)
@@ -732,5 +732,129 @@ func TestPagerDutySchema_Functions(t *testing.T) {
 		if schema.Functions[i].Name != name {
 			t.Errorf("expected function[%d] = %q, got %q", i, name, schema.Functions[i].Name)
 		}
+	}
+}
+
+func TestGetToolSchemas_ContainsNetBox(t *testing.T) {
+	schemas := GetToolSchemas()
+
+	if _, ok := schemas["netbox"]; !ok {
+		t.Fatal("netbox schema not found in GetToolSchemas()")
+	}
+}
+
+func TestGetToolSchema_NetBox(t *testing.T) {
+	schema, ok := GetToolSchema("netbox")
+	if !ok {
+		t.Fatal("netbox schema not found")
+	}
+
+	if schema.Name != "netbox" {
+		t.Errorf("expected name 'netbox', got %q", schema.Name)
+	}
+
+	if schema.Version != "1.0.0" {
+		t.Errorf("expected version '1.0.0', got %q", schema.Version)
+	}
+}
+
+func TestNetBoxSchema_RequiredFields(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+
+	expectedRequired := []string{"netbox_url", "netbox_api_token"}
+	if len(schema.SettingsSchema.Required) != len(expectedRequired) {
+		t.Fatalf("expected %d required fields, got %d", len(expectedRequired), len(schema.SettingsSchema.Required))
+	}
+	for i, field := range expectedRequired {
+		if schema.SettingsSchema.Required[i] != field {
+			t.Errorf("expected required[%d] = %q, got %q", i, field, schema.SettingsSchema.Required[i])
+		}
+	}
+}
+
+func TestNetBoxSchema_Settings(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+	props := schema.SettingsSchema.Properties
+
+	expectedFields := []string{"netbox_url", "netbox_api_token", "netbox_verify_ssl", "netbox_timeout"}
+	for _, field := range expectedFields {
+		if _, ok := props[field]; !ok {
+			t.Errorf("missing settings field: %s", field)
+		}
+	}
+}
+
+func TestNetBoxSchema_SecretFields(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+	props := schema.SettingsSchema.Properties
+
+	if !props["netbox_api_token"].Secret {
+		t.Error("expected netbox_api_token to be marked as secret")
+	}
+}
+
+func TestNetBoxSchema_AdvancedFields(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+	props := schema.SettingsSchema.Properties
+
+	advancedFields := []string{"netbox_verify_ssl", "netbox_timeout"}
+	for _, field := range advancedFields {
+		if !props[field].Advanced {
+			t.Errorf("expected %s to be marked as advanced", field)
+		}
+	}
+}
+
+func TestNetBoxSchema_Defaults(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+	props := schema.SettingsSchema.Properties
+
+	if props["netbox_verify_ssl"].Default != true {
+		t.Errorf("expected netbox_verify_ssl default true, got %v", props["netbox_verify_ssl"].Default)
+	}
+
+	if props["netbox_timeout"].Default != 30 {
+		t.Errorf("expected netbox_timeout default 30, got %v", props["netbox_timeout"].Default)
+	}
+}
+
+func TestNetBoxSchema_TimeoutBounds(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+	timeout := schema.SettingsSchema.Properties["netbox_timeout"]
+
+	if timeout.Minimum == nil || *timeout.Minimum != 5 {
+		t.Error("expected netbox_timeout minimum 5")
+	}
+	if timeout.Maximum == nil || *timeout.Maximum != 300 {
+		t.Error("expected netbox_timeout maximum 300")
+	}
+}
+
+func TestNetBoxSchema_Functions(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+
+	expectedFunctions := []string{
+		"get_devices", "get_device", "get_interfaces", "get_sites", "get_racks", "get_cables", "get_device_types",
+		"get_ip_addresses", "get_prefixes", "get_vlans", "get_vrfs",
+		"get_circuits", "get_providers",
+		"get_virtual_machines", "get_clusters", "get_vm_interfaces",
+		"get_tenants", "get_tenant_groups",
+		"api_request",
+	}
+	if len(schema.Functions) != len(expectedFunctions) {
+		t.Fatalf("expected %d functions, got %d", len(expectedFunctions), len(schema.Functions))
+	}
+	for i, name := range expectedFunctions {
+		if schema.Functions[i].Name != name {
+			t.Errorf("expected function[%d] = %q, got %q", i, name, schema.Functions[i].Name)
+		}
+	}
+}
+
+func TestNetBoxSchema_FunctionCount(t *testing.T) {
+	schema, _ := GetToolSchema("netbox")
+
+	if len(schema.Functions) != 19 {
+		t.Errorf("expected 19 functions (all NetBox tools), got %d", len(schema.Functions))
 	}
 }

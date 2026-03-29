@@ -64,6 +64,7 @@ func GetToolSchemas() map[string]ToolTypeSchema {
 		"postgresql":       getPostgreSQLSchema(),
 		"clickhouse":       getClickHouseSchema(),
 		"pagerduty":        getPagerDutySchema(),
+		"netbox":           getNetBoxSchema(),
 	}
 }
 
@@ -1016,6 +1017,165 @@ func getPagerDutySchema() ToolTypeSchema {
 				Description: "Send trigger/acknowledge/resolve events via Events API v2",
 				Parameters:  "routing_key (required), event_action (required: trigger/acknowledge/resolve), dedup_key, summary, source, severity, component, group, class, custom_details",
 				Returns:     "JSON with status, message, and dedup_key",
+			},
+		},
+	}
+}
+
+func getNetBoxSchema() ToolTypeSchema {
+	return ToolTypeSchema{
+		Name:        "netbox",
+		Description: "NetBox CMDB integration. Read-only access to DCIM (devices, sites, racks, interfaces, cables), IPAM (IPs, prefixes, VLANs, VRFs), Circuits, Virtualization (VMs, clusters), and Tenancy data for infrastructure context during incident investigation.",
+		Version:     "1.0.0",
+		SettingsSchema: SettingsSchema{
+			Type:     "object",
+			Required: []string{"netbox_url", "netbox_api_token"},
+			Properties: map[string]PropertySchema{
+				"netbox_url": {
+					Type:        "string",
+					Description: "NetBox instance URL (e.g. https://netbox.example.com)",
+				},
+				"netbox_api_token": {
+					Type:        "string",
+					Description: "NetBox API token for authentication",
+					Secret:      true,
+				},
+				"netbox_verify_ssl": {
+					Type:        "boolean",
+					Description: "Verify SSL certificates",
+					Default:     true,
+					Advanced:    true,
+				},
+				"netbox_timeout": {
+					Type:        "integer",
+					Description: "API request timeout in seconds",
+					Default:     30,
+					Minimum:     intPtr(5),
+					Maximum:     intPtr(300),
+					Advanced:    true,
+				},
+			},
+		},
+		Functions: []ToolFunction{
+			// DCIM
+			{
+				Name:        "get_devices",
+				Description: "List/search devices with filters",
+				Parameters:  "name, site, role, status, tag, platform, tenant, q, limit, offset",
+				Returns:     "JSON array of device objects",
+			},
+			{
+				Name:        "get_device",
+				Description: "Get device details by ID",
+				Parameters:  "id (required)",
+				Returns:     "JSON device object with full details",
+			},
+			{
+				Name:        "get_interfaces",
+				Description: "List device interfaces with filters",
+				Parameters:  "device, device_id, name, type, enabled, limit, offset",
+				Returns:     "JSON array of interface objects",
+			},
+			{
+				Name:        "get_sites",
+				Description: "List sites with filters",
+				Parameters:  "name, region, status, tag, tenant, q, limit, offset",
+				Returns:     "JSON array of site objects",
+			},
+			{
+				Name:        "get_racks",
+				Description: "List racks with filters",
+				Parameters:  "site, name, status, role, tenant, q, limit, offset",
+				Returns:     "JSON array of rack objects",
+			},
+			{
+				Name:        "get_cables",
+				Description: "List cable connections with filters",
+				Parameters:  "device, site, type, status, limit, offset",
+				Returns:     "JSON array of cable objects",
+			},
+			{
+				Name:        "get_device_types",
+				Description: "List device types/models with filters",
+				Parameters:  "manufacturer, model, q, limit, offset",
+				Returns:     "JSON array of device type objects",
+			},
+			// IPAM
+			{
+				Name:        "get_ip_addresses",
+				Description: "List/search IP addresses with filters",
+				Parameters:  "address, device, interface, vrf, tenant, status, q, limit, offset",
+				Returns:     "JSON array of IP address objects",
+			},
+			{
+				Name:        "get_prefixes",
+				Description: "List IP prefixes/subnets with filters",
+				Parameters:  "prefix, site, vrf, vlan, tenant, status, q, limit, offset",
+				Returns:     "JSON array of prefix objects",
+			},
+			{
+				Name:        "get_vlans",
+				Description: "List VLANs with filters",
+				Parameters:  "vid, name, site, group, tenant, q, limit, offset",
+				Returns:     "JSON array of VLAN objects",
+			},
+			{
+				Name:        "get_vrfs",
+				Description: "List VRFs with filters",
+				Parameters:  "name, tenant, q, limit, offset",
+				Returns:     "JSON array of VRF objects",
+			},
+			// Circuits
+			{
+				Name:        "get_circuits",
+				Description: "List circuits with filters",
+				Parameters:  "provider, type, status, tenant, q, limit, offset",
+				Returns:     "JSON array of circuit objects",
+			},
+			{
+				Name:        "get_providers",
+				Description: "List circuit providers with filters",
+				Parameters:  "name, q, limit, offset",
+				Returns:     "JSON array of provider objects",
+			},
+			// Virtualization
+			{
+				Name:        "get_virtual_machines",
+				Description: "List virtual machines with filters",
+				Parameters:  "name, cluster, site, status, role, tenant, q, limit, offset",
+				Returns:     "JSON array of virtual machine objects",
+			},
+			{
+				Name:        "get_clusters",
+				Description: "List clusters with filters",
+				Parameters:  "name, type, group, site, tenant, q, limit, offset",
+				Returns:     "JSON array of cluster objects",
+			},
+			{
+				Name:        "get_vm_interfaces",
+				Description: "List VM interfaces with filters",
+				Parameters:  "virtual_machine, name, enabled, limit, offset",
+				Returns:     "JSON array of VM interface objects",
+			},
+			// Tenancy
+			{
+				Name:        "get_tenants",
+				Description: "List tenants with filters",
+				Parameters:  "name, group, q, limit, offset",
+				Returns:     "JSON array of tenant objects",
+			},
+			{
+				Name:        "get_tenant_groups",
+				Description: "List tenant groups with filters",
+				Parameters:  "name, q, limit, offset",
+				Returns:     "JSON array of tenant group objects",
+			},
+			// Generic
+			{
+				Name:        "api_request",
+				Description: "Generic read-only API request to any NetBox endpoint",
+				Parameters:  "path (required), query_params",
+				Returns:     "JSON response from the NetBox API",
 			},
 		},
 	}
