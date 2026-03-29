@@ -46,7 +46,7 @@ type K8sConfig struct {
 	Timeout   int
 	UseProxy  bool
 	ProxyURL  string
-	NoProxy   string // Comma-separated hosts/CIDRs to bypass proxy
+	NoProxy   string // Comma-separated hostnames to bypass proxy
 }
 
 // K8sTool handles Kubernetes API operations
@@ -308,7 +308,6 @@ func (t *K8sTool) doRequest(ctx context.Context, config *K8sConfig, method, path
 	return respBody, nil
 }
 
-// buildURL constructs a full URL from base URL, path, and query parameters
 // newNoProxyFunc returns a proxy function that respects the no_proxy bypass list.
 // Hosts in noProxy (comma-separated) are connected to directly without the proxy.
 func newNoProxyFunc(proxyURL *url.URL, noProxy string) func(*http.Request) (*url.URL, error) {
