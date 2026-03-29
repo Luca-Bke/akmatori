@@ -1166,3 +1166,431 @@ func TestGetPods_WithLogicalName(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// --- GetDeployments tests ---
+
+func TestGetDeployments_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/apps/v1/namespaces/default/deployments" {
+			t.Errorf("expected path /apis/apps/v1/namespaces/default/deployments, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[{"metadata":{"name":"nginx-deploy"}}]}`)
+	})
+
+	result, err := tool.GetDeployments(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "nginx-deploy") {
+		t.Error("expected result to contain 'nginx-deploy'")
+	}
+}
+
+func TestGetDeployments_MissingNamespace(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{}`)
+	})
+
+	_, err := tool.GetDeployments(context.Background(), "test-incident", map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected error for missing namespace")
+	}
+	if !strings.Contains(err.Error(), "namespace is required") {
+		t.Errorf("expected namespace required error, got: %v", err)
+	}
+}
+
+func TestGetDeployments_WithNameFilter(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/apps/v1/namespaces/default/deployments/nginx" {
+			t.Errorf("expected path for specific deployment, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"metadata":{"name":"nginx"}}`)
+	})
+
+	result, err := tool.GetDeployments(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+		"name":      "nginx",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "nginx") {
+		t.Error("expected result to contain 'nginx'")
+	}
+}
+
+func TestGetDeployments_WithSelectors(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("labelSelector") != "app=web" {
+			t.Errorf("expected labelSelector=app=web, got %q", r.URL.Query().Get("labelSelector"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetDeployments(context.Background(), "test-incident", map[string]interface{}{
+		"namespace":      "default",
+		"label_selector": "app=web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetDeployments_WithLimit(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "5" {
+			t.Errorf("expected limit=5, got %q", r.URL.Query().Get("limit"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetDeployments(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+		"limit":     float64(5),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- GetDeploymentDetail tests ---
+
+func TestGetDeploymentDetail_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/apps/v1/namespaces/kube-system/deployments/coredns" {
+			t.Errorf("expected path for coredns deployment, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"metadata":{"name":"coredns"},"spec":{"replicas":2},"status":{"readyReplicas":2}}`)
+	})
+
+	result, err := tool.GetDeploymentDetail(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "kube-system",
+		"name":      "coredns",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "coredns") {
+		t.Error("expected result to contain 'coredns'")
+	}
+	if !strings.Contains(result, "readyReplicas") {
+		t.Error("expected result to contain 'readyReplicas'")
+	}
+}
+
+func TestGetDeploymentDetail_MissingNamespace(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{}`)
+	})
+
+	_, err := tool.GetDeploymentDetail(context.Background(), "test-incident", map[string]interface{}{
+		"name": "coredns",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing namespace")
+	}
+	if !strings.Contains(err.Error(), "namespace is required") {
+		t.Errorf("expected namespace required error, got: %v", err)
+	}
+}
+
+func TestGetDeploymentDetail_MissingName(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{}`)
+	})
+
+	_, err := tool.GetDeploymentDetail(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing name")
+	}
+	if !strings.Contains(err.Error(), "name is required") {
+		t.Errorf("expected name required error, got: %v", err)
+	}
+}
+
+// --- GetStatefulSets tests ---
+
+func TestGetStatefulSets_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/apps/v1/namespaces/default/statefulsets" {
+			t.Errorf("expected path /apis/apps/v1/namespaces/default/statefulsets, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[{"metadata":{"name":"redis"}}]}`)
+	})
+
+	result, err := tool.GetStatefulSets(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "redis") {
+		t.Error("expected result to contain 'redis'")
+	}
+}
+
+func TestGetStatefulSets_MissingNamespace(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{}`)
+	})
+
+	_, err := tool.GetStatefulSets(context.Background(), "test-incident", map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected error for missing namespace")
+	}
+	if !strings.Contains(err.Error(), "namespace is required") {
+		t.Errorf("expected namespace required error, got: %v", err)
+	}
+}
+
+func TestGetStatefulSets_WithLabelSelector(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("labelSelector") != "app=redis" {
+			t.Errorf("expected labelSelector=app=redis, got %q", r.URL.Query().Get("labelSelector"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetStatefulSets(context.Background(), "test-incident", map[string]interface{}{
+		"namespace":      "default",
+		"label_selector": "app=redis",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetStatefulSets_WithLimit(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "10" {
+			t.Errorf("expected limit=10, got %q", r.URL.Query().Get("limit"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetStatefulSets(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+		"limit":     float64(10),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- GetDaemonSets tests ---
+
+func TestGetDaemonSets_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/apps/v1/namespaces/kube-system/daemonsets" {
+			t.Errorf("expected path /apis/apps/v1/namespaces/kube-system/daemonsets, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[{"metadata":{"name":"kube-proxy"}}]}`)
+	})
+
+	result, err := tool.GetDaemonSets(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "kube-system",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "kube-proxy") {
+		t.Error("expected result to contain 'kube-proxy'")
+	}
+}
+
+func TestGetDaemonSets_MissingNamespace(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{}`)
+	})
+
+	_, err := tool.GetDaemonSets(context.Background(), "test-incident", map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected error for missing namespace")
+	}
+	if !strings.Contains(err.Error(), "namespace is required") {
+		t.Errorf("expected namespace required error, got: %v", err)
+	}
+}
+
+func TestGetDaemonSets_WithLabelSelector(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("labelSelector") != "k8s-app=kube-proxy" {
+			t.Errorf("expected labelSelector=k8s-app=kube-proxy, got %q", r.URL.Query().Get("labelSelector"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetDaemonSets(context.Background(), "test-incident", map[string]interface{}{
+		"namespace":      "kube-system",
+		"label_selector": "k8s-app=kube-proxy",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- GetJobs tests ---
+
+func TestGetJobs_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/batch/v1/namespaces/default/jobs" {
+			t.Errorf("expected path /apis/batch/v1/namespaces/default/jobs, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[{"metadata":{"name":"db-migrate"}}]}`)
+	})
+
+	result, err := tool.GetJobs(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "db-migrate") {
+		t.Error("expected result to contain 'db-migrate'")
+	}
+}
+
+func TestGetJobs_MissingNamespace(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{}`)
+	})
+
+	_, err := tool.GetJobs(context.Background(), "test-incident", map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected error for missing namespace")
+	}
+	if !strings.Contains(err.Error(), "namespace is required") {
+		t.Errorf("expected namespace required error, got: %v", err)
+	}
+}
+
+func TestGetJobs_WithLabelSelector(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("labelSelector") != "job-type=migration" {
+			t.Errorf("expected labelSelector=job-type=migration, got %q", r.URL.Query().Get("labelSelector"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetJobs(context.Background(), "test-incident", map[string]interface{}{
+		"namespace":      "default",
+		"label_selector": "job-type=migration",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetJobs_WithLimit(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "20" {
+			t.Errorf("expected limit=20, got %q", r.URL.Query().Get("limit"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetJobs(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+		"limit":     float64(20),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// --- GetCronJobs tests ---
+
+func TestGetCronJobs_Success(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/batch/v1/namespaces/default/cronjobs" {
+			t.Errorf("expected path /apis/batch/v1/namespaces/default/cronjobs, got %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[{"metadata":{"name":"cleanup-cron"},"spec":{"schedule":"0 */6 * * *"}}]}`)
+	})
+
+	result, err := tool.GetCronJobs(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "cleanup-cron") {
+		t.Error("expected result to contain 'cleanup-cron'")
+	}
+}
+
+func TestGetCronJobs_MissingNamespace(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{}`)
+	})
+
+	_, err := tool.GetCronJobs(context.Background(), "test-incident", map[string]interface{}{})
+	if err == nil {
+		t.Fatal("expected error for missing namespace")
+	}
+	if !strings.Contains(err.Error(), "namespace is required") {
+		t.Errorf("expected namespace required error, got: %v", err)
+	}
+}
+
+func TestGetCronJobs_WithLabelSelector(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("labelSelector") != "app=cleanup" {
+			t.Errorf("expected labelSelector=app=cleanup, got %q", r.URL.Query().Get("labelSelector"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetCronJobs(context.Background(), "test-incident", map[string]interface{}{
+		"namespace":      "default",
+		"label_selector": "app=cleanup",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGetCronJobs_WithLimit(t *testing.T) {
+	tool, _, _ := newTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "3" {
+			t.Errorf("expected limit=3, got %q", r.URL.Query().Get("limit"))
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"items":[]}`)
+	})
+
+	_, err := tool.GetCronJobs(context.Background(), "test-incident", map[string]interface{}{
+		"namespace": "default",
+		"limit":     float64(3),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

@@ -86,14 +86,14 @@ Add a read-only Kubernetes tool type to the MCP Gateway, following the NetBox pa
 - Modify: `mcp-gateway/internal/tools/k8s/k8s.go`
 - Modify: `mcp-gateway/internal/tools/k8s/k8s_test.go`
 
-- [ ] Implement `GetDeployments(ctx, incidentID, args)` — params: namespace (required), name, label_selector, limit (60s cache)
-- [ ] Implement `GetDeploymentDetail(ctx, incidentID, args)` — params: namespace, name (both required) (60s cache)
-- [ ] Implement `GetStatefulSets(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (60s cache)
-- [ ] Implement `GetDaemonSets(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (60s cache)
-- [ ] Implement `GetJobs(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (30s cache)
-- [ ] Implement `GetCronJobs(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (60s cache)
-- [ ] Write tests for each method
-- [ ] Run `make test-mcp` — must pass
+- [x] Implement `GetDeployments(ctx, incidentID, args)` — params: namespace (required), name, label_selector, limit (60s cache)
+- [x] Implement `GetDeploymentDetail(ctx, incidentID, args)` — params: namespace, name (both required) (60s cache)
+- [x] Implement `GetStatefulSets(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (60s cache)
+- [x] Implement `GetDaemonSets(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (60s cache)
+- [x] Implement `GetJobs(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (30s cache)
+- [x] Implement `GetCronJobs(ctx, incidentID, args)` — params: namespace (required), label_selector, limit (60s cache)
+- [x] Write tests for each method
+- [x] Run `make test-mcp` — must pass
 
 ### Task 5: Node, Service, Networking, and Generic Methods
 

@@ -496,3 +496,139 @@ func (t *K8sTool) GetEvents(ctx context.Context, incidentID string, args map[str
 	}
 	return string(body), nil
 }
+
+// GetDeployments lists deployments in a namespace with optional selectors
+func (t *K8sTool) GetDeployments(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	namespace, err := requireString(args, "namespace")
+	if err != nil {
+		return "", err
+	}
+
+	// If a specific deployment name is given, redirect to detail endpoint
+	if name := optionalString(args, "name"); name != "" {
+		path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", url.PathEscape(namespace), url.PathEscape(name))
+		body, err := t.cachedGet(ctx, incidentID, path, nil, DeployCacheTTL, logicalName)
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
+	}
+
+	params := url.Values{}
+	addSelectorParams(params, args)
+	addLimitParam(params, args)
+
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments", url.PathEscape(namespace))
+	body, err := t.cachedGet(ctx, incidentID, path, params, DeployCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// GetDeploymentDetail retrieves detailed information about a specific deployment
+func (t *K8sTool) GetDeploymentDetail(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	namespace, err := requireString(args, "namespace")
+	if err != nil {
+		return "", err
+	}
+	name, err := requireString(args, "name")
+	if err != nil {
+		return "", err
+	}
+
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", url.PathEscape(namespace), url.PathEscape(name))
+	body, err := t.cachedGet(ctx, incidentID, path, nil, DeployCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// GetStatefulSets lists statefulsets in a namespace with optional selectors
+func (t *K8sTool) GetStatefulSets(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	namespace, err := requireString(args, "namespace")
+	if err != nil {
+		return "", err
+	}
+
+	params := url.Values{}
+	addSelectorParams(params, args)
+	addLimitParam(params, args)
+
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/statefulsets", url.PathEscape(namespace))
+	body, err := t.cachedGet(ctx, incidentID, path, params, DeployCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// GetDaemonSets lists daemonsets in a namespace with optional selectors
+func (t *K8sTool) GetDaemonSets(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	namespace, err := requireString(args, "namespace")
+	if err != nil {
+		return "", err
+	}
+
+	params := url.Values{}
+	addSelectorParams(params, args)
+	addLimitParam(params, args)
+
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/daemonsets", url.PathEscape(namespace))
+	body, err := t.cachedGet(ctx, incidentID, path, params, DeployCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// GetJobs lists jobs in a namespace with optional selectors
+func (t *K8sTool) GetJobs(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	namespace, err := requireString(args, "namespace")
+	if err != nil {
+		return "", err
+	}
+
+	params := url.Values{}
+	addSelectorParams(params, args)
+	addLimitParam(params, args)
+
+	path := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", url.PathEscape(namespace))
+	body, err := t.cachedGet(ctx, incidentID, path, params, JobCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// GetCronJobs lists cronjobs in a namespace with optional selectors
+func (t *K8sTool) GetCronJobs(ctx context.Context, incidentID string, args map[string]interface{}) (string, error) {
+	logicalName := extractLogicalName(args)
+
+	namespace, err := requireString(args, "namespace")
+	if err != nil {
+		return "", err
+	}
+
+	params := url.Values{}
+	addSelectorParams(params, args)
+	addLimitParam(params, args)
+
+	path := fmt.Sprintf("/apis/batch/v1/namespaces/%s/cronjobs", url.PathEscape(namespace))
+	body, err := t.cachedGet(ctx, incidentID, path, params, DeployCacheTTL, logicalName)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
