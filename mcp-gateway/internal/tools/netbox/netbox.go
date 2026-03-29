@@ -644,13 +644,30 @@ func (t *NetBoxTool) APIRequest(ctx context.Context, incidentID string, args map
 
 	// Ensure path starts with /api/
 	if !strings.HasPrefix(path, "/api/") {
-		path = "/api/" + strings.TrimPrefix(path, "/")
+		path = strings.TrimLeft(path, "/")
+		path = strings.TrimPrefix(path, "api/")
+		path = "/api/" + path
 	}
 
-	// Reject path traversal attempts (consistent with VictoriaMetrics pattern)
-	if strings.Contains(path, "..") {
+	// Decode path repeatedly until stable to prevent double-encoding bypass
+	// (consistent with VictoriaMetrics pattern)
+	decodedPath := path
+	for {
+		next, err := url.PathUnescape(decodedPath)
+		if err != nil {
+			return "", fmt.Errorf("invalid path: %w", err)
+		}
+		if next == decodedPath {
+			break
+		}
+		decodedPath = next
+	}
+
+	// Reject path traversal attempts
+	if strings.Contains(decodedPath, "..") {
 		return "", fmt.Errorf("invalid path: must not contain '..' segments")
 	}
+	path = decodedPath
 
 	// Reject paths containing query strings or fragments
 	if strings.ContainsAny(path, "?#") {
@@ -672,7 +689,7 @@ func (t *NetBoxTool) APIRequest(ctx context.Context, incidentID string, args map
 			case string:
 				params.Set(k, sv)
 			case float64:
-				params.Set(k, fmt.Sprintf("%g", sv))
+				params.Set(k, fmt.Sprintf("%d", int(sv)))
 			case bool:
 				params.Set(k, fmt.Sprintf("%t", sv))
 			}

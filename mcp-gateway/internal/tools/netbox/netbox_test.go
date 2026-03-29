@@ -1029,6 +1029,7 @@ func TestAPIRequest_PathNormalization(t *testing.T) {
 		{"missing api prefix", "dcim/devices", "/api/dcim/devices/"},
 		{"missing trailing slash", "/api/dcim/devices", "/api/dcim/devices/"},
 		{"with leading slash no api", "/dcim/devices", "/api/dcim/devices/"},
+		{"api prefix without leading slash", "api/dcim/devices", "/api/dcim/devices/"},
 	}
 
 	for _, tt := range tests {
@@ -1510,6 +1511,9 @@ func TestAPIRequest_PathTraversal(t *testing.T) {
 		{"dotdot without api prefix", "../../etc/passwd"},
 		{"dotdot after api", "/api/dcim/../../../admin"},
 		{"dotdot with trailing content", "/api/../../../etc/passwd"},
+		{"url-encoded dotdot", "/api/%2e%2e/%2e%2e/etc/passwd"},
+		{"mixed encoded dotdot", "/api/..%2F..%2Fetc"},
+		{"double-encoded dotdot", "/api/%252e%252e/%252e%252e/admin"},
 	}
 
 	for _, tt := range tests {
