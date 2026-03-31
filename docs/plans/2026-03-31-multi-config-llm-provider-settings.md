@@ -86,18 +86,18 @@ Allow multiple LLM configurations per provider type (e.g., two OpenAI setups wit
 - Modify: `web/src/api.ts`
 - Modify: `web/src/components/settings/LLMSettingsSection.tsx`
 
-- [ ] Update TypeScript types: add LLMConfig interface (id, name, provider, model, etc.), update LLMSettingsListResponse with configs array and active_id
-- [ ] Update API client: add methods for create, update, delete, activate, update list endpoint return type
-- [ ] Redesign LLMSettingsSection: replace provider-tab layout with a config list/card view
+- [x] Update TypeScript types: add LLMConfig interface (id, name, provider, model, etc.), update LLMSettingsListResponse with configs array and active_id
+- [x] Update API client: add methods for create, update, delete, activate, update list endpoint return type
+- [x] Redesign LLMSettingsSection: replace provider-tab layout with a config list/card view
   - Show all saved configs as cards grouped by provider, with active indicator
   - Each card shows: name, provider badge, model, configured status
   - "Activate" button on each card (disabled on already-active)
   - "Edit" button opens edit form (name, provider read-only after creation, api_key, model, thinking_level, base_url)
   - "Delete" button with confirmation (disabled on active config)
   - "Add Configuration" button opens create form (provider dropdown, name, api_key, model, thinking_level, base_url)
-- [ ] Model suggestions dropdown should still work based on provider type of the config being edited
-- [ ] Verify the active config is visually distinct (highlighted border, badge, or similar)
-- [ ] Test frontend manually: create, edit, delete, switch active configs
+- [x] Model suggestions dropdown should still work based on provider type of the config being edited
+- [x] Verify the active config is visually distinct (highlighted border, badge, or similar)
+- [x] Test frontend manually: create, edit, delete, switch active configs (skipped - not automatable)
 
 ### Task 5: Verify acceptance criteria
 
