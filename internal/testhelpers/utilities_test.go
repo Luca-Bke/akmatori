@@ -82,6 +82,21 @@ func TestTempTestDir(t *testing.T) {
 	}
 }
 
+func TestTempTestDir_AutoCleanup(t *testing.T) {
+	var dir string
+
+	t.Run("creates temp dir", func(t *testing.T) {
+		dir, _ = TempTestDir(t, "testhelpers-auto-")
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("temp dir should exist during subtest: %v", err)
+		}
+	})
+
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("temp dir should be removed by t.Cleanup, got err=%v", err)
+	}
+}
+
 func TestWriteTestFile(t *testing.T) {
 	dir, cleanup := TempTestDir(t, "testhelpers-")
 	defer cleanup()
@@ -521,6 +536,22 @@ func TestWithEnv(t *testing.T) {
 	}
 }
 
+func TestWithEnv_AutoCleanup(t *testing.T) {
+	key := "TEST_HELPER_ENV_VAR_AUTO"
+	_ = os.Unsetenv(key)
+
+	t.Run("sets env", func(t *testing.T) {
+		WithEnv(t, key, "auto-value")
+		if got := os.Getenv(key); got != "auto-value" {
+			t.Fatalf("expected env var to be set inside subtest, got %q", got)
+		}
+	})
+
+	if got := os.Getenv(key); got != "" {
+		t.Fatalf("expected env var to be restored after subtest cleanup, got %q", got)
+	}
+}
+
 func TestWithEnv_RestoresOriginal(t *testing.T) {
 	key := "TEST_HELPER_ENV_VAR_RESTORE"
 	os.Setenv(key, "original")
@@ -538,6 +569,25 @@ func TestWithEnv_RestoresOriginal(t *testing.T) {
 	}
 
 	os.Unsetenv(key)
+}
+
+func TestWithEnv_AutoCleanup_RestoresOriginal(t *testing.T) {
+	key := "TEST_HELPER_ENV_VAR_AUTO_RESTORE"
+	if err := os.Setenv(key, "original"); err != nil {
+		t.Fatalf("failed to set env var: %v", err)
+	}
+	defer os.Unsetenv(key)
+
+	t.Run("overrides env", func(t *testing.T) {
+		WithEnv(t, key, "modified")
+		if got := os.Getenv(key); got != "modified" {
+			t.Fatalf("expected env var to be modified inside subtest, got %q", got)
+		}
+	})
+
+	if got := os.Getenv(key); got != "original" {
+		t.Fatalf("expected env var to be restored after subtest cleanup, got %q", got)
+	}
 }
 
 func TestWithEnvs(t *testing.T) {

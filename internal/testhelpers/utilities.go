@@ -103,9 +103,10 @@ func TempTestDir(t *testing.T, prefix string) (string, func()) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	cleanup := func() {
-		os.RemoveAll(dir)
-	}
+	cleanup := sync.OnceFunc(func() {
+		_ = os.RemoveAll(dir)
+	})
+	t.Cleanup(cleanup)
 
 	return dir, cleanup
 }
@@ -465,13 +466,16 @@ func WithEnv(t *testing.T, key, value string) func() {
 		t.Fatalf("failed to set env var %s: %v", key, err)
 	}
 
-	return func() {
+	cleanup := sync.OnceFunc(func() {
 		if existed {
-			os.Setenv(key, original)
+			_ = os.Setenv(key, original)
 		} else {
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
-	}
+	})
+	t.Cleanup(cleanup)
+
+	return cleanup
 }
 
 // WithEnvs temporarily sets multiple environment variables
