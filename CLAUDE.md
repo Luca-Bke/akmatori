@@ -102,15 +102,17 @@ The `agent-worker/` uses `@mariozechner/pi-coding-agent` SDK (v0.63.1):
 
 ### SDK Features (v0.63.1)
 
-- **ctx.signal forwarding**: Cancellation signals propagate to nested model calls and tool executions
-- **JSONL session export**: Investigation history exported to `{workDir}/session_export.jsonl` for post-mortems
-- **sessionDir isolation**: `SessionManager.create(workDir, sessionDir)` and `SessionManager.continueRecent(workDir, sessionDir)` accept an optional second argument to store session files in `{workDir}/.sessions/`, separating session data from workspace files
-- **Typed ToolDefinition API**: `createBashTool()` + `createCodingTools()` replaced by `createBashToolDefinition()`. The bash tool definition is passed via `customTools` (not `tools`) to `createAgentSession()`, overriding the built-in bash tool by name match. Uses typed `ToolDefinition.promptGuidelines` instead of `as any` casts
-- **promptSnippet requirement**: All custom tools must include a `promptSnippet` string in their ToolDefinition. Without it, the tool is omitted from the system prompt's "Available tools" section (pi-mono 0.59.0+)
-- **Typed session events**: Event types `auto_compaction_start`/`auto_compaction_end` renamed to `compaction_start`/`compaction_end` with typed fields (`event.reason`, `event.aborted`, `event.errorMessage`, `event.willRetry`). Retry events use typed `event.attempt`, `event.maxAttempts`, `event.errorMessage`, `event.success`, `event.finalError` fields
-- **Lazy-loaded provider SDKs**: Faster startup by lazy-loading provider modules
-- **Auto-retry improvements**: Better retry handling for tool-using responses
-- **Multi-edit support**: Agent can edit multiple disjoint regions in a single file operation
+- Cancellation signals propagate to nested model calls and tool executions
+- Investigation history exports to `{workDir}/session_export.jsonl`
+- Session files can live in `{workDir}/.sessions/` via `SessionManager.create/continueRecent(..., sessionDir)`
+- Custom tools use typed `ToolDefinition` metadata; `promptSnippet` is required for prompt inclusion
+- Typed compaction/retry session events replaced older untyped names
+- Provider SDKs are lazy-loaded; auto-retry and multi-edit are supported
+
+### Recent Agent Behavior Notes
+
+- Fresh incidents start new agent sessions; only explicit resume flows call `continueRecent(...)`
+- Agents should read the relevant `SKILL.md` first because it carries output-format instructions and `gateway_call(...)` examples
 
 ### Tool Architecture (TypeScript Gateway Tools)
 
@@ -353,11 +355,11 @@ At incident creation, the skill's tool instances are resolved into an allowlist 
 
 ## Test Helpers (`internal/testhelpers/`)
 
-Use the helpers instead of hand-rolled mocks when possible:
+Use the shared helpers instead of hand-rolled setup/assertion code when possible.
 
 - `NewHTTPTestContext(...)` for handler tests
 - `NewMockAlertAdapter(...)` for adapter success/error paths
-- Builders for alerts, incidents, skills, tool instances, LLM settings, Slack settings, runbooks, and context files
+- Builders for alerts, incidents, skills, tool/tool-type instances, alert sources, LLM settings, Slack settings, runbooks, and context files
 - Assertions for equality, JSON, errors, HTTP responses, and panic/no-panic checks
 - `AssertEventually` / `RetryUntil` for async flows
 - `WithEnv` / `WithEnvs` for temporary env overrides
