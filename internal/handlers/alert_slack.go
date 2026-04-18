@@ -97,25 +97,6 @@ func (h *AlertHandler) postSlackThreadReply(channelID, threadTS, message string)
 	}
 }
 
-// postSlackThreadReplyGetTS posts a thread reply and returns the message timestamp
-func (h *AlertHandler) postSlackThreadReplyGetTS(channelID, threadTS, message string) string {
-	slackClient := h.slackManager.GetClient()
-	if slackClient == nil {
-		return ""
-	}
-
-	_, ts, err := slackClient.PostMessage(
-		channelID,
-		slack.MsgOptionText(message, false),
-		slack.MsgOptionTS(threadTS),
-	)
-	if err != nil {
-		slog.Warn("error posting thread reply", "err", err)
-		return ""
-	}
-	return ts
-}
-
 // startSlackThreadStream starts a streaming message in a thread, making the
 // bot name blink while the stream is open. Falls back to a regular thread
 // reply if the Streaming API is unavailable. Returns (messageTS, isStreaming).

@@ -235,10 +235,7 @@ func (h *SlackHandler) processMessage(channel, threadTS, messageTS, text, user s
 		// "timeout waiting for child process to exit" errors when the original
 		// agent process is no longer running.
 		slog.Info("starting new agent session for incident", "incident_id", incidentUUID)
-		var wsErr error
-		wsErr = h.agentWSHandler.StartIncident(incidentUUID, taskWithGuidance, llmSettings, h.skillService.GetEnabledSkillNames(), h.skillService.GetToolAllowlist(), callback)
-
-		if wsErr != nil {
+		if wsErr := h.agentWSHandler.StartIncident(incidentUUID, taskWithGuidance, llmSettings, h.skillService.GetEnabledSkillNames(), h.skillService.GetToolAllowlist(), callback); wsErr != nil {
 			slog.Error("failed to start/continue incident via WebSocket", "err", wsErr)
 			h.finishSlackMessage(channel, threadID, progressMsgTS, isStreaming, incidentUUID, user, text,
 				fmt.Sprintf("❌ Agent worker error: %v", wsErr), "", true, "", 0, 0)
