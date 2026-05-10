@@ -20,10 +20,10 @@ import (
 // originalAlertTextMaxBytes caps how much of the verbatim alert text
 // (raw_payload.original_message, populated by the Slack alert extractor) is
 // rendered into the investigation prompt. Long Slack messages are truncated
-// with a UTF-8-safe ellipsis. The system prompt instructs the agent to pass
-// only the first ~250 chars of this excerpt as the verbatim QMD sub-query;
-// keeping more here gives the agent room to choose a distinctive slice on
-// retries without re-fetching the source message.
+// with a UTF-8-safe ellipsis. The agent summarizes this excerpt into the
+// one-sentence natural-language query it feeds to the {lex, vec, hyde} QMD
+// triplet, so a generous cap leaves room for distinctive phrasing on retries
+// without re-fetching the source message.
 const originalAlertTextMaxBytes = 1500
 
 func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, normalized alerts.NormalizedAlert) {
@@ -256,15 +256,14 @@ Description: %s`,
 	}
 
 	// Always render the labeled "Original alert text:" block when the
-	// extractor populated raw_payload.original_message. The system prompt
-	// (DefaultIncidentManagerPrompt) directs the agent to build sub-query 1
-	// from the "Original alert text" excerpt by name; suppressing the label
-	// — even when Description happens to carry the same string — pushes the
-	// agent onto the 100-char truncated summary in the Slack-channel fallback
-	// path, which is the exact path this feature was meant to improve.
-	// Duplicating the text under both Description and Original alert text
-	// is harmless (a few hundred extra prompt bytes) and keeps the labeled
-	// anchor the prompt instruction relies on.
+	// extractor populated raw_payload.original_message. The agent summarizes
+	// this raw excerpt into the one-sentence natural-language query fed to
+	// the {lex, vec, hyde} QMD triplet, so preserving it (even when
+	// Description carries the same string) gives the agent the full source
+	// text instead of the 100-char truncated summary that the Slack-channel
+	// fallback path otherwise leaves in Description. Duplicating the text
+	// under both Description and Original alert text is harmless (a few
+	// hundred extra prompt bytes) and keeps the labeled anchor stable.
 	if original := extractOriginalMessage(alert.RawPayload, originalAlertTextMaxBytes); original != "" {
 		prompt += "\n\nOriginal alert text:\n" + original
 	}
