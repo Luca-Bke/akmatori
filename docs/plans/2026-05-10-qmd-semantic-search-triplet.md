@@ -93,8 +93,8 @@ Files:
 Files:
 - Modify: `CLAUDE.md` (line 312)
 
-- [ ] replace the existing "Agent Access" paragraph with the new wording: instructs the agent to issue ONE `gateway_call("qmd.query", ...)` against `collections: ["runbooks"]` with THREE `searches[]` entries — `{lex, vec, hyde}`, each carrying the same natural-language alert summary; QMD fuses results via RRF; up to 2 retries; filesystem fallback only on QMD error; mention the QMD sidecar ships with embedding + reranker GGUFs pre-cached (~940 MB).
-- [ ] no test required — docs-only change
+- [x] replace the existing "Agent Access" paragraph with the new wording: instructs the agent to issue ONE `gateway_call("qmd.query", ...)` against `collections: ["runbooks"]` with THREE `searches[]` entries — `{lex, vec, hyde}`, each carrying the same natural-language alert summary; QMD fuses results via RRF; up to 2 retries; filesystem fallback only on QMD error; mention the QMD sidecar ships with embedding + reranker GGUFs pre-cached (~940 MB).
+- [x] no test required — docs-only change
 
 ### Task 6: Rebuild containers and verify the stack is healthy
 
