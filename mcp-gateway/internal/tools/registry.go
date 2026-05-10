@@ -19,6 +19,7 @@ import (
 	"github.com/akmatori/mcp-gateway/internal/tools/grafana"
 	"github.com/akmatori/mcp-gateway/internal/tools/httpconnector"
 	"github.com/akmatori/mcp-gateway/internal/tools/k8s"
+	"github.com/akmatori/mcp-gateway/internal/tools/memory"
 	"github.com/akmatori/mcp-gateway/internal/tools/netbox"
 	"github.com/akmatori/mcp-gateway/internal/tools/pagerduty"
 	"github.com/akmatori/mcp-gateway/internal/tools/postgresql"
@@ -216,6 +217,7 @@ var builtInToolNamespaces = map[string]bool{
 	"netbox":           true,
 	"kubernetes":       true,
 	"qmd":             true,
+	"memory":          true,
 }
 
 // DefaultMCPProxyLoader loads MCP server configs from the database and converts them
@@ -361,6 +363,27 @@ func (r *Registry) SetProxyHandler(h *mcpproxy.ProxyHandler) {
 		r.proxyToolNames = nil
 		r.registerProxyToolsFromHandler()
 	})
+}
+
+// RegisterMemoryTools registers memory.search and memory.get against the
+// configured proxy handler. Must be called AFTER SetProxyHandler — these
+// tools delegate to QMD via the proxy. The "memory" namespace is added as a
+// proxy namespace so the per-incident allowlist is bypassed (memory recall
+// is intended to be globally available, like qmd.*).
+func (r *Registry) RegisterMemoryTools() {
+	if r.proxyHandler == nil {
+		r.logger.Println("memory tools: proxy handler not configured, skipping registration")
+		return
+	}
+	tool := memory.New(r.proxyHandler)
+	names := tool.Register(r.server)
+	for _, name := range names {
+		ns, _ := mcp.ParseToolName(name)
+		if ns != "" {
+			r.server.AddProxyNamespace(ns)
+		}
+	}
+	r.logger.Printf("Registered memory tools: %v", names)
 }
 
 // RegisterSystemMCPProxy registers a single system-level MCP server and its tools.

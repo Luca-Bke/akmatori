@@ -142,7 +142,10 @@ IMPORTANT: Before using any infrastructure tools, you MUST search for relevant r
 Use short, simple keywords (3-5 words). Remove hyphens, extra qualifiers, and host names.
 Example: alert "Nginx-cache test resource connection refused on edge host" → search "nginx cache connection refused"
 
-  gateway_call("qmd.query", {"searches": [{"type": "lex", "query": "<short keywords>"}], "limit": 5})
+  gateway_call("qmd.query", {"collection": "runbooks", "searches": [{"type": "lex", "query": "<short keywords>"}], "limit": 5})
+
+The "collection": "runbooks" filter scopes the search away from cross-incident
+memory documents — use memory.search / memory.get for those.
 
 If no results, retry with fewer/different keywords. If results have score > 0.7, retrieve the runbook:
   gateway_call("qmd.get", {"file": "<path from results>"})

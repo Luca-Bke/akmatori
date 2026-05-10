@@ -31,7 +31,7 @@ func setupContextHandlerTest(t *testing.T) (*APIHandler, *services.ContextServic
 		t.Fatalf("NewContextService: %v", err)
 	}
 
-	return NewAPIHandler(nil, nil, ctxSvc, nil, nil, nil, nil, nil, nil, nil), ctxSvc
+	return NewAPIHandler(nil, nil, ctxSvc, nil, nil, nil, nil, nil, nil, nil, nil), ctxSvc
 }
 
 func TestAPIHandler_HandleContextValidate_ReturnsFoundAndMissingReferences(t *testing.T) {

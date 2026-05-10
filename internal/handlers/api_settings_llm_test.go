@@ -23,7 +23,7 @@ func setupLLMHandlerTest(t *testing.T) *APIHandler {
 		t.Fatalf("migrate llm_settings: %v", err)
 	}
 	database.DB = db
-	return NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func seedLLMConfig(t *testing.T, name string, provider database.LLMProvider, active bool) *database.LLMSettings {

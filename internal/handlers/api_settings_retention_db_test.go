@@ -32,7 +32,7 @@ func setupRetentionHandlerTestDB(t *testing.T) {
 
 func TestHandleRetentionSettings_GET_ReturnsDefaults(t *testing.T) {
 	setupRetentionHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings/retention", nil)
 	w := httptest.NewRecorder()
@@ -60,7 +60,7 @@ func TestHandleRetentionSettings_GET_ReturnsDefaults(t *testing.T) {
 
 func TestHandleRetentionSettings_PUT_ValidUpdate(t *testing.T) {
 	setupRetentionHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	body := `{"enabled": false, "retention_days": 30, "cleanup_interval_hours": 12}`
 	req := httptest.NewRequest(http.MethodPut, "/api/settings/retention", strings.NewReader(body))
@@ -89,7 +89,7 @@ func TestHandleRetentionSettings_PUT_ValidUpdate(t *testing.T) {
 
 func TestHandleRetentionSettings_PUT_ValidationBounds(t *testing.T) {
 	setupRetentionHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	tests := []struct {
 		name string

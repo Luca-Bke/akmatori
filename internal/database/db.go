@@ -131,6 +131,7 @@ func runMigrations(db *gorm.DB) error {
 		&AlertSourceInstance{},
 		&GeneralSettings{},
 		&Runbook{},
+		&Memory{},
 		&HTTPConnector{},
 		&MCPServerConfig{},
 		&RetentionSettings{},
@@ -429,7 +430,12 @@ const DefaultIncidentManagerPrompt = `You are a Senior Incident Manager responsi
    Extract 3-5 core keywords from the alert name. Drop hyphens, host names, qualifiers.
    Example: "Nginx-cache test resource connection refused on edge host" → "nginx cache connection refused"
 
-   gateway_call("qmd.query", {"searches": [{"type": "lex", "query": "<short keywords>"}], "limit": 5})
+   gateway_call("qmd.query", {"collection": "runbooks", "searches": [{"type": "lex", "query": "<short keywords>"}], "limit": 5})
+
+   The "collection": "runbooks" filter is REQUIRED — without it the search may
+   surface cross-incident memory documents (the agent has separate memory.search
+   and memory.get tools for that purpose). For runbook recall always use the
+   runbooks collection here.
 
    If no results, retry with fewer or different keywords (e.g., just the service + error type).
    If results are returned (score > 0.7), retrieve the top 2 runbooks:

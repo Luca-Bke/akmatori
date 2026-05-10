@@ -309,6 +309,45 @@ func (s *SkillService) SyncSkillsFromFilesystem() error {
 	return nil
 }
 
+// RegenerateSkillMd rewrites a single skill's SKILL.md from the current
+// database row, on-disk prompt body, assigned tools, and per-scope memory
+// manifest. Used by the memory CRUD handlers so a skill-scoped memory write
+// is reflected in that skill's prompt without waiting for a restart or a
+// manual prompt edit. Returns nil silently for the system skill
+// "incident-manager" (no SKILL.md is generated for it).
+func (s *SkillService) RegenerateSkillMd(name string) error {
+	if name == "" || name == "incident-manager" {
+		return nil
+	}
+	skill, err := s.GetSkill(name)
+	if err != nil {
+		return fmt.Errorf("regenerate %s: %w", name, err)
+	}
+	if !skill.Enabled {
+		// Disabled skills don't have SKILL.md files maintained on disk.
+		return nil
+	}
+	if err := s.EnsureSkillDirectories(name); err != nil {
+		return fmt.Errorf("regenerate %s: ensure dirs: %w", name, err)
+	}
+	prompt, err := s.GetSkillPrompt(name)
+	if err != nil {
+		// No SKILL.md yet — fall back to description as the initial body,
+		// matching RegenerateAllSkillMds.
+		prompt = skill.Description
+	}
+	if err := s.SyncSkillAssets(name, prompt); err != nil {
+		slog.Warn("failed to sync assets while regenerating skill", "skill", name, "err", err)
+	}
+	tools := s.getSkillTools(name)
+	skillMd := s.generateSkillMd(name, skill.Description, prompt, tools)
+	skillPath := filepath.Join(s.GetSkillDir(name), "SKILL.md")
+	if err := os.WriteFile(skillPath, []byte(skillMd), 0644); err != nil {
+		return fmt.Errorf("regenerate %s: write SKILL.md: %w", name, err)
+	}
+	return nil
+}
+
 // RegenerateAllSkillMds regenerates SKILL.md files for all enabled skills.
 // For skills that exist on disk, it updates the SKILL.md with the latest template.
 // For skills that only exist in the database (no directory on disk), it materializes

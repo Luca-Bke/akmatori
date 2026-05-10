@@ -39,6 +39,49 @@ components:
             type: string
           description: Field-level validation errors
 
+    Memory:
+      type: object
+      description: Cross-incident memory entry (host fact, recurring pattern, tool quirk, or operator feedback)
+      properties:
+        id: {type: integer}
+        scope:
+          type: string
+          description: '"global" or a skill name'
+        type:
+          type: string
+          enum: [host, incident_pattern, tool_quirk, feedback]
+        name:
+          type: string
+          description: Slug-safe (a-z, 0-9, hyphen). Unique per (scope, name).
+        description:
+          type: string
+          description: Short summary used in MEMORY.md manifest (≤500 chars)
+        body:
+          type: string
+          description: Full memory body (≤8KB)
+        incident_uuid:
+          type: string
+          description: UUID of the incident that produced this memory, if any
+        created_by:
+          type: string
+          enum: [agent, operator]
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    MemoryRequest:
+      type: object
+      required: [scope, type, name, description]
+      properties:
+        scope: {type: string}
+        type:
+          type: string
+          enum: [host, incident_pattern, tool_quirk, feedback]
+        name: {type: string}
+        description: {type: string}
+        body: {type: string}
+        incident_uuid: {type: string}
+        created_by: {type: string, enum: [agent, operator]}
+
     PaginationMeta:
       type: object
       properties:
@@ -1235,3 +1278,128 @@ paths:
       responses:
         '204':
           description: Alert source deleted
+
+  /memories:
+    get:
+      summary: List cross-incident memories with optional scope/type filters
+      operationId: listMemories
+      tags: [Memories]
+      parameters:
+        - name: scope
+          in: query
+          schema: {type: string}
+          description: 'Filter by scope ("global" or skill name)'
+        - name: type
+          in: query
+          schema: {type: string, enum: [host, incident_pattern, tool_quirk, feedback]}
+      responses:
+        '200':
+          description: List of memories
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Memory'}
+    post:
+      summary: Create a new memory entry
+      operationId: createMemory
+      tags: [Memories]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MemoryRequest'}
+      responses:
+        '201':
+          description: Memory created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Memory'}
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  /memories/scopes:
+    get:
+      summary: List distinct scopes that have memories
+      operationId: listMemoryScopes
+      tags: [Memories]
+      responses:
+        '200':
+          description: Array of scope strings
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {type: string}
+
+  /memories/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: integer}
+    get:
+      summary: Retrieve a single memory
+      operationId: getMemory
+      tags: [Memories]
+      responses:
+        '200':
+          description: Memory record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Memory'}
+        '404':
+          description: Not found
+    put:
+      summary: Update a memory
+      operationId: updateMemory
+      tags: [Memories]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MemoryRequest'}
+      responses:
+        '200':
+          description: Updated memory
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Memory'}
+    delete:
+      summary: Delete a memory
+      operationId: deleteMemory
+      tags: [Memories]
+      responses:
+        '204':
+          description: Memory deleted
+
+  /incidents/{uuid}/feedback:
+    parameters:
+      - in: path
+        name: uuid
+        required: true
+        schema: {type: string}
+    post:
+      summary: Persist operator feedback for an incident as a global memory entry
+      operationId: createIncidentFeedback
+      tags: [Memories]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  description: Free-form feedback text from the operator
+      responses:
+        '201':
+          description: Feedback stored as scope=global memory of type=feedback
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Memory'}

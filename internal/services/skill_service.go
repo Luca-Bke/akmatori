@@ -18,9 +18,18 @@ type SkillService struct {
 	dataDir          string // /akmatori - base data directory
 	incidentsDir     string // /akmatori/incidents - incident working directories
 	skillsDir        string // /akmatori/skills - skill definitions with SKILL.md
+	memoryDir        string // /akmatori/memory - cross-incident memory mirror
 	toolService      *ToolService
 	contextService   *ContextService
 	oneShotLLMCaller OneShotLLMCaller // optional; nil = title generation falls back deterministically
+	memoryExtractor  *MemoryExtractor // optional; nil = post-investigation extraction is a no-op
+}
+
+// SetMemoryExtractor wires the post-investigation extractor that runs in a
+// goroutine when an incident transitions to a terminal status.
+// Optional — when unset, extraction is skipped silently.
+func (s *SkillService) SetMemoryExtractor(e *MemoryExtractor) {
+	s.memoryExtractor = e
 }
 
 // NewSkillService creates a new skill service. The oneShotLLMCaller is optional:
@@ -31,6 +40,7 @@ func NewSkillService(dataDir string, toolService *ToolService, contextService *C
 		dataDir:          dataDir,
 		incidentsDir:     filepath.Join(dataDir, "incidents"),
 		skillsDir:        filepath.Join(dataDir, "skills"),
+		memoryDir:        filepath.Join(dataDir, "memory"),
 		toolService:      toolService,
 		contextService:   contextService,
 		oneShotLLMCaller: oneShotLLMCaller,

@@ -32,7 +32,7 @@ func setupFormattingHandlerTestDB(t *testing.T) {
 
 func TestHandleFormattingSettings_GET_ReturnsDefaults(t *testing.T) {
 	setupFormattingHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings/formatting", nil)
 	w := httptest.NewRecorder()
@@ -63,7 +63,7 @@ func TestHandleFormattingSettings_GET_ReturnsDefaults(t *testing.T) {
 
 func TestHandleFormattingSettings_PUT_ValidUpdate(t *testing.T) {
 	setupFormattingHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	body := `{"enabled": true, "system_prompt": "Respond as JSON with status and summary.", "max_tokens": 2048, "temperature": 0.5}`
 	req := httptest.NewRequest(http.MethodPut, "/api/settings/formatting", strings.NewReader(body))
@@ -95,7 +95,7 @@ func TestHandleFormattingSettings_PUT_ValidUpdate(t *testing.T) {
 
 func TestHandleFormattingSettings_PUT_PartialUpdate(t *testing.T) {
 	setupFormattingHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// Only update Enabled; other fields should remain at defaults.
 	body := `{"enabled": true}`
@@ -128,7 +128,7 @@ func TestHandleFormattingSettings_PUT_PartialUpdate(t *testing.T) {
 
 func TestHandleFormattingSettings_PUT_ValidationBounds(t *testing.T) {
 	setupFormattingHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// system_prompt > 8KB.
 	bigPrompt := strings.Repeat("x", 8*1024+1)
@@ -162,7 +162,7 @@ func TestHandleFormattingSettings_PUT_ValidationBounds(t *testing.T) {
 
 func TestHandleFormattingSettings_PUT_AcceptsBoundaries(t *testing.T) {
 	setupFormattingHandlerTestDB(t)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	// Boundary values that should be accepted.
 	tests := []struct {

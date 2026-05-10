@@ -31,3 +31,22 @@ type Runbook struct {
 func (Runbook) TableName() string {
 	return "runbooks"
 }
+
+// Memory stores cross-incident knowledge the AI agent and operators accumulate
+// over time. Scoped per skill or "global"; indexed by QMD via filesystem mirror.
+type Memory struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Scope        string    `gorm:"type:varchar(255);not null;uniqueIndex:idx_memories_scope_name,priority:1" json:"scope"`
+	Type         string    `gorm:"type:varchar(32);not null;index" json:"type"`
+	Name         string    `gorm:"type:varchar(255);not null;uniqueIndex:idx_memories_scope_name,priority:2" json:"name"`
+	Description  string    `gorm:"type:varchar(500);not null" json:"description"`
+	Body         string    `gorm:"type:text;not null" json:"body"`
+	IncidentUUID string    `gorm:"type:varchar(64);index" json:"incident_uuid,omitempty"`
+	CreatedBy    string    `gorm:"type:varchar(32)" json:"created_by,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func (Memory) TableName() string {
+	return "memories"
+}

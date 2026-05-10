@@ -93,7 +93,7 @@ func TestHandleHTTPConnectors_List(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		connectors: []database.HTTPConnector{newTestConnector()},
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/http-connectors", nil)
 	w := httptest.NewRecorder()
@@ -121,7 +121,7 @@ func TestHandleHTTPConnectors_ListError(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		listErr: errMock("database error"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/http-connectors", nil)
 	w := httptest.NewRecorder()
@@ -136,7 +136,7 @@ func TestHandleHTTPConnectors_ListError(t *testing.T) {
 // TestHandleHTTPConnectors_Create tests POST /api/http-connectors
 func TestHandleHTTPConnectors_Create(t *testing.T) {
 	mock := &mockHTTPConnectorService{}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	body := CreateHTTPConnectorRequest{
 		ToolTypeName: "billing-api",
@@ -195,7 +195,7 @@ func TestHandleHTTPConnectors_Create_MissingFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &mockHTTPConnectorService{}
-			h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+			h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 			bodyBytes, _ := json.Marshal(tt.body)
 			req := httptest.NewRequest(http.MethodPost, "/api/http-connectors", bytes.NewReader(bodyBytes))
@@ -216,7 +216,7 @@ func TestHandleHTTPConnectors_Create_Conflict(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		createErr: errMock("connector with tool_type_name \"test\" already exists"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	body := CreateHTTPConnectorRequest{
 		ToolTypeName: "test",
@@ -237,7 +237,7 @@ func TestHandleHTTPConnectors_Create_Conflict(t *testing.T) {
 
 // TestHandleHTTPConnectors_MethodNotAllowed tests invalid method
 func TestHandleHTTPConnectors_MethodNotAllowed(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/http-connectors", nil)
 	w := httptest.NewRecorder()
@@ -255,7 +255,7 @@ func TestHandleHTTPConnectorByID_Get(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		connectors: []database.HTTPConnector{conn},
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/http-connectors/1", nil)
 	w := httptest.NewRecorder()
@@ -280,7 +280,7 @@ func TestHandleHTTPConnectorByID_GetNotFound(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		getErr: errMock("HTTP connector not found"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/http-connectors/999", nil)
 	w := httptest.NewRecorder()
@@ -294,7 +294,7 @@ func TestHandleHTTPConnectorByID_GetNotFound(t *testing.T) {
 
 // TestHandleHTTPConnectorByID_InvalidID tests invalid ID format
 func TestHandleHTTPConnectorByID_InvalidID(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/http-connectors/abc", nil)
 	w := httptest.NewRecorder()
@@ -312,7 +312,7 @@ func TestHandleHTTPConnectorByID_Update(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		connectors: []database.HTTPConnector{conn},
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	desc := "Updated description"
 	body := UpdateHTTPConnectorRequest{
@@ -336,7 +336,7 @@ func TestHandleHTTPConnectorByID_UpdateNotFound(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		updateErr: errMock("HTTP connector not found"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	desc := "Updated"
 	body := UpdateHTTPConnectorRequest{Description: &desc}
@@ -356,7 +356,7 @@ func TestHandleHTTPConnectorByID_UpdateNotFound(t *testing.T) {
 // TestHandleHTTPConnectorByID_Delete tests DELETE /api/http-connectors/:id
 func TestHandleHTTPConnectorByID_Delete(t *testing.T) {
 	mock := &mockHTTPConnectorService{}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/http-connectors/1", nil)
 	w := httptest.NewRecorder()
@@ -373,7 +373,7 @@ func TestHandleHTTPConnectorByID_DeleteNotFound(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		deleteErr: errMock("HTTP connector not found"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/http-connectors/999", nil)
 	w := httptest.NewRecorder()
@@ -387,7 +387,7 @@ func TestHandleHTTPConnectorByID_DeleteNotFound(t *testing.T) {
 
 // TestHandleHTTPConnectorByID_MethodNotAllowed tests invalid method
 func TestHandleHTTPConnectorByID_MethodNotAllowed(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/http-connectors/1", nil)
 	w := httptest.NewRecorder()
@@ -405,7 +405,7 @@ func TestTriggerGatewayReload_WithReloader(t *testing.T) {
 	// channel to synchronize without racing the test's read against the
 	// goroutine's write.
 	called := make(chan struct{}, 1)
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h.SetGatewayReloader(func() error {
 		called <- struct{}{}
 		return nil
@@ -422,7 +422,7 @@ func TestTriggerGatewayReload_WithReloader(t *testing.T) {
 
 // TestTriggerGatewayReload_NilReloader tests that nil reloader doesn't panic
 func TestTriggerGatewayReload_NilReloader(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	// Should not panic
 	h.triggerGatewayReload()
 }
@@ -470,7 +470,7 @@ func TestHandleHTTPConnectors_CreateValidationError(t *testing.T) {
 	mock := &mockHTTPConnectorService{
 		createErr: errMock("validation failed: tool_type_name is required"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock, nil)
 
 	body := CreateHTTPConnectorRequest{
 		ToolTypeName: "test",

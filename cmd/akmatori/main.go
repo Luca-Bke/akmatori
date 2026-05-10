@@ -128,7 +128,21 @@ func main() {
 	skillService := services.NewSkillService(dataDir, toolService, contextService, agentWSHandler)
 	slog.Info("skill service initialized", "data_dir", dataDir)
 
-	// Regenerate all SKILL.md files to ensure they have latest template
+	// Initialize Memory service BEFORE regenerating SKILL.md files.
+	// generateSkillMd embeds the per-scope MEMORY.md manifest into each
+	// SKILL.md it writes; if the on-disk manifests are stale (e.g. memories
+	// were inserted directly into Postgres while the API was down), the
+	// regenerated SKILL.md files would bake in the stale view and stay
+	// stale until the next restart or manual skill edit.
+	memoryService := services.NewMemoryService(dataDir)
+	if qmdURL := os.Getenv("QMD_URL"); qmdURL != "" {
+		memoryService.SetQMDURL(qmdURL)
+	}
+	if err := memoryService.SyncMemoryFiles(); err != nil {
+		slog.Warn("failed to sync memory files", "err", err)
+	}
+
+	// Regenerate all SKILL.md files (now seeing the freshly synced memory manifests).
 	if err := skillService.RegenerateAllSkillMds(); err != nil {
 		slog.Warn("failed to regenerate SKILL.md files", "err", err)
 	}
@@ -141,11 +155,12 @@ func main() {
 	alertService := services.NewAlertService()
 	slog.Info("alert service initialized")
 
-	// Initialize Runbook service
+	// Initialize Runbook service. Runbooks aren't embedded in SKILL.md,
+	// so their sync order doesn't affect skill regeneration above.
 	runbookService := services.NewRunbookService(dataDir)
 	if qmdURL := os.Getenv("QMD_URL"); qmdURL != "" {
 		runbookService.SetQMDURL(qmdURL)
-		slog.Info("runbook service configured with QMD re-indexing", "qmd_url", qmdURL)
+		slog.Info("runbook + memory services configured with QMD re-indexing", "qmd_url", qmdURL)
 	}
 	slog.Info("runbook service initialized")
 
@@ -153,6 +168,12 @@ func main() {
 	if err := runbookService.SyncRunbookFiles(); err != nil {
 		slog.Warn("failed to sync runbook files", "err", err)
 	}
+
+	// Wire post-investigation memory extraction. When skillService finishes
+	// an incident with status=completed, the extractor distills the transcript
+	// into long-lived memory entries via a one-shot LLM call.
+	memoryExtractor := services.NewMemoryExtractor(agentWSHandler, memoryService)
+	skillService.SetMemoryExtractor(memoryExtractor)
 
 	// Initialize default alert source types
 	if err := alertService.InitializeDefaultSourceTypes(); err != nil {
@@ -214,6 +235,10 @@ func main() {
 		slackHandler.SetAlertService(alertService)
 		slackHandler.SetSlackSummarizer(slackSummarizer)
 		slackHandler.SetResponseFormatter(responseFormatter)
+		// Wire LLM-classified Slack feedback capture: thread replies on incident
+		// threads run through the classifier and persist as global feedback memory.
+		slackHandler.SetMemoryManager(memoryService)
+		slackHandler.SetFeedbackClassifier(services.NewFeedbackClassifier(agentWSHandler))
 
 		// Try to get bot user ID and team ID for self-message filtering and Streaming API
 		if authTest, err := client.AuthTest(); err == nil {
@@ -255,7 +280,7 @@ func main() {
 	// Initialize API handler for skill communication and management
 	httpConnectorService := services.NewHTTPConnectorService()
 	mcpServerService := services.NewMCPServerService()
-	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, agentExecutor, agentWSHandler, slackManager, runbookService, httpConnectorService, mcpServerService)
+	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, agentExecutor, agentWSHandler, slackManager, runbookService, memoryService, httpConnectorService, mcpServerService)
 	apiHandler.SetResponseFormatter(responseFormatter)
 
 	// Wire alert channel reload: when alert sources are created/updated/deleted via API,

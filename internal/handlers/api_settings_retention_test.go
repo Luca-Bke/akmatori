@@ -8,7 +8,7 @@ import (
 )
 
 func TestHandleRetentionSettings_MethodNotAllowed(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	methods := []string{http.MethodPost, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -26,7 +26,7 @@ func TestHandleRetentionSettings_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleRetentionSettings_PUT_InvalidJSON(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPut, "/api/settings/retention", strings.NewReader("{invalid"))
 	w := httptest.NewRecorder()

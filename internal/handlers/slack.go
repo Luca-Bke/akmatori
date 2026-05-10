@@ -25,6 +25,12 @@ type SlackHandler struct {
 	slackSummarizer   *services.SlackSummarizer
 	responseFormatter *services.ResponseFormatter
 
+	// Cross-incident memory + LLM-classified Slack feedback (Task 7).
+	// Both are optional — when either is unset, thread-reply feedback
+	// classification is silently skipped.
+	memoryManager      services.MemoryManager
+	feedbackClassifier *services.FeedbackClassifier
+
 	// Alert channel support
 	alertChannels   map[string]*database.AlertSourceInstance // channel_id -> instance
 	alertChannelsMu sync.RWMutex
@@ -82,6 +88,21 @@ func (h *SlackHandler) SetResponseFormatter(f *services.ResponseFormatter) {
 // SetAlertService sets the alert service for loading alert channel configs
 func (h *SlackHandler) SetAlertService(alertService services.AlertManager) {
 	h.alertService = alertService
+}
+
+// SetMemoryManager wires the cross-incident memory manager. When set together
+// with a FeedbackClassifier, the handler routes non-mention thread replies on
+// incident threads through the classifier and persists confident feedback as
+// a global-scope memory.
+func (h *SlackHandler) SetMemoryManager(m services.MemoryManager) {
+	h.memoryManager = m
+}
+
+// SetFeedbackClassifier wires the LLM-backed thread-reply classifier.
+// Optional — when unset, the existing "ignore non-mention thread replies"
+// behavior is preserved exactly.
+func (h *SlackHandler) SetFeedbackClassifier(c *services.FeedbackClassifier) {
+	h.feedbackClassifier = c
 }
 
 // SetBotUserID sets the bot's user ID for self-message filtering
@@ -340,14 +361,21 @@ func (h *SlackHandler) handleMessage(event *slackevents.MessageEvent) {
 			if h.botUserID != "" && event.SubType == "" && event.User != "" &&
 				strings.Contains(event.Text, fmt.Sprintf("<@%s>", h.botUserID)) {
 				h.handleBotMentionInThread(event.Channel, event.ThreadTimeStamp, event.TimeStamp, event.Text, event.User)
-			} else {
-				slog.Info("ignoring thread reply in alert channel (no bot mention)",
-					"channel", event.Channel,
-					"thread_ts", event.ThreadTimeStamp,
-					"bot_id", event.BotID,
-					"text_preview", truncateForLog(event.Text, 100),
-				)
+				return
 			}
+			// Non-mention thread reply on an incident thread: route to the
+			// LLM-backed feedback classifier when configured. Skips bot/subtype
+			// noise (those wouldn't survive the alert-channel filter above) and
+			// silently no-ops when the classifier or memory manager is offline.
+			if event.SubType == "" && event.User != "" && event.User != h.botUserID {
+				go h.maybeCaptureSlackFeedback(event.Channel, event.ThreadTimeStamp, event.TimeStamp, event.Text, event.User)
+			}
+			slog.Info("ignoring thread reply in alert channel (no bot mention)",
+				"channel", event.Channel,
+				"thread_ts", event.ThreadTimeStamp,
+				"bot_id", event.BotID,
+				"text_preview", truncateForLog(event.Text, 100),
+			)
 			return
 		}
 

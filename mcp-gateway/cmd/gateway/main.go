@@ -71,6 +71,11 @@ func main() {
 	mcpProxyLoader := tools.DefaultMCPProxyLoader
 	registry.RegisterMCPProxyTools(mcpProxyLoader)
 
+	// Register memory.search / memory.get. They proxy QMD's qmd.query / qmd.get
+	// against the 'memories' collection and bypass the per-incident allowlist
+	// (memory recall is always-on, like qmd.*).
+	registry.RegisterMemoryTools()
+
 	// Register QMD as a system-level MCP proxy (if configured)
 	if qmdURL := os.Getenv("QMD_URL"); qmdURL != "" {
 		// QMD uses MCP Streamable HTTP at the /mcp path

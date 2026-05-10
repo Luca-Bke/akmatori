@@ -21,6 +21,7 @@ type SkillManager interface {
 	GetSkillScriptsDir(skillName string) string
 	GetSkillPrompt(skillName string) (string, error)
 	UpdateSkillPrompt(skillName string, prompt string) error
+	RegenerateSkillMd(skillName string) error
 	SyncSkillsFromFilesystem() error
 	ListSkillScripts(skillName string) ([]string, error)
 	ClearSkillScripts(skillName string) error
@@ -89,6 +90,22 @@ type RunbookManager interface {
 	GetRunbook(id uint) (*database.Runbook, error)
 	ListRunbooks() ([]database.Runbook, error)
 	SyncRunbookFiles() error
+}
+
+// MemoryManager defines the interface for cross-incident memory CRUD,
+// idempotent upsert, and file sync. Consumed by handlers, the extractor,
+// and the Slack feedback classifier.
+type MemoryManager interface {
+	CreateMemory(m *database.Memory) (*database.Memory, error)
+	UpdateMemory(id uint, m *database.Memory) (*database.Memory, error)
+	UpsertByName(m *database.Memory) (*database.Memory, error)
+	DeleteMemory(id uint) error
+	GetMemory(id uint) (*database.Memory, error)
+	ListMemories(scope, memType string) ([]database.Memory, error)
+	ListMemoriesByScope(scope string) ([]database.Memory, error)
+	ListAllScopes() ([]string, error)
+	CountByIncidentUUID(incidentUUID string, createdBy string) (int64, error)
+	SyncMemoryFiles() error
 }
 
 // ContextManager defines the interface for context file management.

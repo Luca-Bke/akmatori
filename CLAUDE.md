@@ -271,6 +271,9 @@ fmt.Println(parsed.CleanOutput)  // Structured blocks stripped
 | TitleGenerator | `title_generator.go` | AI-powered incident title generation |
 | SlackSummarizer | `slack_summarizer.go` | Provider-agnostic compression of agent output to fit Slack's byte cap, with deterministic structured fallback |
 | RunbookService | `runbook_service.go` | Runbook CRUD and file sync |
+| MemoryService | `memory_service.go` | Cross-incident memory CRUD + per-scope MEMORY.md sync |
+| MemoryExtractor | `memory_extractor.go` | One-shot LLM distillation of completed incidents into long-lived memory (idempotent by `incident_uuid`) |
+| FeedbackClassifier | `feedback_classifier.go` | One-shot LLM classifier deciding whether a Slack thread reply is operator feedback worth storing |
 | RetentionService | `retention_service.go` | Automated incident data cleanup (expired + orphaned) |
 | ResponseFormatter | `response_formatter.go` | Optional one-shot LLM reformat of agent output (raw response + full reasoning) before it lands in `incident.response` and Slack; passthrough fallback when disabled, worker offline, or LLM call fails |
 
@@ -286,6 +289,7 @@ Handlers depend on interfaces for testability:
 | `ToolManager` | Tool instance CRUD + SSH keys |
 | `AlertManager` | Alert source operations |
 | `RunbookManager` | Runbook CRUD + file sync |
+| `MemoryManager` | Cross-incident memory CRUD + idempotent `UpsertByName` + scope manifest sync |
 | `ContextManager` | Context file management |
 | `HTTPConnectorManager` | Declarative HTTP connector CRUD |
 | `OneShotLLMCaller` | Provider-agnostic one-shot LLM completion via the agent worker (lives in `llm_settings.go`); implemented by handlers, consumed by `TitleGenerator`, `extraction.AlertExtractor`, and `SlackSummarizer` |
@@ -313,13 +317,33 @@ Runbooks (SOPs) guide AI agent investigations. Stored in PostgreSQL, synced as m
 
 QMD is a hybrid search engine (BM25 + vector + LLM reranking) running as a Docker sidecar. It indexes runbook markdown files and exposes tools via MCP HTTP server.
 
-- **Config**: `qmd/qmd-config.yml` defines the runbooks collection
+- **Config**: `qmd/qmd-config.yml` defines the `runbooks` and `memories` collections
 - **Docker service**: `qmd` on `codex-network` + `api-internal`, port 8181 (internal only)
 - **Environment variable**: `QMD_URL` (default: `http://qmd:8181`) — configured on both the API server (for re-index triggers) and the MCP Gateway (for auto-registration as proxy)
 - **Environment variable**: `QMD_BIND_HOST` (default: `localhost`, set to `0.0.0.0` in Docker) — bind address for the QMD HTTP server
 - **REST endpoints**: `/health` (GET, container health check), `/update` (POST, trigger re-index)
 - **MCP tools**: `qmd.query` (search), `qmd.get` (retrieve), `qmd.multi_get`, `qmd.status` — registered automatically on gateway startup via `mcpproxy`
 - **Bypass**: QMD proxy tools bypass the per-incident tool allowlist (registered proxy namespaces and multi-segment namespaces with dots bypass)
+
+## Memory System (`internal/services/memory_service.go`, `mcp-gateway/internal/tools/memory/`)
+
+Cross-incident memory: long-lived facts the agent and operators accumulate. Same DB → markdown → QMD shape as runbooks; separate `memories` QMD collection.
+
+**Storage**: PostgreSQL `memories` table (model in `internal/database/models_context.go`). Filesystem mirror at `/akmatori/memory/<scope>/{MEMORY.md,<id>-<name>.md}`. Mounted on api + agent + qmd containers (NOT mcp-gateway — by design, memory tools are QMD-only).
+
+**Scopes**: `"global"` (always injected into incident-manager `AGENTS.md`) or `<skill_name>` (injected into that skill's `SKILL.md`). Scope is a string identity, not a foreign key — skills can be renamed/deleted without breaking memory.
+
+**Types** (codified as Go consts in `internal/services/memory_types.go`): `host`, `incident_pattern`, `tool_quirk`, `feedback`. The same consts feed validation, prompt rendering, and the extractor's JSON schema.
+
+**API**: REST at `/api/memories` (list/scope+type filters, create, get/update/delete) and `/api/memories/scopes`. Operator UI feedback at `POST /api/incidents/{uuid}/feedback` writes scope=global, type=feedback memories.
+
+**Agent recall**: `gateway_call("memory.search", {query, scope?, type?, limit?})` and `gateway_call("memory.get", {file, lines?})` — registered in `mcp-gateway/internal/tools/memory/`. Both proxy to QMD's `qmd.query` / `qmd.get` against the `memories` collection. The `memory` namespace bypasses the per-incident allowlist (`AddProxyNamespace("memory")`), so any agent can recall any time.
+
+**Per-scope manifests**: `MEMORY.md` per scope, hard-capped at 200 lines / 25KB with explicit truncation marker. Injected verbatim into AGENTS.md (global) and SKILL.md (skill scope) via `renderMemoryRecallSection` in `skill_prompt_service.go`.
+
+**Auto-extraction**: `MemoryExtractor.Extract()` fires from `UpdateIncidentComplete` in a goroutine when status flips to `completed`. One-shot LLM call distills the incident response/log tail into upsert/delete edits; idempotent via `CountByIncidentUUID` cursor.
+
+**Slack feedback capture**: Non-mention thread replies on incident threads route through `FeedbackClassifier` (one-shot LLM, strict JSON, threshold 0.6). Confident hits are persisted as scope=global feedback memories with a thumbs-up reaction + brief threaded ack. Silent on negatives. Wired in `internal/handlers/slack_feedback.go`; mention path is unchanged (still routes to investigation continuation).
 
 ## API Package (`internal/api/`)
 

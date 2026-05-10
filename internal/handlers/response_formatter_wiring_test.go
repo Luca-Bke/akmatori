@@ -268,7 +268,7 @@ func TestAlertHandler_SetResponseFormatter(t *testing.T) {
 // formatter onto the APIHandler so the POST /api/incidents finalization
 // path applies the configured formatting prompt before persistence.
 func TestAPIHandler_SetResponseFormatter(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if h.responseFormatter != nil {
 		t.Fatal("expected responseFormatter to start nil before SetResponseFormatter")
 	}

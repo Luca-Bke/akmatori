@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -92,6 +93,11 @@ func (s *SkillService) SpawnIncidentManager(ctx *IncidentContext) (string, strin
 // pi-mono reads this file from the workspace root (agentDir parameter)
 // Skills are discovered by pi-mono's DefaultResourceLoader via additionalSkillPaths,
 // so only the incident manager prompt is written here.
+//
+// The cross-incident "global" memory manifest is appended below the prompt so
+// the incident manager sees a small, always-up-to-date summary of long-lived
+// facts and operator feedback before any tool call. Full bodies are fetched
+// on demand via memory.search / memory.get.
 func (s *SkillService) generateIncidentAgentsMd(path string) error {
 	// Get incident manager prompt from the system skill
 	prompt, err := s.GetSkillPrompt("incident-manager")
@@ -104,6 +110,7 @@ func (s *SkillService) generateIncidentAgentsMd(path string) error {
 	sb.WriteString("# Incident Manager\n\n")
 	sb.WriteString(prompt)
 	sb.WriteString("\n")
+	sb.WriteString(s.renderMemoryRecallSection(MemoryScopeGlobal))
 
 	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil {
 		return fmt.Errorf("failed to write AGENTS.md: %w", err)
@@ -138,7 +145,10 @@ func (s *SkillService) UpdateIncidentStatus(incidentUUID string, status database
 	return nil
 }
 
-// UpdateIncidentComplete updates the incident with final status, log, and response
+// UpdateIncidentComplete updates the incident with final status, log, and response.
+// When the incident transitions to "completed" and a memory extractor is wired,
+// extraction is fired in a detached goroutine — the request context may already
+// be cancelled by the time this runs, so a fresh context is used.
 func (s *SkillService) UpdateIncidentComplete(incidentUUID string, status database.IncidentStatus, sessionID string, fullLog string, response string, tokensUsed int, executionTimeMs int64) error {
 	now := time.Now()
 	updates := map[string]interface{}{
@@ -153,6 +163,22 @@ func (s *SkillService) UpdateIncidentComplete(incidentUUID string, status databa
 
 	if err := s.db.Model(&database.Incident{}).Where("uuid = ?", incidentUUID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("failed to update incident: %w", err)
+	}
+
+	if status == database.IncidentStatusCompleted && s.memoryExtractor != nil {
+		// Re-read so the extractor sees the persisted final state (response/fullLog
+		// are passed into this method but a separate read is cheap and avoids
+		// stale caller-side data).
+		incident, err := s.GetIncident(incidentUUID)
+		if err == nil {
+			extractor := s.memoryExtractor
+			go func(i *database.Incident) {
+				ctx := context.Background()
+				extractor.Extract(ctx, i)
+			}(incident)
+		} else {
+			slog.Warn("memory extraction skipped: could not reload incident", "uuid", incidentUUID, "err", err)
+		}
 	}
 
 	return nil

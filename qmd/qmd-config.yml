@@ -4,3 +4,8 @@ collections:
     pattern: "**/*.md"
     context:
       "/": "Runbook SOPs for incident investigation and remediation"
+  memories:
+    path: /akmatori/memory
+    pattern: "**/*.md"
+    context:
+      "/": "Cross-incident memory: hosts, recurring patterns, tool quirks, operator feedback"

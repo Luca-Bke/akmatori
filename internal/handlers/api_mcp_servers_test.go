@@ -81,7 +81,7 @@ func TestHandleMCPServers_List(t *testing.T) {
 	mock := &mockMCPServerService{
 		configs: []database.MCPServerConfig{newTestMCPServerConfig()},
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp-servers", nil)
 	w := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestHandleMCPServers_ListError(t *testing.T) {
 	mock := &mockMCPServerService{
 		listErr: errMock("database error"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp-servers", nil)
 	w := httptest.NewRecorder()
@@ -124,7 +124,7 @@ func TestHandleMCPServers_ListError(t *testing.T) {
 // TestHandleMCPServers_Create tests POST /api/mcp-servers
 func TestHandleMCPServers_Create(t *testing.T) {
 	mock := &mockMCPServerService{}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	body := CreateMCPServerRequest{
 		Name:            "my-github",
@@ -158,7 +158,7 @@ func TestHandleMCPServers_Create(t *testing.T) {
 // TestHandleMCPServers_Create_StdioTransport tests POST with stdio transport
 func TestHandleMCPServers_Create_StdioTransport(t *testing.T) {
 	mock := &mockMCPServerService{}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	body := CreateMCPServerRequest{
 		Name:            "local-tool",
@@ -210,7 +210,7 @@ func TestHandleMCPServers_Create_MissingFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &mockMCPServerService{}
-			h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+			h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 			bodyBytes, _ := json.Marshal(tt.body)
 			req := httptest.NewRequest(http.MethodPost, "/api/mcp-servers", bytes.NewReader(bodyBytes))
@@ -231,7 +231,7 @@ func TestHandleMCPServers_Create_Conflict(t *testing.T) {
 	mock := &mockMCPServerService{
 		createErr: errMock("MCP server with name \"test\" already exists"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	body := CreateMCPServerRequest{
 		Name:            "test",
@@ -256,7 +256,7 @@ func TestHandleMCPServers_Create_ValidationError(t *testing.T) {
 	mock := &mockMCPServerService{
 		createErr: errMock("validation failed: transport must be 'sse' or 'stdio'"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	body := CreateMCPServerRequest{
 		Name:            "test",
@@ -278,7 +278,7 @@ func TestHandleMCPServers_Create_ValidationError(t *testing.T) {
 
 // TestHandleMCPServers_MethodNotAllowed tests invalid method
 func TestHandleMCPServers_MethodNotAllowed(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/mcp-servers", nil)
 	w := httptest.NewRecorder()
@@ -296,7 +296,7 @@ func TestHandleMCPServerByID_Get(t *testing.T) {
 	mock := &mockMCPServerService{
 		configs: []database.MCPServerConfig{config},
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp-servers/1", nil)
 	w := httptest.NewRecorder()
@@ -321,7 +321,7 @@ func TestHandleMCPServerByID_GetNotFound(t *testing.T) {
 	mock := &mockMCPServerService{
 		getErr: errMock("MCP server config not found"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp-servers/999", nil)
 	w := httptest.NewRecorder()
@@ -335,7 +335,7 @@ func TestHandleMCPServerByID_GetNotFound(t *testing.T) {
 
 // TestHandleMCPServerByID_InvalidID tests invalid ID format
 func TestHandleMCPServerByID_InvalidID(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp-servers/abc", nil)
 	w := httptest.NewRecorder()
@@ -353,7 +353,7 @@ func TestHandleMCPServerByID_Update(t *testing.T) {
 	mock := &mockMCPServerService{
 		configs: []database.MCPServerConfig{config},
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	newName := "updated-github"
 	body := UpdateMCPServerRequest{
@@ -377,7 +377,7 @@ func TestHandleMCPServerByID_UpdateNotFound(t *testing.T) {
 	mock := &mockMCPServerService{
 		updateErr: errMock("MCP server config not found"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	newName := "Updated"
 	body := UpdateMCPServerRequest{Name: &newName}
@@ -399,7 +399,7 @@ func TestHandleMCPServerByID_UpdateConflict(t *testing.T) {
 	mock := &mockMCPServerService{
 		updateErr: errMock("MCP server with name \"existing\" already exists"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	newName := "existing"
 	body := UpdateMCPServerRequest{Name: &newName}
@@ -419,7 +419,7 @@ func TestHandleMCPServerByID_UpdateConflict(t *testing.T) {
 // TestHandleMCPServerByID_Delete tests DELETE /api/mcp-servers/:id
 func TestHandleMCPServerByID_Delete(t *testing.T) {
 	mock := &mockMCPServerService{}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/mcp-servers/1", nil)
 	w := httptest.NewRecorder()
@@ -436,7 +436,7 @@ func TestHandleMCPServerByID_DeleteNotFound(t *testing.T) {
 	mock := &mockMCPServerService{
 		deleteErr: errMock("MCP server config not found"),
 	}
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, mock)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/mcp-servers/999", nil)
 	w := httptest.NewRecorder()
@@ -450,7 +450,7 @@ func TestHandleMCPServerByID_DeleteNotFound(t *testing.T) {
 
 // TestHandleMCPServerByID_MethodNotAllowed tests invalid method
 func TestHandleMCPServerByID_MethodNotAllowed(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/mcp-servers/1", nil)
 	w := httptest.NewRecorder()
@@ -465,7 +465,7 @@ func TestHandleMCPServerByID_MethodNotAllowed(t *testing.T) {
 // TestTriggerGatewayMCPReload tests that gateway MCP reload is called
 func TestTriggerGatewayMCPReload(t *testing.T) {
 	called := false
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h.SetGatewayReloader(func() error {
 		called = true
 		return nil
@@ -481,7 +481,7 @@ func TestTriggerGatewayMCPReload(t *testing.T) {
 
 // TestTriggerGatewayMCPReload_NilReloader tests that nil reloader doesn't panic
 func TestTriggerGatewayMCPReload_NilReloader(t *testing.T) {
-	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	// Should not panic
 	h.triggerGatewayMCPReload()
 }

@@ -39,7 +39,12 @@ func TestDefaultIncidentManagerPrompt_MandatoryRunbookSearch(t *testing.T) {
 		{"mandatory keyword", "MANDATORY"},
 		{"search first instruction", "MANDATORY - Search runbooks FIRST before using any infrastructure tools"},
 		{"must search before other steps", "You MUST search for relevant runbooks before performing any other investigation steps"},
-		{"inline gateway_call example", `gateway_call("qmd.query", {"searches": [{"type": "lex", "query": "<short keywords>"}], "limit": 5})`},
+		{"inline gateway_call example", `gateway_call("qmd.query", {"collection": "runbooks", "searches": [{"type": "lex", "query": "<short keywords>"}], "limit": 5})`},
+		// Regression: with the memories collection now enabled, the
+		// runbook-search step MUST scope to the runbooks collection so it
+		// doesn't surface memory documents during the "search runbooks
+		// first" workflow.
+		{"runbook collection scope", `"collection": "runbooks"`},
 		{"skip only on error", "Skip this step ONLY if QMD search returns an error (not if results are empty)"},
 		{"primary guide", "PRIMARY investigation guide"},
 	}

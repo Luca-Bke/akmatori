@@ -19,6 +19,7 @@ type APIHandler struct {
 	agentWSHandler       *AgentWSHandler
 	slackManager         *slackutil.Manager
 	runbookService       services.RunbookManager
+	memoryService        services.MemoryManager
 	httpConnectorService services.HTTPConnectorManager
 	mcpServerService     services.MCPServerManager
 	responseFormatter    *services.ResponseFormatter
@@ -28,7 +29,7 @@ type APIHandler struct {
 }
 
 // NewAPIHandler creates a new API handler
-func NewAPIHandler(skillService services.SkillIncidentManager, toolService services.ToolManager, contextService services.ContextManager, alertService services.AlertManager, agentExecutor *executor.Executor, agentWSHandler *AgentWSHandler, slackManager *slackutil.Manager, runbookService services.RunbookManager, httpConnectorService services.HTTPConnectorManager, mcpServerService services.MCPServerManager) *APIHandler {
+func NewAPIHandler(skillService services.SkillIncidentManager, toolService services.ToolManager, contextService services.ContextManager, alertService services.AlertManager, agentExecutor *executor.Executor, agentWSHandler *AgentWSHandler, slackManager *slackutil.Manager, runbookService services.RunbookManager, memoryService services.MemoryManager, httpConnectorService services.HTTPConnectorManager, mcpServerService services.MCPServerManager) *APIHandler {
 	return &APIHandler{
 		skillService:         skillService,
 		toolService:          toolService,
@@ -38,6 +39,7 @@ func NewAPIHandler(skillService services.SkillIncidentManager, toolService servi
 		agentWSHandler:       agentWSHandler,
 		slackManager:         slackManager,
 		runbookService:       runbookService,
+		memoryService:        memoryService,
 		httpConnectorService: httpConnectorService,
 		mcpServerService:     mcpServerService,
 	}
@@ -119,6 +121,12 @@ func (h *APIHandler) SetupRoutes(mux *http.ServeMux) {
 	// Runbooks
 	mux.HandleFunc("/api/runbooks", h.handleRunbooks)
 	mux.HandleFunc("/api/runbooks/", h.handleRunbookByID)
+
+	// Cross-incident memory
+	mux.HandleFunc("/api/memories", h.handleMemories)
+	mux.HandleFunc("/api/memories/scopes", h.handleMemoryScopes)
+	mux.HandleFunc("/api/memories/", h.handleMemoryByID)
+	mux.HandleFunc("POST /api/incidents/{uuid}/feedback", h.handleIncidentFeedback)
 
 	// HTTP connectors
 	mux.HandleFunc("/api/http-connectors", h.handleHTTPConnectors)
