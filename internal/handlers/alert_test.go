@@ -444,26 +444,11 @@ func TestAlertHandler_buildInvestigationPrompt(t *testing.T) {
 		})
 	}
 
-	// Source line is rendered only when BOTH the alert source type Name and
-	// the instance Name are populated. Half-populated state should not leak
-	// dangling slashes/spaces into the prompt.
-	t.Run("source line omitted when type name empty", func(t *testing.T) {
-		result := h.buildInvestigationPrompt(
-			alerts.NormalizedAlert{AlertName: "X"},
-			&database.AlertSourceInstance{
-				Name: "channel-prod",
-				AlertSourceType: database.AlertSourceType{
-					Name:        "",
-					DisplayName: "Slack Channel",
-				},
-			},
-		)
-		if strings.Contains(result, "Source:") {
-			t.Errorf("prompt should not contain Source: line when type Name is empty, got %q", result)
-		}
-	})
-
-	t.Run("source line omitted when instance name empty", func(t *testing.T) {
+	// Source line trims whitespace and renders whichever non-empty component
+	// remains, so the runbook-search cue survives partially-populated rows
+	// that the API has historically let through (whitespace-only names, or
+	// blank instance Name in pre-validation records).
+	t.Run("source renders type alone when instance name empty", func(t *testing.T) {
 		result := h.buildInvestigationPrompt(
 			alerts.NormalizedAlert{AlertName: "X"},
 			&database.AlertSourceInstance{
@@ -474,8 +459,27 @@ func TestAlertHandler_buildInvestigationPrompt(t *testing.T) {
 				},
 			},
 		)
-		if strings.Contains(result, "Source:") {
-			t.Errorf("prompt should not contain Source: line when instance Name is empty, got %q", result)
+		if !strings.Contains(result, "\nSource: zabbix\n") {
+			t.Errorf("prompt should contain bare 'Source: zabbix' when instance Name is empty, got %q", result)
+		}
+		if strings.Contains(result, "Source: zabbix /") {
+			t.Errorf("prompt should not contain dangling slash, got %q", result)
+		}
+	})
+
+	t.Run("source renders instance alone when type name empty", func(t *testing.T) {
+		result := h.buildInvestigationPrompt(
+			alerts.NormalizedAlert{AlertName: "X"},
+			&database.AlertSourceInstance{
+				Name: "channel-prod",
+				AlertSourceType: database.AlertSourceType{
+					Name:        "",
+					DisplayName: "Slack Channel",
+				},
+			},
+		)
+		if !strings.Contains(result, "\nSource: channel-prod\n") {
+			t.Errorf("prompt should contain bare 'Source: channel-prod' when type Name is empty, got %q", result)
 		}
 	})
 
@@ -492,6 +496,43 @@ func TestAlertHandler_buildInvestigationPrompt(t *testing.T) {
 		)
 		if strings.Contains(result, "Source:") {
 			t.Errorf("prompt should not contain Source: line when both names empty, got %q", result)
+		}
+	})
+
+	// Whitespace-only persisted names are equivalent to empty after trim;
+	// they must not produce a "Source: zabbix /    " stub.
+	t.Run("whitespace-only instance name does not produce stub", func(t *testing.T) {
+		result := h.buildInvestigationPrompt(
+			alerts.NormalizedAlert{AlertName: "X"},
+			&database.AlertSourceInstance{
+				Name: "   ",
+				AlertSourceType: database.AlertSourceType{
+					Name:        "zabbix",
+					DisplayName: "Zabbix",
+				},
+			},
+		)
+		if strings.Contains(result, "Source: zabbix /") {
+			t.Errorf("prompt should not render dangling slash for whitespace-only instance Name, got %q", result)
+		}
+		if !strings.Contains(result, "\nSource: zabbix\n") {
+			t.Errorf("prompt should fall back to bare 'Source: zabbix', got %q", result)
+		}
+	})
+
+	t.Run("whitespace-only both names omit source line", func(t *testing.T) {
+		result := h.buildInvestigationPrompt(
+			alerts.NormalizedAlert{AlertName: "X"},
+			&database.AlertSourceInstance{
+				Name: "   ",
+				AlertSourceType: database.AlertSourceType{
+					Name:        "\t",
+					DisplayName: "Custom",
+				},
+			},
+		)
+		if strings.Contains(result, "Source:") {
+			t.Errorf("prompt should not contain Source: line when both names whitespace-only, got %q", result)
 		}
 	})
 
@@ -515,6 +556,67 @@ func TestAlertHandler_buildInvestigationPrompt(t *testing.T) {
 		)
 		if strings.Contains(result, "Original alert text:") {
 			t.Errorf("prompt should not contain Original alert text block, got %q", result)
+		}
+	})
+
+	// In the Slack-channel extractor fallback path, alert.Description carries the
+	// raw message (same string that lands in RawPayload.original_message).
+	// The verbatim block is still rendered with its label because the system
+	// prompt anchors sub-query 1 on the "Original alert text" header by name;
+	// suppressing the label here would push the agent onto the 100-char
+	// truncated summary in this exact path.
+	t.Run("description equals original_message keeps verbatim block", func(t *testing.T) {
+		raw := "New notification from stream-health monitor: viewers dropping below threshold for region eu-central"
+		result := h.buildInvestigationPrompt(
+			alerts.NormalizedAlert{
+				AlertName:   "StreamMonitorAlert",
+				Description: raw,
+				RawPayload: map[string]interface{}{
+					"original_message": raw,
+				},
+			},
+			&database.AlertSourceInstance{
+				Name: "channel-prod",
+				AlertSourceType: database.AlertSourceType{
+					Name:        "slack-channel",
+					DisplayName: "Slack Channel",
+				},
+			},
+		)
+		if !strings.Contains(result, "Original alert text:") {
+			t.Errorf("expected verbatim block to be present even when Description duplicates original_message, got %q", result)
+		}
+		if !strings.Contains(result, raw) {
+			t.Errorf("expected raw message in prompt, got %q", result)
+		}
+	})
+
+	// When the LLM extractor returns a clean Description distinct from the raw
+	// message, both fields render: Description (clean summary) + Original alert
+	// text (verbatim, capped at 1500 bytes).
+	t.Run("distinct description retains verbatim block", func(t *testing.T) {
+		raw := "New notification from stream-health monitor: viewers dropping"
+		result := h.buildInvestigationPrompt(
+			alerts.NormalizedAlert{
+				AlertName:   "StreamMonitorAlert",
+				Description: "Live streaming viewer count dropped below SLO",
+				RawPayload: map[string]interface{}{
+					"original_message": raw,
+				},
+			},
+			&database.AlertSourceInstance{
+				Name: "channel-prod",
+				AlertSourceType: database.AlertSourceType{
+					Name:        "slack-channel",
+					DisplayName: "Slack Channel",
+				},
+			},
+		)
+		if !strings.Contains(result, "Original alert text:") {
+			t.Errorf("expected verbatim block when Description differs from original_message, got %q", result)
+		}
+		if !strings.Contains(result, raw) {
+			t.Errorf("expected verbatim text in prompt, got %q", result)
 		}
 	})
 

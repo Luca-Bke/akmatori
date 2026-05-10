@@ -231,12 +231,20 @@ Description: %s`,
 	)
 
 	// Source identifies the upstream alerting system + instance so the agent
-	// can disambiguate which integration a runbook should target. Both the
-	// type and instance Name columns are NOT NULL in the schema, but render
-	// only when both are populated to avoid emitting "Source:  / inst" or
-	// "Source: type / " stubs if the relation is somehow incomplete.
-	if instance.AlertSourceType.Name != "" && instance.Name != "" {
-		prompt += fmt.Sprintf("\nSource: %s / %s", instance.AlertSourceType.Name, instance.Name)
+	// can disambiguate which integration a runbook should target. The type
+	// and instance Name columns are NOT NULL but the API has historically
+	// allowed whitespace-only names through, so trim and render whichever
+	// non-empty components remain to avoid emitting "Source: type /    "
+	// stubs while still surfacing whichever cue is available.
+	sourceType := strings.TrimSpace(instance.AlertSourceType.Name)
+	sourceInstance := strings.TrimSpace(instance.Name)
+	switch {
+	case sourceType != "" && sourceInstance != "":
+		prompt += fmt.Sprintf("\nSource: %s / %s", sourceType, sourceInstance)
+	case sourceType != "":
+		prompt += fmt.Sprintf("\nSource: %s", sourceType)
+	case sourceInstance != "":
+		prompt += fmt.Sprintf("\nSource: %s", sourceInstance)
 	}
 
 	if alert.MetricName != "" {
@@ -247,6 +255,16 @@ Description: %s`,
 		prompt += fmt.Sprintf("\nRunbook: %s", alert.RunbookURL)
 	}
 
+	// Always render the labeled "Original alert text:" block when the
+	// extractor populated raw_payload.original_message. The system prompt
+	// (DefaultIncidentManagerPrompt) directs the agent to build sub-query 1
+	// from the "Original alert text" excerpt by name; suppressing the label
+	// — even when Description happens to carry the same string — pushes the
+	// agent onto the 100-char truncated summary in the Slack-channel fallback
+	// path, which is the exact path this feature was meant to improve.
+	// Duplicating the text under both Description and Original alert text
+	// is harmless (a few hundred extra prompt bytes) and keeps the labeled
+	// anchor the prompt instruction relies on.
 	if original := extractOriginalMessage(alert.RawPayload, originalAlertTextMaxBytes); original != "" {
 		prompt += "\n\nOriginal alert text:\n" + original
 	}

@@ -7,6 +7,22 @@ import (
 	"github.com/akmatori/akmatori/internal/api"
 )
 
+// isDuplicateNameErr reports whether err is a database unique-constraint
+// violation on the alert source name. Both Postgres (GORM) and SQLite
+// (used by tests) surface this via distinctive substrings; we match on the
+// same set already used by api_tools.go / api_settings_llm.go so behavior is
+// consistent across handlers.
+func isDuplicateNameErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "duplicate key") ||
+		strings.Contains(msg, "UNIQUE constraint") ||
+		strings.Contains(msg, "unique constraint") ||
+		strings.Contains(msg, "already exists")
+}
+
 // handleAlertSourceTypes handles GET /api/alert-source-types
 func (h *APIHandler) handleAlertSourceTypes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -41,6 +57,9 @@ func (h *APIHandler) handleAlertSources(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
+		req.SourceTypeName = strings.TrimSpace(req.SourceTypeName)
+		req.Name = strings.TrimSpace(req.Name)
+
 		if req.SourceTypeName == "" || req.Name == "" {
 			api.RespondError(w, http.StatusBadRequest, "source_type_name and name are required")
 			return
@@ -56,6 +75,10 @@ func (h *APIHandler) handleAlertSources(w http.ResponseWriter, r *http.Request) 
 
 		instance, err := h.alertService.CreateInstance(req.SourceTypeName, req.Name, req.Description, req.WebhookSecret, req.FieldMappings, req.Settings)
 		if err != nil {
+			if isDuplicateNameErr(err) {
+				api.RespondError(w, http.StatusConflict, "An alert source with that name already exists")
+				return
+			}
 			api.RespondError(w, http.StatusInternalServerError, "Failed to create alert source")
 			return
 		}
@@ -94,7 +117,12 @@ func (h *APIHandler) handleAlertSourceByUUID(w http.ResponseWriter, r *http.Requ
 
 		updates := make(map[string]interface{})
 		if req.Name != nil {
-			updates["name"] = *req.Name
+			trimmed := strings.TrimSpace(*req.Name)
+			if trimmed == "" {
+				api.RespondError(w, http.StatusBadRequest, "name cannot be empty")
+				return
+			}
+			updates["name"] = trimmed
 		}
 		if req.Description != nil {
 			updates["description"] = *req.Description
@@ -124,6 +152,10 @@ func (h *APIHandler) handleAlertSourceByUUID(w http.ResponseWriter, r *http.Requ
 		}
 
 		if err := h.alertService.UpdateInstance(uuid, updates); err != nil {
+			if isDuplicateNameErr(err) {
+				api.RespondError(w, http.StatusConflict, "An alert source with that name already exists")
+				return
+			}
 			api.RespondError(w, http.StatusInternalServerError, "Failed to update alert source")
 			return
 		}
