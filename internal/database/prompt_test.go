@@ -39,12 +39,14 @@ func TestDefaultIncidentManagerPrompt_MandatoryRunbookSearch(t *testing.T) {
 		{"mandatory keyword", "MANDATORY"},
 		{"search first instruction", "MANDATORY - Search runbooks FIRST before using any infrastructure tools"},
 		{"must search before other steps", "You MUST search for relevant runbooks before performing any other investigation steps"},
-		{"inline gateway_call example", `gateway_call("qmd.query", {"collection": "runbooks", "searches": [{"type": "lex", "query": "<verbatim alert excerpt up to 250 chars>"}, {"type": "lex", "query": "<short keywords>"}], "limit": 5})`},
+		{"lex sub-query", `"type": "lex"`},
+		{"vec sub-query", `"type": "vec"`},
+		{"hyde sub-query", `"type": "hyde"`},
 		// Regression: with the memories collection now enabled, the
 		// runbook-search step MUST scope to the runbooks collection so it
 		// doesn't surface memory documents during the "search runbooks
 		// first" workflow.
-		{"runbook collection scope", `"collection": "runbooks"`},
+		{"runbook collections scope", `"collections": ["runbooks"]`},
 		{"empty not a skip reason", "Empty results are NOT a reason to skip"},
 		{"primary guide", "PRIMARY investigation guide"},
 	}
@@ -82,24 +84,25 @@ func TestDefaultIncidentManagerPrompt_NoSeparateRunbooksSection(t *testing.T) {
 }
 
 // TestDefaultIncidentManagerPrompt_RunbookSearchSection asserts that the
-// runbook-search step instructs the agent to issue a single multi-sub-query
-// qmd.query (verbatim 2x-weighted + keywords) with up-to-2 retries capped at
-// 3 total calls. See plan: docs/plans/2026-05-10-runbook-search-verbatim-alert-multi-subquery.md
+// runbook-search step instructs the agent to issue a single qmd.query with a
+// {lex, vec, hyde} triplet sub-query shape (all three carrying the same
+// natural-language alert summary) with up-to-2 retries capped at 3 total calls.
+// See plan: docs/plans/2026-05-10-qmd-semantic-search-triplet.md
 func TestDefaultIncidentManagerPrompt_RunbookSearchSection(t *testing.T) {
 	tests := []struct {
 		name     string
 		contains string
 	}{
-		{"sub-query 1 marker", "sub-query 1"},
-		{"sub-query 2 marker", "sub-query 2"},
-		{"verbatim weighting note", "automatically weighted 2x"},
+		{"lex sub-query", `"type": "lex"`},
+		{"vec sub-query", `"type": "vec"`},
+		{"hyde sub-query", `"type": "hyde"`},
+		{"natural-language summary", "natural-language"},
 		{"limit 5", `"limit": 5`},
-		{"runbooks collection scope", `"collection": "runbooks"`},
+		{"runbooks collections scope", `"collections": ["runbooks"]`},
 		{"max 3 calls cue", "Cap total qmd.query calls at 3"},
 		{"retry guidance", "up to 2 retries"},
 		{"retry angle source_system", "source_system"},
 		{"retry angle target_service", "target_service"},
-		{"original alert text reference", "Original alert text"},
 		{"score gate", "score > 0.7"},
 	}
 

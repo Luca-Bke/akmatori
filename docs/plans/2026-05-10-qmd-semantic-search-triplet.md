@@ -79,14 +79,14 @@ Files:
 - Modify: `internal/database/prompt_test.go`
 - Modify: `internal/executor/executor_test.go`
 
-- [ ] in `prompt_test.go::TestDefaultIncidentManagerPrompt_MandatoryRunbookSearch`: replace the literal inline `gateway_call(...)` assertion (line 42) with three smaller assertions for `"type": "lex"`, `"type": "vec"`, `"type": "hyde"`. Update `"collection": "runbooks"` (line 47) → `"collections": ["runbooks"]`.
-- [ ] in `prompt_test.go::TestDefaultIncidentManagerPrompt_RunbookSearchSection` (lines 88-113): drop sub-tests `sub-query 1 marker`, `sub-query 2 marker`, `verbatim weighting note`, `original alert text reference`. Add sub-tests `vec sub-query` (`"type": "vec"`), `hyde sub-query` (`"type": "hyde"`), and `natural-language` (or equivalent string from the new prompt). Keep `Cap total qmd.query calls at 3`, `up to 2 retries`, `score > 0.7`, `limit": 5`.
-- [ ] in `executor_test.go`: rewrite the doc-comment (lines 8-17) to describe the triplet shape and the in-sync-with-system-prompt requirement.
-- [ ] in `executor_test.go`: update assertions (lines 20-31). Drop `sub-query 1`, `sub-query 2`, `automatically`, `weighted 2x`. Add `"type": "vec"`, `"type": "hyde"`. Update `"collection": "runbooks"` → `"collections": ["runbooks"]`. Keep `Cap total qmd.query calls at 3`, `gateway_call("qmd.query"`, `gateway_call("qmd.get"`, `"type": "lex"`.
-- [ ] delete the verbatim-before-keywords ordering check (lines 38-47) entirely — no longer applicable since all three sub-queries carry the same text.
-- [ ] keep the `test task` round-trip check (lines 49-51).
-- [ ] run `go test ./internal/database/... ./internal/executor/...` — must pass
-- [ ] run `make verify` — must pass
+- [x] in `prompt_test.go::TestDefaultIncidentManagerPrompt_MandatoryRunbookSearch`: replace the literal inline `gateway_call(...)` assertion (line 42) with three smaller assertions for `"type": "lex"`, `"type": "vec"`, `"type": "hyde"`. Update `"collection": "runbooks"` (line 47) → `"collections": ["runbooks"]`.
+- [x] in `prompt_test.go::TestDefaultIncidentManagerPrompt_RunbookSearchSection` (lines 88-113): drop sub-tests `sub-query 1 marker`, `sub-query 2 marker`, `verbatim weighting note`, `original alert text reference`. Add sub-tests `vec sub-query` (`"type": "vec"`), `hyde sub-query` (`"type": "hyde"`), and `natural-language` (or equivalent string from the new prompt). Keep `Cap total qmd.query calls at 3`, `up to 2 retries`, `score > 0.7`, `limit": 5`.
+- [x] in `executor_test.go`: rewrite the doc-comment (lines 8-17) to describe the triplet shape and the in-sync-with-system-prompt requirement.
+- [x] in `executor_test.go`: update assertions (lines 20-31). Drop `sub-query 1`, `sub-query 2`, `automatically`, `weighted 2x`. Add `"type": "vec"`, `"type": "hyde"`. Update `"collection": "runbooks"` → `"collections": ["runbooks"]`. Keep `Cap total qmd.query calls at 3`, `gateway_call("qmd.query"`, `gateway_call("qmd.get"`, `"type": "lex"`.
+- [x] delete the verbatim-before-keywords ordering check (lines 38-47) entirely — no longer applicable since all three sub-queries carry the same text.
+- [x] keep the `test task` round-trip check (lines 49-51).
+- [x] run `go test ./internal/database/... ./internal/executor/...` — must pass
+- [x] run `make verify` — must pass
 
 ### Task 5: Update CLAUDE.md Agent Access paragraph
 
