@@ -11,9 +11,8 @@ cp /opt/qmd-config.yml /root/.config/qmd/index.yml
 echo "QMD: Scanning runbook files..."
 qmd update || echo "QMD: No files to index yet (runbooks directory may be empty)"
 
-# Note: Embedding (qmd embed) is skipped in Docker by default.
-# BM25 lexical search works without embeddings.
-# To enable vector search, configure an embedding provider and run qmd embed.
+echo "QMD: Generating vector embeddings (idempotent)..."
+qmd embed || echo "QMD: Embedding step failed; continuing with lex-only"
 
 # Start MCP HTTP server
 echo "QMD: Starting MCP HTTP server on port 8181..."

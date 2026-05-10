@@ -40,16 +40,16 @@ Files:
 - Modify: `qmd/Dockerfile`
 - Modify: `qmd/entrypoint.sh`
 
-- [ ] create `qmd/precache-models.mjs` that imports `pullModels`, `DEFAULT_EMBED_MODEL_URI`, `DEFAULT_RERANK_MODEL_URI` from `/opt/qmd/dist/llm.js` and pulls only those two (skip generate model)
-- [ ] in `qmd/Dockerfile`, after the `npm install && npm run build && npm link` line, add `COPY precache-models.mjs /tmp/precache-models.mjs` then `RUN node /tmp/precache-models.mjs && rm /tmp/precache-models.mjs`
-- [ ] in `qmd/Dockerfile`, remove patch 3: the `sed -i 's/intent: params\.intent,$/intent: params.intent, rerank: false,/'` line AND the corresponding `grep -q 'intent: params.intent, rerank: false'` verification line. Keep patch 1 (bind host) and patch 2 (rerank schema default false) verbatim.
-- [ ] in `qmd/entrypoint.sh`, replace the "Embedding (qmd embed) is skipped" comment block (lines ~13-15) with:
+- [x] create `qmd/precache-models.mjs` that imports `pullModels`, `DEFAULT_EMBED_MODEL_URI`, `DEFAULT_RERANK_MODEL_URI` from `/opt/qmd/dist/llm.js` and pulls only those two (skip generate model)
+- [x] in `qmd/Dockerfile`, after the `npm install && npm run build && npm link` line, add `COPY precache-models.mjs /tmp/precache-models.mjs` then `RUN node /tmp/precache-models.mjs && rm /tmp/precache-models.mjs`
+- [x] in `qmd/Dockerfile`, remove patch 3: the `sed -i 's/intent: params\.intent,$/intent: params.intent, rerank: false,/'` line AND the corresponding `grep -q 'intent: params.intent, rerank: false'` verification line. Keep patch 1 (bind host) and patch 2 (rerank schema default false) verbatim.
+- [x] in `qmd/entrypoint.sh`, replace the "Embedding (qmd embed) is skipped" comment block (lines ~13-15) with:
   ```
   echo "QMD: Generating vector embeddings (idempotent)..."
   qmd embed || echo "QMD: Embedding step failed; continuing with lex-only"
   ```
-- [ ] rebuild the qmd image: `docker compose build qmd` — confirm build succeeds and that the precache step logs both model paths
-- [ ] manual verification only (no automated test for image contents — this is a Dockerfile concern)
+- [x] rebuild the qmd image: `docker compose build qmd` — confirm build succeeds and that the precache step logs both model paths (verified: embedding 318.1 MB + reranker 609.5 MB downloaded, image built)
+- [x] manual verification only (no automated test for image contents — this is a Dockerfile concern)
 
 ### Task 2: Rewrite runbook-search block in DefaultIncidentManagerPrompt
 

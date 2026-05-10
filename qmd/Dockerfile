@@ -18,14 +18,15 @@ RUN sed -i 's/httpServer.listen(port, "localhost"/httpServer.listen(port, proces
     # MCP `query` tool now exposes `rerank` natively (v2.1.0), so we just flip
     # the schema default from true to false. Callers can still opt in.
     sed -i 's/rerank: z\.boolean()\.optional()\.default(true)/rerank: z.boolean().optional().default(false)/' dist/mcp/server.js && \
-    # The REST /query endpoint doesn't pass `rerank` to store.search at all in
-    # v2.1.0 — inject `rerank: false` so it matches MCP behavior.
-    sed -i 's/intent: params\.intent,$/intent: params.intent, rerank: false,/' dist/mcp/server.js && \
-    # Verify all three patches applied (sed silently no-ops on unmatched
-    # patterns; future QMD upgrades will fail loudly here if anchors drift).
+    # Verify both patches applied (sed silently no-ops on unmatched patterns;
+    # future QMD upgrades will fail loudly here if anchors drift).
     grep -q 'process.env.QMD_BIND_HOST' dist/mcp/server.js && \
-    grep -q 'rerank: z\.boolean()\.optional()\.default(false)' dist/mcp/server.js && \
-    grep -q 'intent: params.intent, rerank: false' dist/mcp/server.js
+    grep -q 'rerank: z\.boolean()\.optional()\.default(false)' dist/mcp/server.js
+
+# Pre-cache the embedding + reranker GGUFs into the image so `qmd embed` on
+# first start doesn't have to fetch them at runtime (~940 MB combined).
+COPY precache-models.mjs /tmp/precache-models.mjs
+RUN node /tmp/precache-models.mjs && rm /tmp/precache-models.mjs
 
 # Add a POST /update route to the MCP HTTP server. The akmatori API server
 # POSTs http://qmd:8181/update after every runbook CRUD; without this route
