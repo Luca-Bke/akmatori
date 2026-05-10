@@ -82,8 +82,8 @@ Files:
 Files:
 - Modify: `CLAUDE.md` (only if the prompt-rendering pattern is worth documenting as a project convention; otherwise skip)
 
-- [ ] Add a short note in the PR / commit body documenting the SQL upgrade path for already-deployed databases: `UPDATE skills SET prompt = '<new prompt text>' WHERE name = 'incident-manager';` — make clear this is operator-driven (NOT auto-applied on boot, to preserve customizations)
-- [ ] Move this plan to `docs/plans/completed/` after merge
+- [x] Add a short note in the PR / commit body documenting the SQL upgrade path for already-deployed databases: `UPDATE skills SET prompt = '<new prompt text>' WHERE name = 'incident-manager';` — make clear this is operator-driven (NOT auto-applied on boot, to preserve customizations)
+- [x] Move this plan to `docs/plans/completed/` after merge
 
 ## Post-Completion (manual verification — out of automated task scope)
 
