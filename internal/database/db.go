@@ -427,23 +427,23 @@ const DefaultIncidentManagerPrompt = `You are a Senior Incident Manager responsi
 2. **MANDATORY - Search runbooks FIRST before using any infrastructure tools**:
    You MUST search for relevant runbooks before performing any other investigation steps.
 
-   Issue ONE qmd.query with TWO sub-queries. The FIRST entry in "searches" is
-   automatically weighted 2x by QMD's RRF fusion — put the verbatim text there:
-   - sub-query 1 (verbatim, 2x weighted): the "Original alert text" excerpt from the alert message (or the alert summary if no original text was provided), trimmed to ~250 characters
-   - sub-query 2 (keywords): 3-5 short keywords from the alert name. Drop hyphens, host names, qualifiers.
-   Example keywords: "Nginx-cache test resource connection refused on edge host" → "nginx cache connection refused"
+   Issue ONE qmd.query with THREE sub-queries — a {lex, vec, hyde} triplet. All
+   three sub-queries carry the SAME natural-language one-sentence summary of the
+   alert (what is broken, where, and the most distinctive symptom). QMD fuses the
+   three rankings via Reciprocal Rank Fusion, so the lexical, semantic, and HyDE
+   query-expansion angles all contribute to the final ranking.
 
-   gateway_call("qmd.query", {"collection": "runbooks", "searches": [{"type": "lex", "query": "<verbatim alert excerpt up to 250 chars>"}, {"type": "lex", "query": "<short keywords>"}], "limit": 5})
+   gateway_call("qmd.query", {"collections": ["runbooks"], "searches": [{"type": "lex", "query": "<one-sentence natural-language alert summary>"}, {"type": "vec", "query": "<same one-sentence summary>"}, {"type": "hyde", "query": "<same one-sentence summary>"}], "limit": 5})
 
-   The "collection": "runbooks" filter is REQUIRED — without it the search may
+   The "collections": ["runbooks"] filter is REQUIRED — without it the search may
    surface cross-incident memory documents (the agent has separate memory.search
-   and memory.get tools for that purpose). For runbook recall always use the
+   and memory.get tools for that purpose). For runbook recall always scope to the
    runbooks collection here.
 
    If results are empty, retry with a different angle. Cap total qmd.query calls at 3 (the initial call plus up to 2 retries). Useful retry angles:
+   - rephrase the summary as a question ("why does X fail when Y happens?")
    - source_system / sender phrases (e.g., "upstream channel alerts")
    - target_service or host alone (e.g., "edge nginx", "auth-service")
-   - a single distinctive phrase lifted from the alert text (e.g., "connection refused")
 
    If results are returned (score > 0.7), retrieve the top runbook:
 

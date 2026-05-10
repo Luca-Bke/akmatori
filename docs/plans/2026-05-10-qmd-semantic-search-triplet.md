@@ -56,12 +56,12 @@ Files:
 Files:
 - Modify: `internal/database/db.go` (lines 427-454)
 
-- [ ] replace the "sub-query 1 (verbatim, 2x weighted) / sub-query 2 (keywords)" block with the natural-language `{lex, vec, hyde}` triplet shape from /tmp/plan.md (all three sub-queries carry the same one-sentence alert summary)
-- [ ] change `"collection": "runbooks"` (singular) → `"collections": ["runbooks"]` (plural array — matches QMD's documented `mcp/server.ts:309` shape)
-- [ ] keep: the MANDATORY framing, the score > 0.7 gate, the qmd.get follow-up, the 3-total-call cap, the filesystem fallback on QMD error only, and the "empty results NOT a reason to skip" note
-- [ ] drop: "verbatim 2x weighted" language, "Original alert text" excerpt instruction, the connection-refused keywords example
-- [ ] add retry-angle hints: rephrase as a question, source_system/sender phrases, target_service/host alone
-- [ ] run `go test ./internal/database/... -run RunbookSearch` — expected to FAIL here (we update tests in Task 4)
+- [x] replace the "sub-query 1 (verbatim, 2x weighted) / sub-query 2 (keywords)" block with the natural-language `{lex, vec, hyde}` triplet shape from /tmp/plan.md (all three sub-queries carry the same one-sentence alert summary)
+- [x] change `"collection": "runbooks"` (singular) → `"collections": ["runbooks"]` (plural array — matches QMD's documented `mcp/server.ts:309` shape)
+- [x] keep: the MANDATORY framing, the score > 0.7 gate, the qmd.get follow-up, the 3-total-call cap, the filesystem fallback on QMD error only, and the "empty results NOT a reason to skip" note
+- [x] drop: "verbatim 2x weighted" language, "Original alert text" excerpt instruction, the connection-refused keywords example
+- [x] add retry-angle hints: rephrase as a question, source_system/sender phrases, target_service/host alone
+- [x] run `go test ./internal/database/... -run RunbookSearch` — expected to FAIL here (we update tests in Task 4)
 
 ### Task 3: Rewrite PrependGuidance to mirror the triplet shape
 
