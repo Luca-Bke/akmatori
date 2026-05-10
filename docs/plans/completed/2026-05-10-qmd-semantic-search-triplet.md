@@ -116,5 +116,5 @@ Files: none (operational task)
 
 ### Task 8: Update documentation and finalize
 
-- [ ] verify `CLAUDE.md` Agent Access paragraph reflects the new triplet shape (done in Task 5)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] verify `CLAUDE.md` Agent Access paragraph reflects the new triplet shape (done in Task 5) — verified at CLAUDE.md:312; paragraph already covers the ONE-call/THREE-searches `{lex, vec, hyde}` triplet, RRF fusion, 3-call cap, QMD-error-only filesystem fallback, and the baked-in ~940 MB GGUFs
+- [x] move this plan to `docs/plans/completed/`
