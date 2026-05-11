@@ -329,20 +329,10 @@ func (h *SlackHandler) routeBotMentionThreadReply(channel, threadTS, messageTS, 
 
 // handleBotMentionInThread processes a human @mention of the bot in an alert channel thread.
 // It strips the mention, fetches the parent message for context, and processes via processMessage.
-// Uses dedup to avoid double-processing when both app_mention and message events fire.
+// Dedup is owned by the sole caller (routeBotMentionThreadReply) — adding it
+// here would short-circuit the router's fall-through, since the router claims
+// the dedup key BEFORE invoking this function.
 func (h *SlackHandler) handleBotMentionInThread(channel, threadTS, messageTS, rawText, user string) {
-	// Dedup: skip if this message was already processed (e.g. via app_mention event)
-	dedupeKey := channel + ":" + messageTS
-	if _, loaded := h.processedMsgs.LoadOrStore(dedupeKey, struct{}{}); loaded {
-		slog.Info("skipping duplicate bot mention processing", "dedupe_key", dedupeKey)
-		return
-	}
-	// Clean up after 60 seconds
-	go func() {
-		time.Sleep(60 * time.Second)
-		h.processedMsgs.Delete(dedupeKey)
-	}()
-
 	// Strip bot mention
 	text := strings.TrimSpace(strings.Replace(rawText, fmt.Sprintf("<@%s>", h.botUserID), "", 1))
 

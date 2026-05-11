@@ -190,7 +190,7 @@ go manager.WatchForReloads(ctx)
 | Event | Behavior |
 |-------|----------|
 | Bot message in alert channel | Create incident, start investigation |
-| @mention in alert thread | Continue investigation with question |
+| @mention in alert thread | Classify first; confident operator feedback → persist memory + 👍 + ack; otherwise continue investigation |
 | @mention in general channel | Direct response (not investigation) |
 
 ### Live Progress + Summarized Final Output

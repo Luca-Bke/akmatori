@@ -423,14 +423,14 @@ func TestRouteBotMentionThreadReply_FeedbackShortCircuits(t *testing.T) {
 	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", "<@BOT> the data dir is /mnt/data, not /var/lib", "U")
 
 	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
-		return fx.mockMem.lastUpserted != nil
+		return fx.mockMem.lastUpsertedSnap() != nil
 	}, "memory should be upserted on confident feedback")
 
 	if got := fx.agentCallCount(); got != 0 {
 		t.Errorf("agent fall-through called %d times, want 0", got)
 	}
-	if fx.mockMem.lastUpserted.IncidentUUID != "inc-99" {
-		t.Errorf("incident UUID not propagated: %+v", fx.mockMem.lastUpserted)
+	if got := fx.mockMem.lastUpsertedSnap(); got == nil || got.IncidentUUID != "inc-99" {
+		t.Errorf("incident UUID not propagated: %+v", got)
 	}
 }
 
@@ -447,8 +447,8 @@ func TestRouteBotMentionThreadReply_NotConfidentFallsThroughToAgent(t *testing.T
 		return fx.agentCallCount() == 1
 	}, "agent should be called on low confidence")
 
-	if fx.mockMem.lastUpserted != nil {
-		t.Errorf("expected NO memory persist for low-confidence verdict, got %+v", fx.mockMem.lastUpserted)
+	if got := fx.mockMem.lastUpsertedSnap(); got != nil {
+		t.Errorf("expected NO memory persist for low-confidence verdict, got %+v", got)
 	}
 }
 
@@ -465,8 +465,8 @@ func TestRouteBotMentionThreadReply_ClassifierErrorFallsThrough(t *testing.T) {
 		return fx.agentCallCount() == 1
 	}, "agent should run when classifier errors")
 
-	if fx.mockMem.lastUpserted != nil {
-		t.Errorf("expected NO memory persist on classifier error")
+	if got := fx.mockMem.lastUpsertedSnap(); got != nil {
+		t.Errorf("expected NO memory persist on classifier error, got %+v", got)
 	}
 }
 
@@ -484,8 +484,8 @@ func TestRouteBotMentionThreadReply_WorkerOfflineFallsThrough(t *testing.T) {
 		return fx.agentCallCount() == 1
 	}, "agent should run when worker offline")
 
-	if fx.mockMem.lastUpserted != nil {
-		t.Errorf("expected NO memory persist when worker offline")
+	if got := fx.mockMem.lastUpsertedSnap(); got != nil {
+		t.Errorf("expected NO memory persist when worker offline, got %+v", got)
 	}
 }
 
@@ -506,9 +506,32 @@ func TestRouteBotMentionThreadReply_NoIncidentMatchFallsThrough(t *testing.T) {
 	if got := fx.caller.callCount(); got != 0 {
 		t.Errorf("classifier should NOT have been called, got %d calls", got)
 	}
-	if fx.mockMem.lastUpserted != nil {
-		t.Errorf("expected NO memory persist when no incident matches")
+	if got := fx.mockMem.lastUpsertedSnap(); got != nil {
+		t.Errorf("expected NO memory persist when no incident matches, got %+v", got)
 	}
+}
+
+// TestHandleBotMentionInThread_DoesNotShortCircuitOnPreClaimedDedup is a
+// regression test for the dedup-collision bug: routeBotMentionThreadReply
+// claims the dedup key BEFORE invoking handleBotMentionInThread on the
+// fall-through. If handleBotMentionInThread also dedups the same key, the
+// fall-through is silently dropped — the agent never runs. This asserts the
+// inner function proceeds past the dedup point when the key is already set.
+//
+// The proof is reachability: with no Slack client wired, fetchThreadParentText
+// panics on the nil pointer. If handleBotMentionInThread short-circuited at
+// a dedup gate, no panic would occur and we'd silently return.
+func TestHandleBotMentionInThread_DoesNotShortCircuitOnPreClaimedDedup(t *testing.T) {
+	h := &SlackHandler{botUserID: "BOT"}
+	h.processedMsgs.Store("C:M-1", struct{}{})
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("handleBotMentionInThread returned cleanly with a pre-claimed dedup key — router fall-through would be silently dropped in production")
+		}
+	}()
+
+	h.handleBotMentionInThread("C", "T", "M-1", "<@BOT> hi", "U")
 }
 
 // TestRouteBotMentionThreadReply_DedupIdempotent verifies that two calls with
@@ -550,7 +573,7 @@ func TestClassifyThreadReplyForFeedback_StripsMention(t *testing.T) {
 	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", raw, "U")
 
 	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
-		return fx.mockMem.lastUpserted != nil
+		return fx.mockMem.lastUpsertedSnap() != nil
 	}, "memory should be persisted on confident feedback")
 
 	prompt := fx.caller.lastUserPrompt()
@@ -561,7 +584,7 @@ func TestClassifyThreadReplyForFeedback_StripsMention(t *testing.T) {
 		t.Errorf("classifier user prompt should contain the message text, got %q", prompt)
 	}
 
-	if !strings.Contains(fx.mockMem.lastUpserted.Body, "<@BOT>") {
-		t.Errorf("persisted memory body should retain original mention text, got %q", fx.mockMem.lastUpserted.Body)
+	if got := fx.mockMem.lastUpsertedSnap(); got == nil || !strings.Contains(got.Body, "<@BOT>") {
+		t.Errorf("persisted memory body should retain original mention text, got %+v", got)
 	}
 }

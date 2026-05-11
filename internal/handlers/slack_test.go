@@ -331,7 +331,7 @@ func TestHandleMessage_ThreadReplyHumanMention_FeedbackShortCircuits(t *testing.
 	fx.handler.handleMessage(event)
 
 	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
-		return fx.mockMem.lastUpserted != nil
+		return fx.mockMem.lastUpsertedSnap() != nil
 	}, "memory should be upserted via handleMessage → router path")
 
 	if got := fx.agentCallCount(); got != 0 {

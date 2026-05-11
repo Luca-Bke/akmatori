@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/akmatori/akmatori/internal/database"
@@ -17,7 +18,13 @@ import (
 // mockMemoryService implements services.MemoryManager for handler tests.
 // Each field can override behavior; calls without overrides just operate on
 // the in-memory slice. Counters help assertions for sync-after-write.
+//
+// `mu` guards every field — Slack router tests drive writes from a worker
+// goroutine and read state from the main goroutine via AssertEventually. Use
+// the lowercase accessor methods (lastUpsertedSnap, syncCallCount, etc.) when
+// reading from racing tests; synchronous tests can read fields directly.
 type mockMemoryService struct {
+	mu       sync.Mutex
 	memories []database.Memory
 	nextID   uint
 
@@ -30,9 +37,21 @@ type mockMemoryService struct {
 
 	syncCalls int
 
-	lastCreated *database.Memory
-	lastUpdated *database.Memory
+	lastCreated  *database.Memory
+	lastUpdated  *database.Memory
 	lastUpserted *database.Memory
+}
+
+// lastUpsertedSnap returns a snapshot of the last-upserted memory under the
+// mutex. Used by router tests where writes happen on a worker goroutine.
+func (m *mockMemoryService) lastUpsertedSnap() *database.Memory {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastUpserted == nil {
+		return nil
+	}
+	cp := *m.lastUpserted
+	return &cp
 }
 
 func newMockMemoryService() *mockMemoryService {
@@ -40,6 +59,8 @@ func newMockMemoryService() *mockMemoryService {
 }
 
 func (m *mockMemoryService) CreateMemory(mem *database.Memory) (*database.Memory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.createErr != nil {
 		return nil, m.createErr
 	}
@@ -52,6 +73,8 @@ func (m *mockMemoryService) CreateMemory(mem *database.Memory) (*database.Memory
 }
 
 func (m *mockMemoryService) UpdateMemory(id uint, mem *database.Memory) (*database.Memory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.updateErr != nil {
 		return nil, m.updateErr
 	}
@@ -79,6 +102,8 @@ func (m *mockMemoryService) UpdateMemory(id uint, mem *database.Memory) (*databa
 }
 
 func (m *mockMemoryService) UpsertByName(mem *database.Memory) (*database.Memory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.upsertErr != nil {
 		return nil, m.upsertErr
 	}
@@ -103,6 +128,8 @@ func (m *mockMemoryService) UpsertByName(mem *database.Memory) (*database.Memory
 }
 
 func (m *mockMemoryService) DeleteMemory(id uint) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
@@ -117,6 +144,8 @@ func (m *mockMemoryService) DeleteMemory(id uint) error {
 }
 
 func (m *mockMemoryService) GetMemory(id uint) (*database.Memory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
@@ -130,6 +159,8 @@ func (m *mockMemoryService) GetMemory(id uint) (*database.Memory, error) {
 }
 
 func (m *mockMemoryService) ListMemories(scope, memType string) ([]database.Memory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -151,6 +182,8 @@ func (m *mockMemoryService) ListMemoriesByScope(scope string) ([]database.Memory
 }
 
 func (m *mockMemoryService) ListAllScopes() ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	seen := map[string]bool{}
 	var out []string
 	for _, mem := range m.memories {
@@ -163,6 +196,8 @@ func (m *mockMemoryService) ListAllScopes() ([]string, error) {
 }
 
 func (m *mockMemoryService) CountByIncidentUUID(uuid string, createdBy string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var n int64
 	for _, mem := range m.memories {
 		if mem.IncidentUUID != uuid {
@@ -177,6 +212,8 @@ func (m *mockMemoryService) CountByIncidentUUID(uuid string, createdBy string) (
 }
 
 func (m *mockMemoryService) SyncMemoryFiles() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.syncCalls++
 	return nil
 }
