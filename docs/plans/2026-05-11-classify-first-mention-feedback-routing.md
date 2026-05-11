@@ -60,17 +60,17 @@ Files:
 - Modify: `internal/handlers/slack_feedback_test.go`
 - Modify: `internal/handlers/slack_test.go`
 
-- [ ] Add a small test-helper that constructs a `SlackHandler` with a stub `feedbackClassifier`, stub `memoryManager`, sqlite-backed `database.GetDB()` seeded with an incident matching the thread, and an overridden `runMentionContinuation` that increments a counter. Reuse existing patterns from `slack_feedback_test.go`.
-- [ ] `TestRouteBotMentionThreadReply_FeedbackShortCircuits` — confident verdict → memory upserted + reaction posted; agent counter == 0.
-- [ ] `TestRouteBotMentionThreadReply_NotConfidentFallsThroughToAgent` — verdict with `Confidence < 0.6` → no memory persist; agent counter == 1.
-- [ ] `TestRouteBotMentionThreadReply_ClassifierErrorFallsThrough` — stub `Classify` returns a wrapped error → agent counter == 1.
-- [ ] `TestRouteBotMentionThreadReply_WorkerOfflineFallsThrough` — stub `Classify` returns `services.ErrWorkerNotConnected` → agent counter == 1; no warn-level log noise.
-- [ ] `TestRouteBotMentionThreadReply_NoIncidentMatchFallsThrough` — thread that doesn't map to any incident → agent counter == 1; classifier not invoked.
-- [ ] `TestRouteBotMentionThreadReply_DedupIdempotent` — call twice with same `channel:messageTS` → second call is a no-op (classifier counter == 1, agent counter ≤ 1).
-- [ ] `TestClassifyThreadReplyForFeedback_StripsMention` — classifier receives text with `<@U_BOT>` removed; the original (un-stripped) text is what gets passed into `buildFeedbackMemory.Body` on the persist path.
-- [ ] Extend `slack_test.go::TestHandleMessage_ThreadReplyHumanMention` (or add a sibling `TestHandleMessage_ThreadReplyHumanMention_FeedbackShortCircuits`) covering the end-to-end short-circuit from `handleMessage` through `routeBotMentionThreadReply` to `persistFeedbackAndAck` — verifies the slack.go:363 wiring.
-- [ ] Use `testhelpers.AssertEventually` (or a buffered channel sync) on the goroutine-driven assertions since the router fires async.
-- [ ] Run `make test` — all new tests green.
+- [x] Add a small test-helper that constructs a `SlackHandler` with a stub `feedbackClassifier`, stub `memoryManager`, sqlite-backed `database.GetDB()` seeded with an incident matching the thread, and an overridden `runMentionContinuation` that increments a counter. Reuse existing patterns from `slack_feedback_test.go`.
+- [x] `TestRouteBotMentionThreadReply_FeedbackShortCircuits` — confident verdict → memory upserted + reaction posted; agent counter == 0.
+- [x] `TestRouteBotMentionThreadReply_NotConfidentFallsThroughToAgent` — verdict with `Confidence < 0.6` → no memory persist; agent counter == 1.
+- [x] `TestRouteBotMentionThreadReply_ClassifierErrorFallsThrough` — stub `Classify` returns a wrapped error → agent counter == 1.
+- [x] `TestRouteBotMentionThreadReply_WorkerOfflineFallsThrough` — stub `Classify` returns `services.ErrWorkerNotConnected` → agent counter == 1; no warn-level log noise.
+- [x] `TestRouteBotMentionThreadReply_NoIncidentMatchFallsThrough` — thread that doesn't map to any incident → agent counter == 1; classifier not invoked.
+- [x] `TestRouteBotMentionThreadReply_DedupIdempotent` — call twice with same `channel:messageTS` → second call is a no-op (classifier counter == 1, agent counter ≤ 1).
+- [x] `TestClassifyThreadReplyForFeedback_StripsMention` — classifier receives text with `<@U_BOT>` removed; the original (un-stripped) text is what gets passed into `buildFeedbackMemory.Body` on the persist path.
+- [x] Extend `slack_test.go::TestHandleMessage_ThreadReplyHumanMention` (or add a sibling `TestHandleMessage_ThreadReplyHumanMention_FeedbackShortCircuits`) covering the end-to-end short-circuit from `handleMessage` through `routeBotMentionThreadReply` to `persistFeedbackAndAck` — verifies the slack.go:363 wiring.
+- [x] Use `testhelpers.AssertEventually` (or a buffered channel sync) on the goroutine-driven assertions since the router fires async.
+- [x] Run `make test` — all new tests green.
 
 ### Task 4: Verify acceptance criteria
 

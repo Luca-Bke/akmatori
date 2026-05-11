@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"testing"
+	"time"
 
 	"github.com/akmatori/akmatori/internal/database"
+	"github.com/akmatori/akmatori/internal/testhelpers"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 )
@@ -304,6 +306,36 @@ func TestHandleMessage_ThreadReplyHumanMention(t *testing.T) {
 	}
 	if got := classifyMessage(h, event); got != "human_mention_thread" {
 		t.Errorf("got %q, want human_mention_thread", got)
+	}
+}
+
+// TestHandleMessage_ThreadReplyHumanMention_FeedbackShortCircuits is the
+// end-to-end wiring check: a thread-reply MessageEvent containing a bot
+// mention flows through handleMessage → routeBotMentionThreadReply →
+// persistFeedbackAndAck when the classifier returns confident feedback.
+// This catches regressions of the slack.go:403 routing decision.
+func TestHandleMessage_ThreadReplyHumanMention_FeedbackShortCircuits(t *testing.T) {
+	fx := newRouteFixture(t, "1707000001.000100")
+	fx.handler.alertChannels = map[string]*database.AlertSourceInstance{
+		"C_ALERT": {},
+	}
+
+	event := &slackevents.MessageEvent{
+		Channel:         "C_ALERT",
+		User:            "U_HUMAN",
+		Text:            "<@BOT> the data dir is /mnt/data, not /var/lib",
+		TimeStamp:       "1707000003.000300",
+		ThreadTimeStamp: "1707000001.000100",
+	}
+
+	fx.handler.handleMessage(event)
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.mockMem.lastUpserted != nil
+	}, "memory should be upserted via handleMessage → router path")
+
+	if got := fx.agentCallCount(); got != 0 {
+		t.Errorf("agent fall-through called %d times on confident feedback, want 0", got)
 	}
 }
 

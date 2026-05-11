@@ -2,11 +2,16 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/akmatori/akmatori/internal/database"
 	"github.com/akmatori/akmatori/internal/services"
+	"github.com/akmatori/akmatori/internal/testhelpers"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -295,13 +300,268 @@ func TestMaybeCaptureSlackFeedback_BotMessageSkipped(t *testing.T) {
 // fakeOneShotLLMCallerH is a small inline OneShotLLMCaller test double for
 // the handler-package tests. Mirrors fakeOneShotLLMCaller in the services
 // package; we redefine it here because cross-package use isn't possible.
+// The mutex guards `calls` and `lastUser` so router tests can read them from
+// the main goroutine after the classifier ran on a worker goroutine.
 type fakeOneShotLLMCallerH struct {
+	mu       sync.Mutex
 	calls    int
+	lastUser string
 	response string
 	err      error
 }
 
-func (f *fakeOneShotLLMCallerH) OneShotLLM(_ context.Context, _ *services.LLMSettingsForWorker, _, _ string, _ int, _ float64) (string, error) {
+func (f *fakeOneShotLLMCallerH) OneShotLLM(_ context.Context, _ *services.LLMSettingsForWorker, _, user string, _ int, _ float64) (string, error) {
+	f.mu.Lock()
 	f.calls++
-	return f.response, f.err
+	f.lastUser = user
+	resp, err := f.response, f.err
+	f.mu.Unlock()
+	return resp, err
+}
+
+func (f *fakeOneShotLLMCallerH) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakeOneShotLLMCallerH) lastUserPrompt() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastUser
+}
+
+func (f *fakeOneShotLLMCallerH) setError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+}
+
+func (f *fakeOneShotLLMCallerH) setResponse(resp string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.response = resp
+}
+
+// routeFixture wires a SlackHandler with stub deps + a seeded sqlite-backed
+// incident at the given thread TS. Tests use it to exercise
+// routeBotMentionThreadReply and the surrounding wiring without spinning up
+// a real Slack client or agent runtime. The agent fall-through is captured
+// in an atomic counter so the goroutine-driven router can be asserted on
+// without races.
+type routeFixture struct {
+	handler    *SlackHandler
+	mockMem    *mockMemoryService
+	caller     *fakeOneShotLLMCallerH
+	agentCalls *int32
+}
+
+func newRouteFixture(t *testing.T, threadTS string) *routeFixture {
+	t.Helper()
+
+	mock := newMockMemoryService()
+	caller := &fakeOneShotLLMCallerH{
+		response: `{"is_feedback": true, "summary": "data dir is /mnt/data", "confidence": 0.92}`,
+	}
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&database.Incident{}, &database.LLMSettings{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	database.DB = db
+	if err := db.Create(&database.LLMSettings{
+		Name: "t", Provider: database.LLMProviderAnthropic, APIKey: "k",
+		Model: "claude-sonnet-4-6", Active: true, Enabled: true,
+	}).Error; err != nil {
+		t.Fatalf("seed llm: %v", err)
+	}
+	if threadTS != "" {
+		if err := db.Create(&database.Incident{
+			UUID:     "inc-99",
+			Source:   "slack",
+			SourceID: threadTS,
+			Title:    "outage",
+			Response: "agent investigated",
+		}).Error; err != nil {
+			t.Fatalf("seed incident: %v", err)
+		}
+	}
+
+	var agentCalls int32
+	h := &SlackHandler{
+		memoryManager:      mock,
+		feedbackClassifier: services.NewFeedbackClassifier(caller),
+		botUserID:          "BOT",
+		runMentionContinuation: func(_, _, _, _, _ string) {
+			atomic.AddInt32(&agentCalls, 1)
+		},
+	}
+
+	return &routeFixture{
+		handler:    h,
+		mockMem:    mock,
+		caller:     caller,
+		agentCalls: &agentCalls,
+	}
+}
+
+func (f *routeFixture) agentCallCount() int32 {
+	return atomic.LoadInt32(f.agentCalls)
+}
+
+// --- routeBotMentionThreadReply tests ---
+
+// TestRouteBotMentionThreadReply_FeedbackShortCircuits verifies the core
+// classify-first contract: a confident feedback verdict on an incident-thread
+// @mention writes a memory and does NOT invoke the agent.
+func TestRouteBotMentionThreadReply_FeedbackShortCircuits(t *testing.T) {
+	fx := newRouteFixture(t, "TX")
+
+	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", "<@BOT> the data dir is /mnt/data, not /var/lib", "U")
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.mockMem.lastUpserted != nil
+	}, "memory should be upserted on confident feedback")
+
+	if got := fx.agentCallCount(); got != 0 {
+		t.Errorf("agent fall-through called %d times, want 0", got)
+	}
+	if fx.mockMem.lastUpserted.IncidentUUID != "inc-99" {
+		t.Errorf("incident UUID not propagated: %+v", fx.mockMem.lastUpserted)
+	}
+}
+
+// TestRouteBotMentionThreadReply_NotConfidentFallsThroughToAgent ensures a
+// low-confidence verdict falls through to the agent path and does NOT persist
+// a memory.
+func TestRouteBotMentionThreadReply_NotConfidentFallsThroughToAgent(t *testing.T) {
+	fx := newRouteFixture(t, "TX")
+	fx.caller.setResponse(`{"is_feedback": true, "summary": "x", "confidence": 0.5}`)
+
+	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", "<@BOT> any update?", "U")
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.agentCallCount() == 1
+	}, "agent should be called on low confidence")
+
+	if fx.mockMem.lastUpserted != nil {
+		t.Errorf("expected NO memory persist for low-confidence verdict, got %+v", fx.mockMem.lastUpserted)
+	}
+}
+
+// TestRouteBotMentionThreadReply_ClassifierErrorFallsThrough verifies that a
+// generic classifier error routes to the agent — we never want to drop the
+// user's @mention because of a transient LLM failure.
+func TestRouteBotMentionThreadReply_ClassifierErrorFallsThrough(t *testing.T) {
+	fx := newRouteFixture(t, "TX")
+	fx.caller.setError(errors.New("boom"))
+
+	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", "<@BOT> hi", "U")
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.agentCallCount() == 1
+	}, "agent should run when classifier errors")
+
+	if fx.mockMem.lastUpserted != nil {
+		t.Errorf("expected NO memory persist on classifier error")
+	}
+}
+
+// TestRouteBotMentionThreadReply_WorkerOfflineFallsThrough verifies that
+// ErrWorkerNotConnected (the worker disconnected sentinel) routes to the
+// agent path just like any other error — same fall-through, no warn-level
+// spam.
+func TestRouteBotMentionThreadReply_WorkerOfflineFallsThrough(t *testing.T) {
+	fx := newRouteFixture(t, "TX")
+	fx.caller.setError(services.ErrWorkerNotConnected)
+
+	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", "<@BOT> hi", "U")
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.agentCallCount() == 1
+	}, "agent should run when worker offline")
+
+	if fx.mockMem.lastUpserted != nil {
+		t.Errorf("expected NO memory persist when worker offline")
+	}
+}
+
+// TestRouteBotMentionThreadReply_NoIncidentMatchFallsThrough verifies that
+// when the thread doesn't map to any incident, the classifier is NOT
+// invoked (saves an LLM call) and the agent path runs.
+func TestRouteBotMentionThreadReply_NoIncidentMatchFallsThrough(t *testing.T) {
+	fx := newRouteFixture(t, "TX")
+
+	// Thread "OTHER" has no incident — lookupIncidentByThread returns error
+	// before classifier runs.
+	fx.handler.routeBotMentionThreadReply("C", "OTHER", "M-1", "<@BOT> hi", "U")
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.agentCallCount() == 1
+	}, "agent should run when no incident matches the thread")
+
+	if got := fx.caller.callCount(); got != 0 {
+		t.Errorf("classifier should NOT have been called, got %d calls", got)
+	}
+	if fx.mockMem.lastUpserted != nil {
+		t.Errorf("expected NO memory persist when no incident matches")
+	}
+}
+
+// TestRouteBotMentionThreadReply_DedupIdempotent verifies that two calls with
+// the same channel+messageTS short-circuit on the second — classifier runs
+// at most once and the agent fall-through is called at most once.
+func TestRouteBotMentionThreadReply_DedupIdempotent(t *testing.T) {
+	fx := newRouteFixture(t, "TX")
+	// Low confidence so first call falls through to agent.
+	fx.caller.setResponse(`{"is_feedback": false, "summary": "x", "confidence": 0.5}`)
+
+	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", "<@BOT> hi", "U")
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.agentCallCount() == 1
+	}, "first call should reach the agent")
+
+	// Second call: identical dedup key → must be a no-op.
+	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", "<@BOT> hi", "U")
+
+	// Give any rogue goroutine a moment to run; counters must stay at 1.
+	time.Sleep(50 * time.Millisecond)
+
+	if got := fx.agentCallCount(); got != 1 {
+		t.Errorf("agent calls = %d, want 1 (dedup failed)", got)
+	}
+	if got := fx.caller.callCount(); got != 1 {
+		t.Errorf("classifier calls = %d, want 1 (dedup failed)", got)
+	}
+}
+
+// TestClassifyThreadReplyForFeedback_StripsMention asserts the two-text
+// contract: the classifier sees mention-stripped text, but the persisted
+// memory body carries the original (un-stripped) text so operators can later
+// audit the literal Slack message.
+func TestClassifyThreadReplyForFeedback_StripsMention(t *testing.T) {
+	fx := newRouteFixture(t, "TX")
+
+	raw := "<@BOT> the data dir is /mnt/data, not /var/lib"
+	fx.handler.routeBotMentionThreadReply("C", "TX", "M-1", raw, "U")
+
+	testhelpers.AssertEventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		return fx.mockMem.lastUpserted != nil
+	}, "memory should be persisted on confident feedback")
+
+	prompt := fx.caller.lastUserPrompt()
+	if strings.Contains(prompt, "<@BOT>") {
+		t.Errorf("classifier user prompt should NOT contain bot mention, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "the data dir is /mnt/data") {
+		t.Errorf("classifier user prompt should contain the message text, got %q", prompt)
+	}
+
+	if !strings.Contains(fx.mockMem.lastUpserted.Body, "<@BOT>") {
+		t.Errorf("persisted memory body should retain original mention text, got %q", fx.mockMem.lastUpserted.Body)
+	}
 }
