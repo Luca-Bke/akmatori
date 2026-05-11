@@ -43,6 +43,11 @@ type SlackHandler struct {
 	// Dedup: prevent double processing when both app_mention and message events fire
 	processedMsgs sync.Map // key: "channel:messageTS" -> struct{}
 
+	// runMentionContinuation is the agent-side fall-through for the classify-
+	// first router on @mention thread replies. Defaults to
+	// handleBotMentionInThread; tests override it to assert routing without
+	// spinning up the real agent path.
+	runMentionContinuation func(channel, threadTS, messageTS, text, user string)
 }
 
 // NewSlackHandler creates a new Slack handler. The supplied caller is forwarded
@@ -55,7 +60,7 @@ func NewSlackHandler(
 	skillService services.SkillIncidentManager,
 	oneShotCaller services.OneShotLLMCaller,
 ) *SlackHandler {
-	return &SlackHandler{
+	h := &SlackHandler{
 		client:         client,
 		agentExecutor:  agentExecutor,
 		agentWSHandler: agentWSHandler,
@@ -63,6 +68,8 @@ func NewSlackHandler(
 		alertChannels:  make(map[string]*database.AlertSourceInstance),
 		alertExtractor: extraction.NewAlertExtractor(oneShotCaller),
 	}
+	h.runMentionContinuation = h.handleBotMentionInThread
+	return h
 }
 
 // SetAlertHandler sets the alert handler for processing Slack channel alerts
@@ -287,6 +294,39 @@ func (h *SlackHandler) fetchThreadParentText(channelID, threadTS string) string 
 	return extractSlackMessageText(msgs[0])
 }
 
+// routeBotMentionThreadReply is the classify-first entry point for an @mention
+// thread reply in an incident thread. Confident operator feedback short-circuits
+// to persist + 👍 + ack; every other branch (low confidence, classifier error,
+// worker offline, no incident match, empty text, classifier/memory manager
+// unavailable) falls through to the existing agent continuation path via
+// runMentionContinuation.
+//
+// Dedup uses the same key shape as handleAppMention / handleBotMentionInThread
+// so duplicate MessageEvent / AppMentionEvent pairs are deduped at the entry.
+// The classifier round-trip runs in a goroutine because Slack's Socket Mode
+// handler thread must not block on an LLM call.
+func (h *SlackHandler) routeBotMentionThreadReply(channel, threadTS, messageTS, text, user string) {
+	dedupeKey := channel + ":" + messageTS
+	if _, loaded := h.processedMsgs.LoadOrStore(dedupeKey, struct{}{}); loaded {
+		slog.Info("skipping duplicate routed mention processing", "dedupe_key", dedupeKey)
+		return
+	}
+	time.AfterFunc(60*time.Second, func() {
+		h.processedMsgs.Delete(dedupeKey)
+	})
+
+	go func() {
+		verdict, incident, err := h.classifyThreadReplyForFeedback(threadTS, text)
+		if err == nil && incident != nil && verdict.IsConfidentFeedback() {
+			h.persistFeedbackAndAck(channel, threadTS, messageTS, text, verdict, incident)
+			return
+		}
+		if h.runMentionContinuation != nil {
+			h.runMentionContinuation(channel, threadTS, messageTS, text, user)
+		}
+	}()
+}
+
 // handleBotMentionInThread processes a human @mention of the bot in an alert channel thread.
 // It strips the mention, fetches the parent message for context, and processes via processMessage.
 // Uses dedup to avoid double-processing when both app_mention and message events fire.
@@ -360,7 +400,7 @@ func (h *SlackHandler) handleMessage(event *slackevents.MessageEvent) {
 			// other thread replies (bot status updates, escalations, human chat).
 			if h.botUserID != "" && event.SubType == "" && event.User != "" &&
 				strings.Contains(event.Text, fmt.Sprintf("<@%s>", h.botUserID)) {
-				h.handleBotMentionInThread(event.Channel, event.ThreadTimeStamp, event.TimeStamp, event.Text, event.User)
+				h.routeBotMentionThreadReply(event.Channel, event.ThreadTimeStamp, event.TimeStamp, event.Text, event.User)
 				return
 			}
 			// Non-mention thread reply on an incident thread: route to the

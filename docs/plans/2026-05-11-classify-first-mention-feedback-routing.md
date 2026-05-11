@@ -47,12 +47,12 @@ Files:
 Files:
 - Modify: `internal/handlers/slack.go`
 
-- [ ] Add `runMentionContinuation func(channel, threadTS, messageTS, text, user string)` field on `SlackHandler`. Initialize it in the existing `SlackHandler` constructor (or first-use site) to `h.handleBotMentionInThread`.
-- [ ] Add method `routeBotMentionThreadReply(channel, threadTS, messageTS, text, user string)`:
+- [x] Add `runMentionContinuation func(channel, threadTS, messageTS, text, user string)` field on `SlackHandler`. Initialize it in the existing `SlackHandler` constructor (or first-use site) to `h.handleBotMentionInThread`.
+- [x] Add method `routeBotMentionThreadReply(channel, threadTS, messageTS, text, user string)`:
   - Dedup using `h.processedMsgs` with key `channel + ":" + messageTS`; on duplicate, return. Schedule cleanup with `time.AfterFunc(60*time.Second, …)` (or the equivalent goroutine+sleep pattern used at slack.go:301) to delete the key.
   - Spawn a goroutine that calls `classifyThreadReplyForFeedback`. On confident feedback (`err == nil && incident != nil && verdict.IsConfidentFeedback()`) call `persistFeedbackAndAck`. Otherwise call `h.runMentionContinuation(channel, threadTS, messageTS, text, user)`.
-- [ ] Replace the inline `h.handleBotMentionInThread(...)` call at slack.go:363 with `h.routeBotMentionThreadReply(event.Channel, event.ThreadTimeStamp, event.TimeStamp, event.Text, event.User)`. Leave `handleBotMentionInThread`'s own internal dedup intact — duplicate `LoadOrStore` from the inner call is a defensive no-op.
-- [ ] Run `make test` — no test should regress; agent path remains the default.
+- [x] Replace the inline `h.handleBotMentionInThread(...)` call at slack.go:363 with `h.routeBotMentionThreadReply(event.Channel, event.ThreadTimeStamp, event.TimeStamp, event.Text, event.User)`. Leave `handleBotMentionInThread`'s own internal dedup intact — duplicate `LoadOrStore` from the inner call is a defensive no-op.
+- [x] Run `make test` — no test should regress; agent path remains the default.
 
 ### Task 3: Tests for the new router
 
