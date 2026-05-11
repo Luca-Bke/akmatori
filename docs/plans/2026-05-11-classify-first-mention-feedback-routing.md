@@ -37,10 +37,10 @@ This plan makes @mention thread replies classify-first: confident feedback short
 Files:
 - Modify: `internal/handlers/slack_feedback.go`
 
-- [ ] Extract `classifyThreadReplyForFeedback(threadTS, text string) (services.FeedbackVerdict, *database.Incident, error)` covering: precondition checks (classifier/memoryManager nil → return sentinel), text trim/empty check, `lookupIncidentByThread`, mention-strip (`strings.Replace` with `<@h.botUserID>` then `TrimSpace`) prior to classifier input, and `feedbackClassifier.Classify` call. Return the verdict, the incident, and a non-nil error for every fall-through case (so callers can branch on `err != nil`).
-- [ ] Extract `persistFeedbackAndAck(channel, threadTS, messageTS, originalText string, verdict services.FeedbackVerdict, incident *database.Incident)` covering: `buildFeedbackMemory(originalText, …)`, `memoryManager.UpsertByName`, slog.Info, reaction (`+1`), threaded ack (`Thanks — saved to memory as …`).
-- [ ] Reduce `maybeCaptureSlackFeedback` to: call `classifyThreadReplyForFeedback`; on error or non-confident verdict return silently; otherwise call `persistFeedbackAndAck` with the original (un-mention-stripped) text so the persisted memory body matches what the operator typed.
-- [ ] Run `make test` — existing `slack_feedback_test.go` and `slack_test.go` must pass with no behavior change for the non-mention path.
+- [x] Extract `classifyThreadReplyForFeedback(threadTS, text string) (services.FeedbackVerdict, *database.Incident, error)` covering: precondition checks (classifier/memoryManager nil → return sentinel), text trim/empty check, `lookupIncidentByThread`, mention-strip (`strings.Replace` with `<@h.botUserID>` then `TrimSpace`) prior to classifier input, and `feedbackClassifier.Classify` call. Return the verdict, the incident, and a non-nil error for every fall-through case (so callers can branch on `err != nil`).
+- [x] Extract `persistFeedbackAndAck(channel, threadTS, messageTS, originalText string, verdict services.FeedbackVerdict, incident *database.Incident)` covering: `buildFeedbackMemory(originalText, …)`, `memoryManager.UpsertByName`, slog.Info, reaction (`+1`), threaded ack (`Thanks — saved to memory as …`).
+- [x] Reduce `maybeCaptureSlackFeedback` to: call `classifyThreadReplyForFeedback`; on error or non-confident verdict return silently; otherwise call `persistFeedbackAndAck` with the original (un-mention-stripped) text so the persisted memory body matches what the operator typed.
+- [x] Run `make test` — existing `slack_feedback_test.go` and `slack_test.go` must pass with no behavior change for the non-mention path.
 
 ### Task 2: Add classify-first router for @mention thread replies
 

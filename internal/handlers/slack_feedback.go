@@ -25,15 +25,39 @@ const feedbackReaction = "+1"
 // All branches are intentionally fire-and-forget — Slack's Socket Mode
 // handler thread cannot afford to block on an LLM round-trip.
 func (h *SlackHandler) maybeCaptureSlackFeedback(channel, threadTS, messageTS, text, user string) {
-	if h.feedbackClassifier == nil || h.memoryManager == nil {
-		return
-	}
 	if user == h.botUserID {
 		return
 	}
+	verdict, incident, err := h.classifyThreadReplyForFeedback(threadTS, text)
+	if err != nil {
+		return
+	}
+	if !verdict.IsConfidentFeedback() {
+		// Silent on negatives by design: classifying every thread reply is fine,
+		// noisy logging is not.
+		return
+	}
+	h.persistFeedbackAndAck(channel, threadTS, messageTS, text, verdict, incident)
+}
+
+// classifyThreadReplyForFeedback resolves a thread reply to an incident and
+// runs the LLM-backed feedback classifier against the mention-stripped text.
+// Returns a non-nil error for every fall-through case (nil deps, empty text,
+// no incident match, classifier failure) so callers can `if err != nil` and
+// route to the agent path. ErrWorkerNotConnected is surfaced verbatim.
+func (h *SlackHandler) classifyThreadReplyForFeedback(threadTS, text string) (services.FeedbackVerdict, *database.Incident, error) {
+	if h.feedbackClassifier == nil || h.memoryManager == nil {
+		return services.FeedbackVerdict{}, nil, fmt.Errorf("feedback classifier or memory manager unavailable")
+	}
 	clean := strings.TrimSpace(text)
 	if clean == "" {
-		return
+		return services.FeedbackVerdict{}, nil, fmt.Errorf("empty text")
+	}
+	if h.botUserID != "" {
+		clean = strings.TrimSpace(strings.Replace(clean, fmt.Sprintf("<@%s>", h.botUserID), "", 1))
+	}
+	if clean == "" {
+		return services.FeedbackVerdict{}, nil, fmt.Errorf("text empty after mention strip")
 	}
 
 	// Resolve the thread to an incident. Two routes — DM-originated incidents
@@ -42,25 +66,28 @@ func (h *SlackHandler) maybeCaptureSlackFeedback(channel, threadTS, messageTS, t
 	incident, err := lookupIncidentByThread(threadTS)
 	if err != nil {
 		// No incident → not a thread the classifier should fire on.
-		return
+		return services.FeedbackVerdict{}, nil, err
 	}
 
 	verdict, err := h.feedbackClassifier.Classify(context.Background(), clean, incident)
 	if err != nil {
 		if errors.Is(err, services.ErrWorkerNotConnected) {
 			slog.Debug("feedback classifier skipped: worker offline", "thread", threadTS)
-			return
+		} else {
+			slog.Warn("feedback classifier failed", "thread", threadTS, "err", err)
 		}
-		slog.Warn("feedback classifier failed", "thread", threadTS, "err", err)
-		return
+		return services.FeedbackVerdict{}, incident, err
 	}
-	if !verdict.IsConfidentFeedback() {
-		// Silent on negatives by design: classifying every thread reply is fine,
-		// noisy logging is not.
-		return
-	}
+	return verdict, incident, nil
+}
 
-	mem := buildFeedbackMemory(clean, verdict, incident.UUID)
+// persistFeedbackAndAck writes the feedback memory and posts the operator-
+// facing ack (reaction + threaded confirmation). Best-effort: a failed
+// reaction or post must not roll back the persisted memory. The
+// `originalText` argument carries the message body verbatim (un-mention-
+// stripped) so the persisted memory reflects what the operator typed.
+func (h *SlackHandler) persistFeedbackAndAck(channel, threadTS, messageTS, originalText string, verdict services.FeedbackVerdict, incident *database.Incident) {
+	mem := buildFeedbackMemory(originalText, verdict, incident.UUID)
 	if _, err := h.memoryManager.UpsertByName(mem); err != nil {
 		slog.Warn("feedback persist failed", "thread", threadTS, "incident", incident.UUID, "err", err)
 		return
