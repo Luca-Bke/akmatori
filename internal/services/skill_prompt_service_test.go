@@ -527,6 +527,11 @@ func TestGenerateToolUsageExample_NewToolTypes(t *testing.T) {
 				"grafana.get_alert_instances",
 			},
 			expectRequired: []string{"uid*", "datasource_uid*", "expr*"},
+			expectLiteral: []string{
+				"`silence_alert` **(write)**",
+				"`create_annotation` **(write)**",
+				"**(write)** marks methods that mutate state",
+			},
 		},
 		{
 			toolType:    "catchpoint",
@@ -542,6 +547,11 @@ func TestGenerateToolUsageExample_NewToolTypes(t *testing.T) {
 				"catchpoint.acknowledge_alerts",
 			},
 			expectRequired: []string{"alert_ids*", "action*", "test_ids*"},
+			expectLiteral: []string{
+				"`acknowledge_alerts` **(write)**",
+				"`run_instant_test` **(write)**",
+				"`assignee` is required when `action=\"assign\"`",
+			},
 		},
 		{
 			toolType:    "pagerduty",
@@ -557,8 +567,16 @@ func TestGenerateToolUsageExample_NewToolTypes(t *testing.T) {
 				"pagerduty.send_event",
 			},
 			expectRequired: []string{"incident_id*", "requester_email*", "routing_key*", "event_action*"},
-			// Catches accidental edits to the `%%` escape in send_event's summary.
-			expectLiteral: []string{`"summary": "Disk usage > 90%"`},
+			expectLiteral: []string{
+				`"summary": "Disk usage > 90%"`,
+				"`acknowledge_incident` **(write)**",
+				"`resolve_incident` **(write)**",
+				"`reassign_incident` **(write)**",
+				"`add_incident_note` **(write)**",
+				"`send_event` **(write)**",
+				"`summary` is required when `event_action=\"trigger\"`",
+				"`dedup_key` is required when `event_action=\"acknowledge\"`",
+			},
 		},
 		{
 			toolType:    "clickhouse",
@@ -607,6 +625,9 @@ func TestGenerateToolUsageExample_NewToolTypes(t *testing.T) {
 			},
 			expectRequired: []string{"namespace*", "name*", "path*"},
 			expectFooter:   "All endpoints are read-only GET requests.",
+			expectLiteral: []string{
+				"`container` is required for multi-container pods",
+			},
 		},
 	}
 

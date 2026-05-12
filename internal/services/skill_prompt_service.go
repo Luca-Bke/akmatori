@@ -455,14 +455,15 @@ gateway_call("postgresql.get_database_stats", {}, "%s")
 - `+"`get_alert_rules`"+`: (no parameters)
 - `+"`get_alert_instances`"+`: filter, silenced, inhibited, active
 - `+"`get_alert_rule`"+`: uid*
-- `+"`silence_alert`"+`: matchers*, starts_at*, ends_at*, created_by*, comment*
+- `+"`silence_alert`"+` **(write)**: matchers*, starts_at*, ends_at*, created_by*, comment*
 - `+"`list_data_sources`"+`: (no parameters)
 - `+"`query_data_source`"+`: datasource_uid*, queries* | from, to
 - `+"`query_prometheus`"+`: datasource_uid*, expr* | start, end, step, instant, range, from, to
 - `+"`query_loki`"+`: datasource_uid*, expr* | limit, direction, start, end, from, to
-- `+"`create_annotation`"+`: text* | dashboard_id, panel_id, tags, time, time_end
+- `+"`create_annotation`"+` **(write)**: text* | dashboard_id, panel_id, tags, time, time_end
 - `+"`get_annotations`"+`: from, to, dashboard_id, panel_id, tags, limit, type
 (* = required)
+**(write)** marks methods that mutate state — only call after confirming intent.
 
 Usage (via gateway_call):
 `+"```"+`
@@ -489,9 +490,10 @@ gateway_call("grafana.get_alert_instances", {"active": true}, "%s")
 - `+"`get_internet_outages`"+`: start_time, end_time, asn, country, page_number, page_size
 - `+"`get_nodes`"+`: page_number, page_size
 - `+"`get_node_alerts`"+`: node_ids, start_time, end_time, page_number, page_size
-- `+"`acknowledge_alerts`"+`: alert_ids*, action* | assignee
-- `+"`run_instant_test`"+`: test_id*
+- `+"`acknowledge_alerts`"+` **(write)**: alert_ids*, action* | assignee — `+"`assignee`"+` is required when `+"`action=\"assign\"`"+`
+- `+"`run_instant_test`"+` **(write)**: test_id*
 (* = required)
+**(write)** marks methods that mutate state — only call after confirming intent.
 
 Usage (via gateway_call):
 `+"```"+`
@@ -516,12 +518,13 @@ gateway_call("catchpoint.acknowledge_alerts", {"alert_ids": "12345", "action": "
 - `+"`get_on_calls`"+`: schedule_ids, escalation_policy_ids, since, until
 - `+"`get_escalation_policies`"+`: query, limit, offset
 - `+"`list_recent_changes`"+`: since, until, limit, offset
-- `+"`acknowledge_incident`"+`: incident_id*, requester_email*
-- `+"`resolve_incident`"+`: incident_id*, requester_email*
-- `+"`reassign_incident`"+`: incident_id*, requester_email*, assignee_ids* | escalation_policy_id
-- `+"`add_incident_note`"+`: incident_id*, requester_email*, content*
-- `+"`send_event`"+`: routing_key*, event_action* | dedup_key, summary, severity, source, component, group, class, custom_details
+- `+"`acknowledge_incident`"+` **(write)**: incident_id*, requester_email*
+- `+"`resolve_incident`"+` **(write)**: incident_id*, requester_email*
+- `+"`reassign_incident`"+` **(write)**: incident_id*, requester_email*, assignee_ids* | escalation_policy_id
+- `+"`add_incident_note`"+` **(write)**: incident_id*, requester_email*, content*
+- `+"`send_event`"+` **(write)**: routing_key*, event_action* | dedup_key, summary, severity, source, component, group, class, custom_details — `+"`summary`"+` is required when `+"`event_action=\"trigger\"`"+`; `+"`dedup_key`"+` is required when `+"`event_action=\"acknowledge\"`"+` or `+"`\"resolve\"`"+`
 (* = required)
+**(write)** marks methods that mutate state — only call after confirming intent.
 
 Usage (via gateway_call):
 `+"```"+`
@@ -608,7 +611,7 @@ gateway_call("netbox.api_request", {"path": "dcim/power-feeds/", "query_params":
 - `+"`get_namespaces`"+`: label_selector, field_selector, limit
 - `+"`get_pods`"+`: namespace* | name, label_selector, field_selector, limit
 - `+"`get_pod_detail`"+`: namespace*, name*
-- `+"`get_pod_logs`"+`: namespace*, name* | container, tail_lines, since_seconds, previous
+- `+"`get_pod_logs`"+`: namespace*, name* | container, tail_lines, since_seconds, previous — `+"`container`"+` is required for multi-container pods
 - `+"`get_events`"+`: namespace* | label_selector, field_selector, limit
 - `+"`get_deployments`"+`: namespace* | name, label_selector, field_selector, limit
 - `+"`get_deployment_detail`"+`: namespace*, name*
