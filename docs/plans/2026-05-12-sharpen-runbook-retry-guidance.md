@@ -30,10 +30,10 @@ When QMD's initial runbook search returns no usable hit, the agent's retry #1 cu
 Files:
 - Modify: `internal/executor/executor.go`
 
-- [ ] Replace the existing "If results are empty, retry with a different angle..." block (lines 156-160) with the new wording from /tmp/plan.md: introduce the `If results are empty OR the top hit's title is not obviously related` condition, promote the verbatim-source-phrase angle to a conditional MUST gated on the presence of an `Original alert text:` block, and demote the question-rephrase / target-service angles to retry #2
-- [ ] Keep the rest of `PrependGuidance` intact: current time line, single `qmd.query` triplet invocation, `"collections": ["runbooks"]` filter, `qmd.get` follow-up, and the trailing `Please help with the following incident or request:` framing
-- [ ] Add test `TestPrependGuidance_RequiresSourcePhraseOnRetry` in `internal/executor/executor_test.go` asserting the output contains the substrings `"Original alert text:"`, `"retry #1 MUST"`, and `"verbatim"`
-- [ ] Run `go test ./internal/executor/...` — new test passes and the two existing `TestPrependGuidance_*` tests still pass
+- [x] Replace the existing "If results are empty, retry with a different angle..." block (lines 156-160) with the new wording from /tmp/plan.md: introduce the `If results are empty OR the top hit's title is not obviously related` condition, promote the verbatim-source-phrase angle to a conditional MUST gated on the presence of an `Original alert text:` block, and demote the question-rephrase / target-service angles to retry #2
+- [x] Keep the rest of `PrependGuidance` intact: current time line, single `qmd.query` triplet invocation, `"collections": ["runbooks"]` filter, `qmd.get` follow-up, and the trailing `Please help with the following incident or request:` framing
+- [x] Add test `TestPrependGuidance_RequiresSourcePhraseOnRetry` in `internal/executor/executor_test.go` asserting the output contains the substrings `"Original alert text:"`, `"retry #1 MUST"`, and `"verbatim"`
+- [x] Run `go test ./internal/executor/...` — new test passes and the two existing `TestPrependGuidance_*` tests still pass
 
 ### Task 2: Mirror the same change in DefaultIncidentManagerPrompt
 

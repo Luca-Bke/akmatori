@@ -60,3 +60,21 @@ func TestPrependGuidance_SingleQMDQueryWithOrderedTriplet(t *testing.T) {
 		t.Errorf("triplet must appear in lex→vec→hyde order, got lex=%d vec=%d hyde=%d", lexIdx, vecIdx, hydeIdx)
 	}
 }
+
+// TestPrependGuidance_RequiresSourcePhraseOnRetry pins the conditional MUST
+// that retry #1 quote a verbatim sender/source/channel phrase from the
+// Original alert text: block. Without this rule, retry #1 tends to rephrase
+// the same structured summary and miss runbooks whose titles mirror the
+// upstream alert phrasing (e.g., "upstream channel alerts").
+func TestPrependGuidance_RequiresSourcePhraseOnRetry(t *testing.T) {
+	out := PrependGuidance("test task")
+	for _, want := range []string{
+		"Original alert text:",
+		"retry #1 MUST",
+		"verbatim",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("PrependGuidance() missing %q\nfull output:\n%s", want, out)
+		}
+	}
+}
