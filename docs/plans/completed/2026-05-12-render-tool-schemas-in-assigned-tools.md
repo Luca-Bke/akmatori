@@ -69,8 +69,8 @@ Files:
 
 ### Task 5: Update documentation
 
-- [ ] No CLAUDE.md update required — this change is internal to existing prompt-rendering and does not introduce new patterns or conventions
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] No CLAUDE.md update required — this change is internal to existing prompt-rendering and does not introduce new patterns or conventions
+- [x] Move this plan to `docs/plans/completed/`
 
 ## Post-Completion (manual, not agent-automated)
 
