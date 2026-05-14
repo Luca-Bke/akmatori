@@ -160,7 +160,7 @@ Files:
 
 ### Task 7: Update documentation
 
-- [ ] Update CLAUDE.md: add `jira` to the tools list in `mcp-gateway/internal/tools/` directory map
-- [ ] Update CLAUDE.md: add a "Jira Patterns" subsection in the "External API Integration" block describing auth modes, the `jira_allow_writes` default-off behavior, supported deployments (Cloud + Server/DC), and the API-version selector
-- [ ] Update CLAUDE.md: add `jira` to the implementation reference list under `mcp-gateway/internal/tools/jira/`
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update CLAUDE.md: add `jira` to the tools list in `mcp-gateway/internal/tools/` directory map
+- [x] Update CLAUDE.md: add a "Jira Patterns" subsection in the "External API Integration" block describing auth modes, the `jira_allow_writes` default-off behavior, supported deployments (Cloud + Server/DC), and the API-version selector
+- [x] Update CLAUDE.md: add `jira` to the implementation reference list under `mcp-gateway/internal/tools/jira/`
+- [x] Move this plan to `docs/plans/completed/`

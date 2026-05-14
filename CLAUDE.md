@@ -40,7 +40,7 @@ Akmatori is an AI-powered AIOps platform that receives alerts from monitoring sy
 │       ├── cache/          # Generic TTL cache
 │       ├── mcpproxy/       # MCP proxy: connection pool + handler for external MCP servers
 │       ├── ratelimit/      # Token bucket rate limiter
-│       └── tools/          # SSH, Zabbix, VictoriaMetrics, PostgreSQL, ClickHouse, Grafana, Catchpoint, PagerDuty, NetBox, Kubernetes, and HTTP connector implementations
+│       └── tools/          # SSH, Zabbix, VictoriaMetrics, PostgreSQL, ClickHouse, Grafana, Catchpoint, PagerDuty, NetBox, Kubernetes, Jira, and HTTP connector implementations
 ├── web/                    # React frontend
 ├── qmd/                    # QMD search sidecar (Dockerfile, config, entrypoint)
 ├── docs/                   # OpenAPI specs (swagger at /api/docs)
@@ -137,8 +137,8 @@ Tools are registered in `gateway-tools.ts` and talk to the MCP Gateway through `
 | Tool | File | Purpose |
 |------|------|---------|
 | `gateway_call` | `src/gateway-tools.ts` | Call any MCP Gateway tool by name with optional instance hint |
-| `list_tool_types` | `src/gateway-tools.ts` | List all available tool types (e.g., `ssh`, `zabbix`, `victoria_metrics`, `postgresql`, `clickhouse`, `grafana`, `pagerduty`, `netbox`, `kubernetes`, `qmd`) |
-| `list_tools_for_tool_type` | `src/gateway-tools.ts` | List all tools of a given type (e.g., `ssh`, `zabbix`, `victoria_metrics`, `postgresql`, `clickhouse`, `grafana`, `pagerduty`, `netbox`, `kubernetes`) |
+| `list_tool_types` | `src/gateway-tools.ts` | List all available tool types (e.g., `ssh`, `zabbix`, `victoria_metrics`, `postgresql`, `clickhouse`, `grafana`, `pagerduty`, `netbox`, `kubernetes`, `jira`, `qmd`) |
+| `list_tools_for_tool_type` | `src/gateway-tools.ts` | List all tools of a given type (e.g., `ssh`, `zabbix`, `victoria_metrics`, `postgresql`, `clickhouse`, `grafana`, `pagerduty`, `netbox`, `kubernetes`, `jira`) |
 | `get_tool_detail` | `src/gateway-tools.ts` | Get full JSON schema for a specific tool |
 | `execute_script` | `src/gateway-tools.ts` | Run JavaScript in isolated vm with injected `gateway_call()`, `list_tools_for_tool_type()`, scoped `fs` |
 
@@ -487,6 +487,18 @@ Kubernetes is a read-only diagnostics tool type following the NetBox pattern wit
 - Generic `api_request` method allows querying any K8s API GET endpoint (path must start with `/api` or `/apis`)
 - Honor proxy settings only when `ProxySettings.K8sEnabled` is true
 
+### Jira Patterns
+
+Jira is a hybrid read/write tool type supporting both Atlassian Cloud and self-hosted Jira Server/Data Center, following the NetBox/PagerDuty pattern with caching, rate limiting, and proxy support.
+
+- Tool namespace: `jira.*`
+- Deployments: Atlassian Cloud (`/rest/api/3`) and self-hosted Jira Server/Data Center (`/rest/api/2`); `jira_api_version` selects the base path (default `"3"`)
+- Auth: three modes via `jira_auth_type` — `cloud_basic` (email + API token over Basic auth, for Cloud), `server_bearer` (Personal Access Token via `Authorization: Bearer …`, for Server/DC), `basic` (generic username + password/token over Basic auth)
+- Read paths (`search_issues`, `get_issue`, `get_issue_comments`, `get_issue_transitions`, `get_issue_changelog`, `get_projects`, `get_project`, `search_users`, `api_request`) use `cachedGet(...)` with 15-120s TTL depending on volatility
+- Write paths (`add_comment`, `transition_issue`, `create_issue`, `update_issue`) are gated by per-instance `jira_allow_writes` (default `false`); when disabled they short-circuit with an explicit error naming the setting. Writes are never cached.
+- Generic `api_request` method allows GET passthrough to any `/rest/...` endpoint
+- Honor proxy settings only when `ProxySettings.JiraEnabled` is true
+
 ### Implementation Reference
 
 - `mcp-gateway/internal/cache/cache.go` - Generic TTL cache with background cleanup
@@ -500,6 +512,7 @@ Kubernetes is a read-only diagnostics tool type following the NetBox pattern wit
 - `mcp-gateway/internal/tools/pagerduty/` - PagerDuty integration with caching and rate limiting (incidents, services, on-call, events)
 - `mcp-gateway/internal/tools/netbox/` - NetBox CMDB integration with caching and rate limiting (DCIM, IPAM, circuits, virtualization, tenancy)
 - `mcp-gateway/internal/tools/k8s/` - Kubernetes read-only diagnostics with caching and rate limiting (pods, deployments, nodes, services, events, logs)
+- `mcp-gateway/internal/tools/jira/` - Jira integration (Cloud + Server/DC) with caching, rate limiting, and write-gated mutations (search, issues, comments, transitions, projects, users)
 - `mcp-gateway/internal/tools/httpconnector/` - Declarative HTTP connector executor with auth injection
 - `mcp-gateway/internal/mcpproxy/` - Connection pool and proxy handler for external MCP servers
 - `mcp-gateway/internal/auth/` - Per-incident tool authorization (allowlist enforcement)
