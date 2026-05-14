@@ -142,13 +142,13 @@ Files:
 Files:
 - Modify: `mcp-gateway/internal/tools/registry.go`
 
-- [ ] Add constants `JiraRatePerSecond = 10`, `JiraBurstCapacity = 20`
-- [ ] Add `jiraTool *jira.JiraTool` and `jiraLimit *ratelimit.Limiter` fields to `Registry`
-- [ ] In `RegisterAllTools()`, construct `r.jiraLimit` and call `r.registerJiraTools()`
-- [ ] In registry `Stop()`, call `r.jiraTool.Stop()`
-- [ ] Implement `registerJiraTools()` registering all 13 MCP tools with full `InputSchema` definitions (mirroring the schemas.go function list, including `Required` arrays)
-- [ ] Tests in `registry_test.go`: verify all 13 jira.* tools registered, write-tool descriptions mention `jira_allow_writes`
-- [ ] Run `make test-mcp` — must pass before Task 6
+- [x] Add constants `JiraRatePerSecond = 10`, `JiraBurstCapacity = 20`
+- [x] Add `jiraTool *jira.JiraTool` and `jiraLimit *ratelimit.Limiter` fields to `Registry`
+- [x] In `RegisterAllTools()`, construct `r.jiraLimit` and call `r.registerJiraTools()`
+- [x] In registry `Stop()`, call `r.jiraTool.Stop()`
+- [x] Implement `registerJiraTools()` registering all 13 MCP tools with full `InputSchema` definitions (mirroring the schemas.go function list, including `Required` arrays)
+- [x] Tests in `registry_test.go`: verify all 13 jira.* tools registered, write-tool descriptions mention `jira_allow_writes`
+- [x] Run `make test-mcp` — must pass before Task 6
 
 ### Task 6: Verify acceptance criteria
 

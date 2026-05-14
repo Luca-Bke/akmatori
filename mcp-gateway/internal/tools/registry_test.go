@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"testing"
 
 	"github.com/akmatori/mcp-gateway/internal/database"
@@ -858,3 +859,217 @@ func TestRegisterPagerDutyTools_StopCleanup(t *testing.T) {
 	// Stop should not panic even with a live tool
 	registry.Stop()
 }
+
+func TestRegisterJiraTools_AllToolsRegistered(t *testing.T) {
+	stdLogger := log.New(io.Discard, "", 0)
+	server := mcp.NewServer("test", "1.0.0", stdLogger)
+	registry := NewRegistry(server, stdLogger)
+
+	registry.jiraLimit = ratelimit.New(JiraRatePerSecond, JiraBurstCapacity)
+	registry.registerJiraTools()
+
+	expectedTools := []string{
+		// Read
+		"jira.search_issues",
+		"jira.get_issue",
+		"jira.get_issue_comments",
+		"jira.get_issue_transitions",
+		"jira.get_issue_changelog",
+		"jira.get_projects",
+		"jira.get_project",
+		"jira.search_users",
+		"jira.api_request",
+		// Write
+		"jira.add_comment",
+		"jira.transition_issue",
+		"jira.create_issue",
+		"jira.update_issue",
+	}
+
+	tools := server.Tools()
+	for _, name := range expectedTools {
+		if _, ok := tools[name]; !ok {
+			t.Errorf("expected tool %q to be registered", name)
+		}
+	}
+}
+
+func TestRegisterJiraTools_ToolCount(t *testing.T) {
+	stdLogger := log.New(io.Discard, "", 0)
+	server := mcp.NewServer("test", "1.0.0", stdLogger)
+	registry := NewRegistry(server, stdLogger)
+
+	registry.jiraLimit = ratelimit.New(JiraRatePerSecond, JiraBurstCapacity)
+	registry.registerJiraTools()
+
+	tools := server.Tools()
+	count := 0
+	for name := range tools {
+		if len(name) > 5 && name[:5] == "jira." {
+			count++
+		}
+	}
+	if count != 13 {
+		t.Errorf("expected 13 jira tools, got %d", count)
+	}
+}
+
+func TestRegisterJiraTools_InputSchemas(t *testing.T) {
+	stdLogger := log.New(io.Discard, "", 0)
+	server := mcp.NewServer("test", "1.0.0", stdLogger)
+	registry := NewRegistry(server, stdLogger)
+
+	registry.jiraLimit = ratelimit.New(JiraRatePerSecond, JiraBurstCapacity)
+	registry.registerJiraTools()
+
+	tools := server.Tools()
+
+	// search_issues requires jql
+	si := tools["jira.search_issues"]
+	if len(si.InputSchema.Required) != 1 || si.InputSchema.Required[0] != "jql" {
+		t.Errorf("search_issues: expected required [jql], got %v", si.InputSchema.Required)
+	}
+	if _, ok := si.InputSchema.Properties["jql"]; !ok {
+		t.Error("search_issues: expected 'jql' property")
+	}
+	if _, ok := si.InputSchema.Properties["max_results"]; !ok {
+		t.Error("search_issues: expected 'max_results' property")
+	}
+
+	// get_issue requires key
+	gi := tools["jira.get_issue"]
+	if len(gi.InputSchema.Required) != 1 || gi.InputSchema.Required[0] != "key" {
+		t.Errorf("get_issue: expected required [key], got %v", gi.InputSchema.Required)
+	}
+
+	// get_projects has no required params
+	gp := tools["jira.get_projects"]
+	if len(gp.InputSchema.Required) != 0 {
+		t.Errorf("get_projects: expected no required params, got %v", gp.InputSchema.Required)
+	}
+	if _, ok := gp.InputSchema.Properties["query"]; !ok {
+		t.Error("get_projects: expected 'query' property")
+	}
+
+	// search_users requires query
+	su := tools["jira.search_users"]
+	if len(su.InputSchema.Required) != 1 || su.InputSchema.Required[0] != "query" {
+		t.Errorf("search_users: expected required [query], got %v", su.InputSchema.Required)
+	}
+
+	// api_request requires path; params is an object
+	ar := tools["jira.api_request"]
+	if len(ar.InputSchema.Required) != 1 || ar.InputSchema.Required[0] != "path" {
+		t.Errorf("api_request: expected required [path], got %v", ar.InputSchema.Required)
+	}
+	if prop, ok := ar.InputSchema.Properties["params"]; !ok {
+		t.Error("api_request: expected 'params' property")
+	} else if prop.Type != "object" {
+		t.Errorf("api_request: expected 'params' type 'object', got %q", prop.Type)
+	}
+
+	// add_comment requires key and body
+	ac := tools["jira.add_comment"]
+	if len(ac.InputSchema.Required) != 2 {
+		t.Errorf("add_comment: expected 2 required params, got %d", len(ac.InputSchema.Required))
+	}
+
+	// transition_issue requires key and transition_id
+	ti := tools["jira.transition_issue"]
+	if len(ti.InputSchema.Required) != 2 {
+		t.Errorf("transition_issue: expected 2 required params, got %d", len(ti.InputSchema.Required))
+	}
+	if prop, ok := ti.InputSchema.Properties["fields"]; !ok {
+		t.Error("transition_issue: expected 'fields' property")
+	} else if prop.Type != "object" {
+		t.Errorf("transition_issue: expected 'fields' type 'object', got %q", prop.Type)
+	}
+
+	// create_issue requires project_key, issue_type, summary
+	ci := tools["jira.create_issue"]
+	if len(ci.InputSchema.Required) != 3 {
+		t.Errorf("create_issue: expected 3 required params, got %d", len(ci.InputSchema.Required))
+	}
+	for _, req := range []string{"project_key", "issue_type", "summary"} {
+		found := false
+		for _, r := range ci.InputSchema.Required {
+			if r == req {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("create_issue: expected %q in required, got %v", req, ci.InputSchema.Required)
+		}
+	}
+
+	// update_issue requires key and fields; fields is object
+	ui := tools["jira.update_issue"]
+	if len(ui.InputSchema.Required) != 2 {
+		t.Errorf("update_issue: expected 2 required params, got %d", len(ui.InputSchema.Required))
+	}
+	if prop, ok := ui.InputSchema.Properties["fields"]; !ok {
+		t.Error("update_issue: expected 'fields' property")
+	} else if prop.Type != "object" {
+		t.Errorf("update_issue: expected 'fields' type 'object', got %q", prop.Type)
+	}
+}
+
+func TestRegisterJiraTools_WriteToolDescriptionsMentionAllowWrites(t *testing.T) {
+	stdLogger := log.New(io.Discard, "", 0)
+	server := mcp.NewServer("test", "1.0.0", stdLogger)
+	registry := NewRegistry(server, stdLogger)
+
+	registry.jiraLimit = ratelimit.New(JiraRatePerSecond, JiraBurstCapacity)
+	registry.registerJiraTools()
+
+	tools := server.Tools()
+	writeTools := []string{
+		"jira.add_comment",
+		"jira.transition_issue",
+		"jira.create_issue",
+		"jira.update_issue",
+	}
+	for _, name := range writeTools {
+		tool, ok := tools[name]
+		if !ok {
+			t.Errorf("expected write tool %q to be registered", name)
+			continue
+		}
+		if !strings.Contains(tool.Description, "jira_allow_writes") {
+			t.Errorf("write tool %q: description %q should mention 'jira_allow_writes'", name, tool.Description)
+		}
+	}
+}
+
+func TestRegisterJiraTools_ListToolsByType(t *testing.T) {
+	stdLogger := log.New(io.Discard, "", 0)
+	server := mcp.NewServer("test", "1.0.0", stdLogger)
+	registry := NewRegistry(server, stdLogger)
+
+	registry.jiraLimit = ratelimit.New(JiraRatePerSecond, JiraBurstCapacity)
+	registry.registerJiraTools()
+
+	results := registry.ListToolsByType("jira")
+	if len(results) != 13 {
+		t.Fatalf("expected 13 jira tools in list, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.ToolType != "jira" {
+			t.Errorf("expected tool_type 'jira', got %q", r.ToolType)
+		}
+	}
+}
+
+func TestRegisterJiraTools_StopCleanup(t *testing.T) {
+	stdLogger := log.New(io.Discard, "", 0)
+	server := mcp.NewServer("test", "1.0.0", stdLogger)
+	registry := NewRegistry(server, stdLogger)
+
+	registry.jiraLimit = ratelimit.New(JiraRatePerSecond, JiraBurstCapacity)
+	registry.registerJiraTools()
+
+	// Stop should not panic even with a live tool
+	registry.Stop()
+}
+

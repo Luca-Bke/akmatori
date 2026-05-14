@@ -18,6 +18,7 @@ import (
 	"github.com/akmatori/mcp-gateway/internal/tools/clickhouse"
 	"github.com/akmatori/mcp-gateway/internal/tools/grafana"
 	"github.com/akmatori/mcp-gateway/internal/tools/httpconnector"
+	"github.com/akmatori/mcp-gateway/internal/tools/jira"
 	"github.com/akmatori/mcp-gateway/internal/tools/k8s"
 	"github.com/akmatori/mcp-gateway/internal/tools/memory"
 	"github.com/akmatori/mcp-gateway/internal/tools/netbox"
@@ -48,6 +49,8 @@ const (
 	NetBoxBurstCapacity      = 20 // burst capacity
 	K8sRatePerSecond         = 10 // requests per second
 	K8sBurstCapacity         = 20 // burst capacity
+	JiraRatePerSecond        = 10 // requests per second
+	JiraBurstCapacity        = 20 // burst capacity
 )
 
 // Registry manages tool registration
@@ -72,6 +75,8 @@ type Registry struct {
 	netboxLimit      *ratelimit.Limiter
 	k8sTool          *k8s.K8sTool
 	k8sLimit         *ratelimit.Limiter
+	jiraTool         *jira.JiraTool
+	jiraLimit        *ratelimit.Limiter
 
 	// HTTP connector state
 	httpExecutor       *httpconnector.HTTPConnectorExecutor
@@ -162,6 +167,13 @@ func (r *Registry) RegisterAllTools() {
 	// Register Kubernetes tools with rate limiter
 	r.registerK8sTools()
 
+	// Create rate limiter for Jira: 10 req/sec, burst 20
+	r.jiraLimit = ratelimit.New(JiraRatePerSecond, JiraBurstCapacity)
+	r.logger.Printf("Jira rate limiter created: %d req/sec, burst %d", JiraRatePerSecond, JiraBurstCapacity)
+
+	// Register Jira tools with rate limiter
+	r.registerJiraTools()
+
 	r.logger.Println("All tools registered")
 }
 
@@ -194,6 +206,9 @@ func (r *Registry) Stop() {
 	if r.k8sTool != nil {
 		r.k8sTool.Stop()
 	}
+	if r.jiraTool != nil {
+		r.jiraTool.Stop()
+	}
 	if r.httpExecutor != nil {
 		r.httpExecutor.Stop()
 	}
@@ -216,6 +231,7 @@ var builtInToolNamespaces = map[string]bool{
 	"pagerduty":        true,
 	"netbox":           true,
 	"kubernetes":       true,
+	"jira":             true,
 	"qmd":             true,
 	"memory":          true,
 }
@@ -4364,4 +4380,393 @@ func (r *Registry) registerK8sTools() {
 	)
 
 	r.logger.Println("Kubernetes tools registered (17 methods)")
+}
+
+// registerJiraTools registers all Jira tool methods (9 read-only + 4 write).
+// Write methods (add_comment, transition_issue, create_issue, update_issue)
+// short-circuit with an error unless the instance's jira_allow_writes flag is true.
+func (r *Registry) registerJiraTools() {
+	r.jiraTool = jira.NewJiraTool(r.logger, r.jiraLimit)
+
+	// jira.search_issues
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.search_issues",
+			Description: "Search Jira issues with a JQL query. Supports paging via start_at / max_results (max 100).",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"jql": {
+						Type:        "string",
+						Description: "JQL query string (required)",
+					},
+					"fields": {
+						Type:        "string",
+						Description: "Comma-separated list of fields to return (e.g. 'summary,status,assignee')",
+					},
+					"expand": {
+						Type:        "string",
+						Description: "Comma-separated list of fields to expand (e.g. 'changelog,renderedFields')",
+					},
+					"start_at": {
+						Type:        "number",
+						Description: "Pagination offset (default 0)",
+					},
+					"max_results": {
+						Type:        "number",
+						Description: "Maximum number of results to return (default 50, max 100)",
+					},
+				},
+				Required: []string{"jql"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.SearchIssues(ctx, incidentID, args)
+		},
+	)
+
+	// jira.get_issue
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.get_issue",
+			Description: "Get a single Jira issue by key or ID",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Issue key or ID (required, e.g. 'PROJ-123')",
+					},
+					"fields": {
+						Type:        "string",
+						Description: "Comma-separated list of fields to return",
+					},
+					"expand": {
+						Type:        "string",
+						Description: "Comma-separated list of fields to expand (e.g. 'changelog,renderedFields')",
+					},
+				},
+				Required: []string{"key"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.GetIssue(ctx, incidentID, args)
+		},
+	)
+
+	// jira.get_issue_comments
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.get_issue_comments",
+			Description: "Get comments for a Jira issue",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Issue key or ID (required)",
+					},
+					"start_at": {
+						Type:        "number",
+						Description: "Pagination offset (default 0)",
+					},
+					"max_results": {
+						Type:        "number",
+						Description: "Maximum number of results to return (default 50, max 100)",
+					},
+				},
+				Required: []string{"key"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.GetIssueComments(ctx, incidentID, args)
+		},
+	)
+
+	// jira.get_issue_transitions
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.get_issue_transitions",
+			Description: "List available workflow transitions for a Jira issue",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Issue key or ID (required)",
+					},
+				},
+				Required: []string{"key"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.GetIssueTransitions(ctx, incidentID, args)
+		},
+	)
+
+	// jira.get_issue_changelog
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.get_issue_changelog",
+			Description: "Get the changelog (history of field changes) for a Jira issue",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Issue key or ID (required)",
+					},
+					"start_at": {
+						Type:        "number",
+						Description: "Pagination offset (default 0)",
+					},
+					"max_results": {
+						Type:        "number",
+						Description: "Maximum number of results to return (default 50, max 100)",
+					},
+				},
+				Required: []string{"key"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.GetIssueChangelog(ctx, incidentID, args)
+		},
+	)
+
+	// jira.get_projects
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.get_projects",
+			Description: "Search and list Jira projects",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"query": {
+						Type:        "string",
+						Description: "Search query to filter projects by name or key",
+					},
+					"start_at": {
+						Type:        "number",
+						Description: "Pagination offset (default 0)",
+					},
+					"max_results": {
+						Type:        "number",
+						Description: "Maximum number of results to return (default 50, max 100)",
+					},
+				},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.GetProjects(ctx, incidentID, args)
+		},
+	)
+
+	// jira.get_project
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.get_project",
+			Description: "Get a single Jira project by key or ID",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Project key or ID (required)",
+					},
+				},
+				Required: []string{"key"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.GetProject(ctx, incidentID, args)
+		},
+	)
+
+	// jira.search_users
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.search_users",
+			Description: "Search Jira users by query (username, email, or display name)",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"query": {
+						Type:        "string",
+						Description: "Search query (required)",
+					},
+					"start_at": {
+						Type:        "number",
+						Description: "Pagination offset (default 0)",
+					},
+					"max_results": {
+						Type:        "number",
+						Description: "Maximum number of results to return (default 50, max 100)",
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.SearchUsers(ctx, incidentID, args)
+		},
+	)
+
+	// jira.api_request
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.api_request",
+			Description: "Generic read-only GET request to any Jira REST endpoint (path must start with /rest/)",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"path": {
+						Type:        "string",
+						Description: "Jira REST API path starting with /rest/ (required, e.g. '/rest/api/3/myself')",
+					},
+					"params": {
+						Type:        "object",
+						Description: "Optional query parameters as a key-value map",
+					},
+				},
+				Required: []string{"path"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.APIRequest(ctx, incidentID, args)
+		},
+	)
+
+	// jira.add_comment (write)
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.add_comment",
+			Description: "Add a comment to a Jira issue. Requires jira_allow_writes=true on the instance.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Issue key or ID (required)",
+					},
+					"body": {
+						Type:        "string",
+						Description: "Comment body text or ADF object (required)",
+					},
+				},
+				Required: []string{"key", "body"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.AddComment(ctx, incidentID, args)
+		},
+	)
+
+	// jira.transition_issue (write)
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.transition_issue",
+			Description: "Move a Jira issue through a workflow transition. Requires jira_allow_writes=true on the instance.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Issue key or ID (required)",
+					},
+					"transition_id": {
+						Type:        "string",
+						Description: "Workflow transition ID (required, see jira.get_issue_transitions)",
+					},
+					"comment": {
+						Type:        "string",
+						Description: "Optional comment to add as part of the transition",
+					},
+					"fields": {
+						Type:        "object",
+						Description: "Optional fields to update as part of the transition (e.g. resolution)",
+					},
+				},
+				Required: []string{"key", "transition_id"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.TransitionIssue(ctx, incidentID, args)
+		},
+	)
+
+	// jira.create_issue (write)
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.create_issue",
+			Description: "Create a new Jira issue. Requires jira_allow_writes=true on the instance.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"project_key": {
+						Type:        "string",
+						Description: "Project key (required, e.g. 'PROJ')",
+					},
+					"issue_type": {
+						Type:        "string",
+						Description: "Issue type name (required, e.g. 'Bug', 'Task')",
+					},
+					"summary": {
+						Type:        "string",
+						Description: "Issue summary / title (required)",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Issue description text or ADF object (optional)",
+					},
+					"assignee": {
+						Type:        "string",
+						Description: "Assignee identifier (accountId for Cloud, username/name for Server/DC)",
+					},
+					"priority": {
+						Type:        "string",
+						Description: "Priority name (e.g. 'High', 'Medium')",
+					},
+					"labels": {
+						Type:        "string",
+						Description: "Comma-separated list of labels to apply to the issue",
+					},
+					"fields": {
+						Type:        "object",
+						Description: "Additional raw fields object passthrough; keys here override convenience params on conflict",
+					},
+				},
+				Required: []string{"project_key", "issue_type", "summary"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.CreateIssue(ctx, incidentID, args)
+		},
+	)
+
+	// jira.update_issue (write)
+	r.server.RegisterTool(
+		mcp.Tool{
+			Name:        "jira.update_issue",
+			Description: "Update fields on an existing Jira issue. Requires jira_allow_writes=true on the instance.",
+			InputSchema: mcp.InputSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key": {
+						Type:        "string",
+						Description: "Issue key or ID (required)",
+					},
+					"fields": {
+						Type:        "object",
+						Description: "Fields object to update (required, e.g. {\"summary\": \"new title\"})",
+					},
+				},
+				Required: []string{"key", "fields"},
+			},
+		},
+		func(ctx context.Context, incidentID string, args map[string]interface{}) (interface{}, error) {
+			return r.jiraTool.UpdateIssue(ctx, incidentID, args)
+		},
+	)
+
+	r.logger.Println("Jira tools registered (13 methods)")
 }
