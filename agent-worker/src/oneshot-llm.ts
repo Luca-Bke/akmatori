@@ -8,7 +8,7 @@
  * HTTP clients.
  */
 
-import { complete, type AssistantMessage, type Context, type Message } from "@mariozechner/pi-ai";
+import { complete, type AssistantMessage, type Context, type Message } from "@earendil-works/pi-ai";
 import type { LLMSettings, ProxyConfig } from "./types.js";
 import { applyProxyConfig } from "./proxy.js";
 import { resolveModel } from "./agent-runner.js";

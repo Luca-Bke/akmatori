@@ -19,8 +19,8 @@ import {
   createBashToolDefinition,
   getAgentDir,
   type AgentSessionEvent,
-} from "@mariozechner/pi-coding-agent";
-import { getModel, type Model, type ThinkingLevel as PiThinkingLevel } from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-coding-agent";
+import { getModel, type Model, type ThinkingLevel as PiThinkingLevel } from "@earendil-works/pi-ai";
 import type { LLMSettings, ExecuteResult, ProxyConfig, ThinkingLevel, ToolAllowlistEntry } from "./types.js";
 import { applyProxyConfig } from "./proxy.js";
 import {
@@ -345,7 +345,7 @@ export class AgentRunner {
       // bashToolDef has specific type parameters (BashToolDetails, BashRenderState)
       // that are contravariant with ToolDefinition<TSchema, unknown, any> via renderCall/renderResult.
       // The cast is safe — AgentSession only reads name, execute, promptGuidelines, promptSnippet.
-      customTools: [bashToolDef as unknown as import("@mariozechner/pi-coding-agent").ToolDefinition, gatewayCallTool, listToolsForToolTypeTool, getToolDetailTool, listToolTypesTool, executeScriptTool],
+      customTools: [bashToolDef as unknown as import("@earendil-works/pi-coding-agent").ToolDefinition, gatewayCallTool, listToolsForToolTypeTool, getToolDetailTool, listToolTypesTool, executeScriptTool],
       resourceLoader,
       sessionManager,
       settingsManager,

@@ -7,7 +7,7 @@
  */
 
 import { Type, type Static } from "typebox";
-import { defineTool } from "@mariozechner/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { GatewayClient, CallResult, ListToolsResult, ToolDetailResult } from "./gateway-client.js";
 import { ScriptExecutor } from "./script-executor.js";
 

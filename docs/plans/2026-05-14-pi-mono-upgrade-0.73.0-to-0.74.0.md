@@ -66,11 +66,11 @@ Files:
 - Modify: `agent-worker/src/oneshot-llm.ts`
 - Modify: `agent-worker/src/gateway-tools.ts`
 
-- [ ] In each of the three source files, replace `@mariozechner/pi-coding-agent` → `@earendil-works/pi-coding-agent` (replace_all)
-- [ ] In each of the three source files, replace `@mariozechner/pi-ai` → `@earendil-works/pi-ai` (replace_all)
-- [ ] In `agent-runner.ts`, also update the inline `import("@mariozechner/pi-coding-agent").ToolDefinition` cast on the `customTools` line to the new scope
-- [ ] No usage of `@mariozechner/pi-agent-core` exists in source today (it is only a transitive dep through `pi-coding-agent`), so no source change there — but if grep finds any, rename it too
-- [ ] Run `cd /opt/akmatori/agent-worker && npm run build` — must succeed with no TypeScript errors
+- [x] In each of the three source files, replace `@mariozechner/pi-coding-agent` → `@earendil-works/pi-coding-agent` (replace_all)
+- [x] In each of the three source files, replace `@mariozechner/pi-ai` → `@earendil-works/pi-ai` (replace_all)
+- [x] In `agent-runner.ts`, also update the inline `import("@mariozechner/pi-coding-agent").ToolDefinition` cast on the `customTools` line to the new scope
+- [x] No usage of `@mariozechner/pi-agent-core` exists in source today (it is only a transitive dep through `pi-coding-agent`), so no source change there — but if grep finds any, rename it too
+- [x] Run `cd /opt/akmatori/agent-worker && npm run build` — must succeed with no TypeScript errors
 
 ### Task 3: Rename SDK imports in agent-worker tests
 
