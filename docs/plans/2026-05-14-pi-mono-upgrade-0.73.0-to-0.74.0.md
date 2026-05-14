@@ -50,14 +50,14 @@ Files:
 - Modify: `agent-worker/package.json`
 - Regenerate: `agent-worker/package-lock.json`
 
-- [ ] Update `agent-worker/package.json` dependencies, replacing the three `@mariozechner/*` keys with their `@earendil-works/*` equivalents and bumping the version range:
+- [x] Update `agent-worker/package.json` dependencies, replacing the three `@mariozechner/*` keys with their `@earendil-works/*` equivalents and bumping the version range:
   - remove `@mariozechner/pi-agent-core: ^0.73.0` → add `@earendil-works/pi-agent-core: ^0.74.0`
   - remove `@mariozechner/pi-ai: ^0.73.0` → add `@earendil-works/pi-ai: ^0.74.0`
   - remove `@mariozechner/pi-coding-agent: ^0.73.0` → add `@earendil-works/pi-coding-agent: ^0.74.0`
   - leave `typebox`, `undici`, `ws` unchanged
-- [ ] Run `cd /opt/akmatori/agent-worker && rm -rf node_modules && npm install` to refresh `node_modules` and regenerate `package-lock.json` cleanly under the new scope (avoids stale `@mariozechner/*` entries lingering in the lockfile)
-- [ ] Verify resolved versions with `cd /opt/akmatori/agent-worker && npm ls @earendil-works/pi-coding-agent @earendil-works/pi-ai @earendil-works/pi-agent-core` — all three must show `0.74.0`
-- [ ] Confirm no `@mariozechner/pi-*` SDK packages remain in `package-lock.json` (the `@mariozechner/clipboard` transitive dep may legitimately remain — that is a separate package owned by the same author and not part of the scope migration)
+- [x] Run `cd /opt/akmatori/agent-worker && rm -rf node_modules && npm install` to refresh `node_modules` and regenerate `package-lock.json` cleanly under the new scope (avoids stale `@mariozechner/*` entries lingering in the lockfile)
+- [x] Verify resolved versions with `cd /opt/akmatori/agent-worker && npm ls @earendil-works/pi-coding-agent @earendil-works/pi-ai @earendil-works/pi-agent-core` — all three must show `0.74.0`
+- [x] Confirm no `@mariozechner/pi-*` SDK packages remain in `package-lock.json` (the `@mariozechner/clipboard` transitive dep may legitimately remain — that is a separate package owned by the same author and not part of the scope migration)
 
 ### Task 2: Rename SDK imports in agent-worker source
 
