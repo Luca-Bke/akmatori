@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -459,11 +460,26 @@ func fieldsParam(args map[string]interface{}, key string) string {
 	return ""
 }
 
+// clampStartAt converts a float start_at argument to a non-negative int. Floats
+// that exceed int64 range convert to MinInt64 on amd64 (implementation-defined
+// per the Go spec), which would then be passed as a huge negative URL param and
+// can panic when used as a slice index in the v2 client-side paging fallbacks.
+// Clamp negatives back to 0 to defend against crafted values like 1e20.
+func clampStartAt(v float64) int {
+	if v <= 0 {
+		return 0
+	}
+	if v > float64(math.MaxInt32) {
+		return math.MaxInt32
+	}
+	return int(v)
+}
+
 // addPagingParams adds Jira's start_at / max_results pagination params, clamping
 // max_results to the Jira API maximum of 100.
 func addPagingParams(params url.Values, args map[string]interface{}) {
 	if v, ok := args["start_at"].(float64); ok && v >= 0 {
-		params.Set("startAt", fmt.Sprintf("%d", int(v)))
+		params.Set("startAt", fmt.Sprintf("%d", clampStartAt(v)))
 	}
 	if v, ok := args["max_results"].(float64); ok && v > 0 {
 		params.Set("maxResults", fmt.Sprintf("%d", clampLimit(int(v))))
@@ -669,7 +685,7 @@ func (t *JiraTool) GetIssueChangelog(ctx context.Context, incidentID string, arg
 // changelog endpoint) and is clamped to 100.
 func changelogPagingArgs(args map[string]interface{}) (startAt, maxResults int) {
 	if v, ok := args["start_at"].(float64); ok && v >= 0 {
-		startAt = int(v)
+		startAt = clampStartAt(v)
 	}
 	maxResults = 100
 	if v, ok := args["max_results"].(float64); ok && v > 0 {
@@ -768,7 +784,7 @@ func filterProjects(projects []map[string]interface{}, query string) []map[strin
 // max_results defaults to 50 (Jira's default for /project/search) and is clamped to 100.
 func projectPagingArgs(args map[string]interface{}) (startAt, maxResults int) {
 	if v, ok := args["start_at"].(float64); ok && v >= 0 {
-		startAt = int(v)
+		startAt = clampStartAt(v)
 	}
 	maxResults = 50
 	if v, ok := args["max_results"].(float64); ok && v > 0 {
@@ -884,7 +900,11 @@ func (t *JiraTool) APIRequest(ctx context.Context, incidentID string, args map[s
 	path = decoded
 
 	params := url.Values{}
-	if qp, ok := args["params"].(map[string]interface{}); ok {
+	if raw, present := args["params"]; present {
+		qp, ok := raw.(map[string]interface{})
+		if !ok {
+			return "", fmt.Errorf("params must be an object of string/number/bool/array values")
+		}
 		for k, v := range qp {
 			switch sv := v.(type) {
 			case string:
@@ -941,35 +961,48 @@ func (t *JiraTool) doWrite(ctx context.Context, config *JiraConfig, method, path
 // assigneeRef coerces an assignee arg into the JSON shape Jira expects.
 // String values become {"accountId": value} for v3 / {"name": value} for v2.
 // Map values are passed through unchanged so callers can supply any custom shape.
-func assigneeRef(v interface{}, apiVersion string) interface{} {
+// Returns (nil, nil) when the arg is absent or an empty/whitespace string.
+// Returns an error for wrong-typed input so agents see explicit validation
+// failures instead of silently creating issues with the field omitted.
+func assigneeRef(v interface{}, apiVersion string) (interface{}, error) {
+	if v == nil {
+		return nil, nil
+	}
 	switch sv := v.(type) {
 	case string:
 		if strings.TrimSpace(sv) == "" {
-			return nil
+			return nil, nil
 		}
 		if apiVersion == "2" {
-			return map[string]interface{}{"name": sv}
+			return map[string]interface{}{"name": sv}, nil
 		}
-		return map[string]interface{}{"accountId": sv}
+		return map[string]interface{}{"accountId": sv}, nil
 	case map[string]interface{}:
-		return sv
+		return sv, nil
+	default:
+		return nil, fmt.Errorf("assignee must be a string or object, got %T", v)
 	}
-	return nil
 }
 
 // priorityRef coerces a priority arg into the JSON shape Jira expects.
 // String values become {"name": value}; map values are passed through unchanged.
-func priorityRef(v interface{}) interface{} {
+// Returns (nil, nil) when the arg is absent or an empty/whitespace string.
+// Returns an error for wrong-typed input.
+func priorityRef(v interface{}) (interface{}, error) {
+	if v == nil {
+		return nil, nil
+	}
 	switch sv := v.(type) {
 	case string:
 		if strings.TrimSpace(sv) == "" {
-			return nil
+			return nil, nil
 		}
-		return map[string]interface{}{"name": sv}
+		return map[string]interface{}{"name": sv}, nil
 	case map[string]interface{}:
-		return sv
+		return sv, nil
+	default:
+		return nil, fmt.Errorf("priority must be a string or object, got %T", v)
 	}
-	return nil
 }
 
 // adfTextDoc wraps a plain string into a minimal Atlassian Document Format (ADF) document.
@@ -1002,22 +1035,30 @@ func bodyForVersion(body interface{}, apiVersion string) interface{} {
 	return body
 }
 
-// stringSlice converts a []interface{} of strings into []string, dropping non-strings and blanks.
-func stringSlice(v interface{}) []string {
+// stringSlice converts a []interface{} of strings into []string, dropping blanks.
+// Returns (nil, nil) when the arg is absent. Returns an error when v is present
+// but not an array, or when any element is not a string — surfacing malformed
+// input instead of silently sending an empty labels list.
+func stringSlice(v interface{}) ([]string, error) {
+	if v == nil {
+		return nil, nil
+	}
 	arr, ok := v.([]interface{})
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("labels must be an array of strings, got %T", v)
 	}
 	out := make([]string, 0, len(arr))
-	for _, elem := range arr {
-		if s, ok := elem.(string); ok {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				out = append(out, s)
-			}
+	for i, elem := range arr {
+		s, ok := elem.(string)
+		if !ok {
+			return nil, fmt.Errorf("labels[%d] must be a string, got %T", i, elem)
+		}
+		s = strings.TrimSpace(s)
+		if s != "" {
+			out = append(out, s)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // AddComment posts a comment on an issue. Write operation, gated by jira_allow_writes; not cached.
@@ -1164,13 +1205,19 @@ func (t *JiraTool) CreateIssue(ctx context.Context, incidentID string, args map[
 			return "", fmt.Errorf("description must be a string or object (ADF), got %T", desc)
 		}
 	}
-	if ref := assigneeRef(args["assignee"], fresh.APIVersion); ref != nil {
+	if ref, err := assigneeRef(args["assignee"], fresh.APIVersion); err != nil {
+		return "", err
+	} else if ref != nil {
 		fields["assignee"] = ref
 	}
-	if ref := priorityRef(args["priority"]); ref != nil {
+	if ref, err := priorityRef(args["priority"]); err != nil {
+		return "", err
+	} else if ref != nil {
 		fields["priority"] = ref
 	}
-	if labels := stringSlice(args["labels"]); len(labels) > 0 {
+	if labels, err := stringSlice(args["labels"]); err != nil {
+		return "", err
+	} else if len(labels) > 0 {
 		fields["labels"] = labels
 	}
 

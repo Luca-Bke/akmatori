@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1469,17 +1470,21 @@ func TestAssigneeRef(t *testing.T) {
 		input   interface{}
 		version string
 		want    interface{}
+		wantErr bool
 	}{
-		{"v3 string", "alice-id", "3", map[string]interface{}{"accountId": "alice-id"}},
-		{"v2 string", "alice", "2", map[string]interface{}{"name": "alice"}},
-		{"empty string", "  ", "3", nil},
-		{"map passthrough", map[string]interface{}{"emailAddress": "a@b"}, "3", map[string]interface{}{"emailAddress": "a@b"}},
-		{"nil", nil, "3", nil},
-		{"wrong type", 42, "3", nil},
+		{"v3 string", "alice-id", "3", map[string]interface{}{"accountId": "alice-id"}, false},
+		{"v2 string", "alice", "2", map[string]interface{}{"name": "alice"}, false},
+		{"empty string", "  ", "3", nil, false},
+		{"map passthrough", map[string]interface{}{"emailAddress": "a@b"}, "3", map[string]interface{}{"emailAddress": "a@b"}, false},
+		{"nil", nil, "3", nil, false},
+		{"wrong type", 42, "3", nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := assigneeRef(tt.input, tt.version)
+			got, err := assigneeRef(tt.input, tt.version)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("assigneeRef err = %v, wantErr %v", err, tt.wantErr)
+			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("assigneeRef = %v, want %v", got, tt.want)
 			}
@@ -1489,19 +1494,23 @@ func TestAssigneeRef(t *testing.T) {
 
 func TestPriorityRef(t *testing.T) {
 	tests := []struct {
-		name  string
-		input interface{}
-		want  interface{}
+		name    string
+		input   interface{}
+		want    interface{}
+		wantErr bool
 	}{
-		{"string", "High", map[string]interface{}{"name": "High"}},
-		{"empty string", "   ", nil},
-		{"map passthrough", map[string]interface{}{"id": "1"}, map[string]interface{}{"id": "1"}},
-		{"nil", nil, nil},
-		{"wrong type", 10, nil},
+		{"string", "High", map[string]interface{}{"name": "High"}, false},
+		{"empty string", "   ", nil, false},
+		{"map passthrough", map[string]interface{}{"id": "1"}, map[string]interface{}{"id": "1"}, false},
+		{"nil", nil, nil, false},
+		{"wrong type", 10, nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := priorityRef(tt.input)
+			got, err := priorityRef(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("priorityRef err = %v, wantErr %v", err, tt.wantErr)
+			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("priorityRef = %v, want %v", got, tt.want)
 			}
@@ -1511,21 +1520,133 @@ func TestPriorityRef(t *testing.T) {
 
 func TestStringSlice(t *testing.T) {
 	tests := []struct {
-		name  string
-		input interface{}
-		want  []string
+		name    string
+		input   interface{}
+		want    []string
+		wantErr bool
 	}{
-		{"strings", []interface{}{"a", "b", "c"}, []string{"a", "b", "c"}},
-		{"trim and drop empty", []interface{}{" a ", "", "  "}, []string{"a"}},
-		{"non-string elements dropped", []interface{}{"a", 42, true}, []string{"a"}},
-		{"wrong type returns nil", "a,b,c", nil},
-		{"nil returns nil", nil, nil},
+		{"strings", []interface{}{"a", "b", "c"}, []string{"a", "b", "c"}, false},
+		{"trim and drop empty", []interface{}{" a ", "", "  "}, []string{"a"}, false},
+		{"non-string element errors", []interface{}{"a", 42, true}, nil, true},
+		{"wrong type returns error", "a,b,c", nil, true},
+		{"nil returns nil", nil, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := stringSlice(tt.input)
+			got, err := stringSlice(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("stringSlice err = %v, wantErr %v", err, tt.wantErr)
+			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("stringSlice = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClampStartAt(t *testing.T) {
+	tests := []struct {
+		name string
+		in   float64
+		want int
+	}{
+		{"zero", 0, 0},
+		{"negative", -5, 0},
+		{"normal", 100, 100},
+		{"overflow 1e20", 1e20, math.MaxInt32},
+		{"overflow MaxFloat64", math.MaxFloat64, math.MaxInt32},
+		{"just under int32 max", float64(math.MaxInt32 - 1), math.MaxInt32 - 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := clampStartAt(tt.in)
+			if got != tt.want {
+				t.Errorf("clampStartAt(%v) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGetIssueChangelog_StartAtOverflow guards against the
+// historical panic where a crafted float start_at > int64 max wrapped to
+// MinInt64, then was used as a slice index in the v2 changelog fallback.
+func TestGetIssueChangelog_StartAtOverflow(t *testing.T) {
+	calls := 0
+	tool, server, _ := newTestTool(t, AuthTypeCloudBasic, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if strings.HasSuffix(r.URL.Path, "/changelog") {
+			http.Error(w, `{"errorMessages":["not found"]}`, http.StatusNotFound)
+			return
+		}
+		if _, err := w.Write([]byte(`{"changelog":{"total":1,"histories":[{"id":"1"}]}}`)); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	})
+	defer server.Close()
+	getTestConfig(tool).APIVersion = "2"
+
+	out, err := tool.GetIssueChangelog(context.Background(), "test-incident", map[string]interface{}{
+		"key":      "FOO-1",
+		"start_at": 1e20,
+	})
+	if err != nil {
+		t.Fatalf("GetIssueChangelog unexpected error: %v", err)
+	}
+	if out == "" {
+		t.Fatal("expected non-empty response")
+	}
+	if calls < 2 {
+		t.Errorf("expected fallback to /issue, got %d server calls", calls)
+	}
+}
+
+func TestAPIRequest_BadParamsType(t *testing.T) {
+	tool, server, _ := newTestTool(t, AuthTypeCloudBasic, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("server should not be called when params is malformed; got %s %s", r.Method, r.URL.String())
+	})
+	defer server.Close()
+
+	_, err := tool.APIRequest(context.Background(), "test-incident", map[string]interface{}{
+		"path":   "/rest/api/3/myself",
+		"params": "expand=names",
+	})
+	if err == nil || !strings.Contains(err.Error(), "params must be an object") {
+		t.Errorf("expected params type error, got: %v", err)
+	}
+}
+
+func TestCreateIssue_RejectsMalformedFields(t *testing.T) {
+	tool, server, _ := newWriteTestTool(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("server should not be called when args are malformed; got %s %s", r.Method, r.URL.String())
+	})
+	defer server.Close()
+
+	base := map[string]interface{}{
+		"project_key": "FOO",
+		"issue_type":  "Task",
+		"summary":     "x",
+	}
+	for _, tc := range []struct {
+		name  string
+		patch map[string]interface{}
+		want  string
+	}{
+		{"assignee wrong type", map[string]interface{}{"assignee": 42}, "assignee must be a string or object"},
+		{"priority wrong type", map[string]interface{}{"priority": 10}, "priority must be a string or object"},
+		{"labels wrong type", map[string]interface{}{"labels": "a,b,c"}, "labels must be an array of strings"},
+		{"labels non-string elem", map[string]interface{}{"labels": []interface{}{"a", 42}}, "labels[1] must be a string"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := make(map[string]interface{}, len(base)+len(tc.patch))
+			for k, v := range base {
+				args[k] = v
+			}
+			for k, v := range tc.patch {
+				args[k] = v
+			}
+			_, err := tool.CreateIssue(context.Background(), "test-incident", args)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("expected error containing %q, got: %v", tc.want, err)
 			}
 		})
 	}
