@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Server, MessageSquare, Shield, Terminal, BarChart3, Activity, LayoutDashboard, Bell, Box, Network } from 'lucide-react';
+import { Save, Server, MessageSquare, Shield, Terminal, BarChart3, Activity, LayoutDashboard, Bell, Box, Network, Ticket } from 'lucide-react';
 import LoadingSpinner from './LoadingSpinner';
 import ErrorMessage, { SuccessMessage } from './ErrorMessage';
 import { proxySettingsApi } from '../api/client';
@@ -65,6 +65,7 @@ export default function ProxySettings() {
   const [pagerdutyEnabled, setPagerdutyEnabled] = useState(false);
   const [netboxEnabled, setNetboxEnabled] = useState(false);
   const [kubernetesEnabled, setKubernetesEnabled] = useState(false);
+  const [jiraEnabled, setJiraEnabled] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -85,6 +86,7 @@ export default function ProxySettings() {
       setPagerdutyEnabled(data.services.pagerduty?.enabled ?? false);
       setNetboxEnabled(data.services.netbox?.enabled ?? false);
       setKubernetesEnabled(data.services.kubernetes?.enabled ?? false);
+      setJiraEnabled(data.services.jira?.enabled ?? false);
       setError(null);
     } catch (err) {
       setError('Failed to load proxy settings');
@@ -112,6 +114,7 @@ export default function ProxySettings() {
           pagerduty: { enabled: pagerdutyEnabled },
           netbox: { enabled: netboxEnabled },
           kubernetes: { enabled: kubernetesEnabled },
+          jira: { enabled: jiraEnabled },
         },
       };
 
@@ -261,6 +264,15 @@ export default function ProxySettings() {
             supported={true}
             disabled={!hasProxy}
             onChange={setKubernetesEnabled}
+          />
+          <ServiceToggle
+            name="Jira"
+            description="Issue tracking"
+            icon={Ticket}
+            enabled={jiraEnabled}
+            supported={true}
+            disabled={!hasProxy}
+            onChange={setJiraEnabled}
           />
           <ServiceToggle
             name="SSH"

@@ -641,6 +641,40 @@ gateway_call("kubernetes.get_nodes", {}, "%s")
 gateway_call("kubernetes.get_node_detail", {"name": "node-1"}, "%s")
 `+"```"+`
 `, logicalName, logicalName, logicalName, logicalName, logicalName, logicalName, logicalName, logicalName)
+	case "jira":
+		return fmt.Sprintf(`
+**Parameters:**
+- `+"`search_issues`"+`: jql* | fields, expand, start_at, max_results
+- `+"`get_issue`"+`: key* | fields, expand
+- `+"`get_issue_comments`"+`: key* | start_at, max_results
+- `+"`get_issue_transitions`"+`: key*
+- `+"`get_issue_changelog`"+`: key* | start_at, max_results
+- `+"`get_projects`"+`: start_at, max_results
+- `+"`get_project`"+`: key*
+- `+"`search_users`"+`: query* | start_at, max_results
+- `+"`api_request`"+`: path* | params
+- `+"`add_comment`"+` **(write)**: key*, body* (string on Server/DC v2; ADF object or string on Cloud v3 — strings are auto-wrapped)
+- `+"`transition_issue`"+` **(write)**: key*, transition_id* | comment, fields
+- `+"`create_issue`"+` **(write)**: project_key*, issue_type*, summary* | description, assignee, priority, labels (array of strings), fields
+- `+"`update_issue`"+` **(write)**: key*, fields*
+(* = required)
+**(write)** marks methods that mutate state — they return an error unless `+"`jira_allow_writes=true`"+` is set on the instance.
+
+Cloud (v3) and Server/DC (v2) differ in path, auth, and body shape — the tool selects the right form based on `+"`jira_api_version`"+` and `+"`jira_auth_type`"+`.
+
+Usage (via gateway_call):
+`+"```"+`
+gateway_call("jira.search_issues", {"jql": "project = OPS AND status = \"In Progress\"", "max_results": 25}, "%s")
+gateway_call("jira.get_issue", {"key": "OPS-1234"}, "%s")
+gateway_call("jira.get_issue_comments", {"key": "OPS-1234"}, "%s")
+gateway_call("jira.get_issue_transitions", {"key": "OPS-1234"}, "%s")
+gateway_call("jira.get_projects", {}, "%s")
+gateway_call("jira.search_users", {"query": "alice"}, "%s")
+gateway_call("jira.add_comment", {"key": "OPS-1234", "body": "Investigating elevated 5xx rate"}, "%s")
+gateway_call("jira.transition_issue", {"key": "OPS-1234", "transition_id": "31"}, "%s")
+gateway_call("jira.create_issue", {"project_key": "OPS", "issue_type": "Incident", "summary": "Disk usage > 90%%", "labels": ["prod", "urgent"]}, "%s")
+`+"```"+`
+`, logicalName, logicalName, logicalName, logicalName, logicalName, logicalName, logicalName, logicalName, logicalName)
 	default:
 		return fmt.Sprintf("Use `gateway_call(\"%s.<tool_method>\", {<args>}, \"%s\")` to call this tool's methods.\n", typeName, logicalName)
 	}

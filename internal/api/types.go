@@ -146,6 +146,9 @@ type UpdateProxySettingsRequest struct {
 		Kubernetes struct {
 			Enabled bool `json:"enabled"`
 		} `json:"kubernetes"`
+		Jira struct {
+			Enabled bool `json:"enabled"`
+		} `json:"jira"`
 	} `json:"services"`
 }
 

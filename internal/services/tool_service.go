@@ -163,6 +163,7 @@ func (s *ToolService) EnsureToolTypes() error {
 		{Name: "clickhouse", Description: "ClickHouse read-only query and OLAP diagnostics integration"},
 		{Name: "netbox", Description: "NetBox CMDB integration for DCIM, IPAM, circuits, virtualization, and tenancy"},
 		{Name: "kubernetes", Description: "Kubernetes read-only diagnostics for pods, deployments, nodes, services, events, and logs"},
+		{Name: "jira", Description: "Jira issue tracking integration (Cloud and Server/Data Center) for searching, viewing, commenting, and transitioning issues"},
 	}
 
 	for _, tt := range toolTypes {

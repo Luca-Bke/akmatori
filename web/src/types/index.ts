@@ -155,6 +155,7 @@ export interface ProxySettings {
     pagerduty: ProxyServiceConfig;
     netbox: ProxyServiceConfig;
     kubernetes: ProxyServiceConfig;
+    jira: ProxyServiceConfig;
     ssh: ProxyServiceConfig;
   };
 }
@@ -172,6 +173,7 @@ export interface ProxySettingsUpdate {
     pagerduty: { enabled: boolean };
     netbox: { enabled: boolean };
     kubernetes: { enabled: boolean };
+    jira: { enabled: boolean };
   };
 }
 

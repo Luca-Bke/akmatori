@@ -4727,8 +4727,9 @@ func (r *Registry) registerJiraTools() {
 						Description: "Priority name (e.g. 'High', 'Medium')",
 					},
 					"labels": {
-						Type:        "string",
-						Description: "Comma-separated list of labels to apply to the issue",
+						Type:        "array",
+						Description: "List of labels to apply to the issue",
+						Items:       &mcp.Items{Type: "string"},
 					},
 					"fields": {
 						Type:        "object",
