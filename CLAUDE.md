@@ -84,11 +84,12 @@ make verify           # go vet + all tests (pre-commit)
 Coverage moves quickly; re-run `go test -coverprofile=coverage.out ./...` before quoting numbers.
 Focus new tests on historically weak areas: `internal/handlers`, `internal/services`, `internal/slack`, main-module database paths, and MCP Gateway `internal/tools` / `internal/tools/zabbix`.
 
-## Recent Changes (Apr 2026)
+## Recent Changes (Apr-May 2026)
 
-- Slack skill launches now start fresh agent sessions; skill prompt trimming/output-format handling was tightened.
-- Alert webhook error paths, setup-state edge cases, and Slack settings integration helpers all gained focused tests.
-- When updating docs, prefer small pattern notes over long examples so this file stays under the 30k limit.
+- QMD is on v2.1.0; runbook sync now POSTs QMD `/update` after file writes so search stays fresh.
+- Slack skill launches now start fresh agent sessions; prompt trimming and output-format handling were tightened.
+- Response formatting settings and the one-shot LLM path are live; keep docs aligned with `/api/settings/formatting` and `/api/settings/llm` behavior.
+- Keep this file concise: prefer short rules/patterns over long examples so it stays under 30k chars.
 
 ## Agent Worker Architecture
 
@@ -104,14 +105,11 @@ The `agent-worker/` uses `@mariozechner/pi-coding-agent` SDK (v0.73.0):
 
 ### SDK Features (v0.73.0)
 
-- Cancellation signals propagate to nested model calls and tool executions
-- Investigation history exports to `{workDir}/session_export.jsonl`
-- Session files can live in `{workDir}/.sessions/` via `SessionManager.create/continueRecent(..., sessionDir)`
-- Custom tools use typed `ToolDefinition` metadata; `promptSnippet` is required for prompt inclusion
-- Typed compaction/retry session events replaced older untyped names
-- Provider SDKs are lazy-loaded; auto-retry and multi-edit are supported
-- Provider retry/timeout settings (`retry.provider.{timeoutMs,maxRetries,maxRetryDelayMs}`) are forwarded via `SettingsManager.inMemory({...})`; Akmatori uses 10-minute timeouts so slow on-prem/OpenRouter models do not abort during long alert investigations
-- 0.73.0: incremental bash output streaming surfaces via `tool_execution_update` events (already handled by `agent-runner.ts`); Bedrock Opus 4.7 `xhigh` thinking fix is automatic
+- Cancellation propagates through nested model calls and tool runs.
+- Investigation history exports to `{workDir}/session_export.jsonl`; sessions can live in `{workDir}/.sessions/`.
+- Custom tools must use typed `ToolDefinition` metadata and include `promptSnippet`.
+- Provider SDKs are lazy-loaded; retry/timeout settings are forwarded via `SettingsManager.inMemory({...})`. Akmatori uses 10-minute provider timeouts for slow on-prem/OpenRouter models.
+- Incremental bash output arrives via `tool_execution_update`; Bedrock Opus 4.7 `xhigh` thinking works without local patches.
 
 ### SDK API Conventions
 
@@ -127,14 +125,12 @@ The `agent-worker/` uses `@mariozechner/pi-coding-agent` SDK (v0.73.0):
 
 ### Tool Architecture (TypeScript Gateway Tools)
 
-Tools are registered as pi-mono custom tools via `gateway-tools.ts`, communicating with the MCP Gateway through a TypeScript client:
+Tools are registered in `gateway-tools.ts` and talk to the MCP Gateway through `GatewayClient`:
 
-1. `generateSkillMd()` in Go writes `gateway_call` usage examples in SKILL.md with logical instance names
-2. pi-mono discovers SKILL.md files
-3. Agent calls `gateway_call("ssh.execute_command", {command: "uptime"}, "prod-ssh")`
-4. `GatewayClient` sends JSON-RPC 2.0 POST to MCP Gateway with `X-Incident-ID` header
-5. MCP Gateway resolves credentials by logical name or instance ID, checks authorization, and executes
-6. Large responses (>4KB) are written to `{workDir}/tool_outputs/` with a truncated preview returned inline
+1. `generateSkillMd()` writes `gateway_call(...)` examples with logical instance names.
+2. The agent reads SKILL.md and calls `gateway_call("ssh.execute_command", {command: "uptime"}, "prod-ssh")`.
+3. `GatewayClient` POSTs JSON-RPC with the `X-Incident-ID` header; the gateway resolves instance routing, authorizes, and executes.
+4. Large responses (>4KB) spill to `{workDir}/tool_outputs/` with an inline preview.
 
 ### Gateway Tools
 
@@ -173,17 +169,7 @@ For short, non-agent LLM calls (incident titles, alert extraction, Slack final-m
 
 ### Manager (`manager.go`)
 
-Hot-reloadable Slack connection manager:
-
-```go
-manager := slack.NewManager()
-manager.SetEventHandler(myEventHandler)
-manager.Start(ctx)
-manager.TriggerReload()  // Hot-reload on settings change
-go manager.WatchForReloads(ctx)
-```
-
-**Features**: Socket Mode, hot-reload without restart, proxy support, thread-safe `GetClient()`
+`slack.NewManager()` owns the Socket Mode client, hot-reload flow (`TriggerReload` / `WatchForReloads`), proxy wiring, and thread-safe `GetClient()` access.
 
 ### Event Types
 
@@ -228,37 +214,7 @@ alert, err := extractor.Extract(ctx, messageText)
 
 ## Output Parser (`internal/output/`)
 
-Parses structured blocks from agent output:
-
-```
-[FINAL_RESULT]
-status: resolved|unresolved|escalate
-summary: One-line summary
-actions_taken:
-- Action 1
-recommendations:
-- Recommendation 1
-[/FINAL_RESULT]
-
-[ESCALATE]
-reason: Why escalation is needed
-urgency: low|medium|high|critical
-context: Additional context
-[/ESCALATE]
-
-[PROGRESS]
-step: Current investigation step
-completed: What's been done
-[/PROGRESS]
-```
-
-Usage:
-```go
-parsed := output.Parse(agentOutput)
-if parsed.FinalResult != nil { /* complete */ }
-if parsed.Escalation != nil { notifyOnCall(parsed.Escalation.Urgency) }
-fmt.Println(parsed.CleanOutput)  // Structured blocks stripped
-```
+Parses `[FINAL_RESULT]`, `[ESCALATE]`, and `[PROGRESS]` blocks from agent output. Use `output.Parse(...)`; `parsed.CleanOutput` removes structured sections, while `parsed.FinalResult` / `parsed.Escalation` expose typed data.
 
 ## Services (`internal/services/`)
 
@@ -351,15 +307,7 @@ Cross-incident memory: long-lived facts the agent and operators accumulate. Same
 
 ## API Package (`internal/api/`)
 
-Standardized request/response helpers:
-
-```go
-api.RespondJSON(w, http.StatusOK, data)
-api.RespondError(w, http.StatusBadRequest, "invalid input")
-api.DecodeJSON(r, &request)
-```
-
-Use `api.RespondErrorWithCode()` when the frontend needs a stable machine-readable error code in addition to the message.
+Standardized helpers: `api.RespondJSON`, `api.RespondError`, `api.RespondErrorWithCode`, and `api.DecodeJSON`. Use `RespondErrorWithCode` when the frontend needs a stable machine-readable error code.
 
 **API Documentation**: Swagger UI at `/api/docs` when enabled
 
@@ -443,15 +391,7 @@ Use the shared helpers instead of hand-rolled setup/assertion code when possible
 
 ## Logging Convention
 
-All logging uses Go's `log/slog` (structured JSON logging). **Never use `log.Printf`, `log.Fatalf`, or `log.Println`.**
-
-- Initialized in `cmd/akmatori/main.go` via `logging.Init()` (`internal/logging/logging.go`)
-- Use `slog.Info()`, `slog.Warn()`, `slog.Error()` with structured key-value pairs:
-  ```go
-  slog.Info("incident created", "uuid", incident.UUID, "title", incident.Title)
-  slog.Error("failed to process alert", "error", err, "source", sourceName)
-  ```
-- Output format: JSON to stdout (container-friendly for log aggregation)
+All logging uses structured `log/slog` JSON via `logging.Init()` in `cmd/akmatori/main.go`. Never use `log.Printf` / `log.Fatalf` / `log.Println`; prefer `slog.Info/Warn/Error` with key-value pairs.
 
 ## Code Quality & Linting
 
@@ -462,36 +402,11 @@ golangci-lint run         # PREFERRED - respects //nolint directives
 
 **Note**: Standalone `staticcheck` uses different directive format (`//lint:ignore`), so prefer `golangci-lint`.
 
-### Error Handling
+### Error Handling & Go Idioms
 
-Always check errors:
-
-```go
-// HTTP writes
-if _, err := w.Write(data); err != nil {
-    slog.Error("write failed", "error", err)
-}
-
-// External APIs (log non-critical)
-if err := slackClient.AddReaction(...); err != nil {
-    slog.Warn("reaction failed", "error", err)
-}
-
-// Tests - use Fatal for nil checks before dereference
-if svc == nil {
-    t.Fatal("service is nil")  // Stops immediately
-}
-```
-
-### Go Idioms
-
-```go
-// Nil check around range is unnecessary
-for k, v := range myMap { ... }  // Safe even if myMap is nil
-
-// len() on nil returns 0
-if len(decoded.Labels) > 0 { ... }  // No nil check needed
-```
+- Always check returned errors, including HTTP writes and non-critical external API calls.
+- In tests, use `t.Fatal` before dereferencing nil dependencies.
+- `range` over a nil map/slice is safe, and `len(nil)` is `0`; avoid redundant nil guards.
 
 ### Nolint Directives
 
@@ -592,15 +507,7 @@ Kubernetes is a read-only diagnostics tool type following the NetBox pattern wit
 
 ### What NOT To Do
 
-```go
-// BAD: N API calls in loop
-for _, host := range hosts {
-    items, _ := zabbix.GetItems(ctx, host.ID)  // N calls!
-}
-
-// GOOD: Batched with caching
-items, _ := zabbix.GetItemsBatch(ctx, hostIDs, patterns)  // 1 cached call
-```
+Do not make per-item external API calls in loops when a batched cached helper exists (for example, prefer `GetItemsBatch` over repeated `GetItems`).
 
 ### Before Adding New External Integrations
 
