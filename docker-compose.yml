@@ -65,16 +65,7 @@ services:
       retries: 5
 
   akmatori-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-      args:
-        http_proxy:  ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy:    ${no_proxy:-}
-        HTTP_PROXY:  ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY:    ${NO_PROXY:-}
+    image: ghcr.io/akmatori/api:${AKMATORI_VERSION:-latest}
     container_name: akmatori-api
     restart: unless-stopped
     logging:
@@ -98,6 +89,12 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - JWT_SECRET=${JWT_SECRET:-}
       - QMD_URL=http://qmd:8181
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - no_proxy=${no_proxy:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
     volumes:
       - ./akmatori_data:/akmatori
     healthcheck:
@@ -107,16 +104,7 @@ services:
       retries: 3
 
   mcp-gateway:
-    build:
-      context: ./mcp-gateway
-      dockerfile: Dockerfile
-      args:
-        http_proxy:  ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy:    ${no_proxy:-}
-        HTTP_PROXY:  ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY:    ${NO_PROXY:-}
+    image: ghcr.io/akmatori/mcp-gateway:${AKMATORI_VERSION:-latest}
     container_name: akmatori-mcp-gateway
     restart: unless-stopped
     logging:
@@ -142,6 +130,12 @@ services:
       - POSTGRES_PASSWORD_FILE=/akmatori/secrets/postgres_password
       - PORT=8080
       - QMD_URL=http://qmd:8181
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - no_proxy=${no_proxy:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
     volumes:
       - ./akmatori_data/secrets:/akmatori/secrets:ro
     healthcheck:
@@ -151,16 +145,7 @@ services:
       retries: 3
 
   akmatori-agent:
-    build:
-      context: ./agent-worker
-      dockerfile: Dockerfile
-      args:
-        http_proxy:  ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy:    ${no_proxy:-}
-        HTTP_PROXY:  ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY:    ${NO_PROXY:-}
+    image: ghcr.io/akmatori/agent:${AKMATORI_VERSION:-latest}
     container_name: akmatori-agent
     restart: unless-stopped
     logging:
@@ -181,6 +166,12 @@ services:
       - WORKSPACE_DIR=/workspaces
       - SKILLS_DIR=/akmatori/skills
       - PI_CACHE_RETENTION=long  # Extended prompt caching: 1hr Anthropic, 24hr OpenAI
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - no_proxy=${no_proxy:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
     volumes:
       - agent_sessions:/home/agent/.pi               # Persistent session data
       - ./akmatori_data/incidents:/workspaces:rw      # ONLY incidents - no access to skills/tools source
@@ -198,16 +189,7 @@ services:
     # Agent runs as UID 1001, can read API files (UID 1000) but not modify them
 
   qmd:
-    build:
-      context: ./qmd
-      dockerfile: Dockerfile
-      args:
-        http_proxy:  ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy:    ${no_proxy:-}
-        HTTP_PROXY:  ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY:    ${NO_PROXY:-}
+    image: ghcr.io/akmatori/qmd:${AKMATORI_VERSION:-latest}
     container_name: akmatori-qmd
     restart: unless-stopped
     logging:
@@ -223,6 +205,12 @@ services:
         condition: service_completed_successfully
     environment:
       - QMD_BIND_HOST=0.0.0.0
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - no_proxy=${no_proxy:-postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1}
     volumes:
       - ./akmatori_data/runbooks:/akmatori/runbooks:ro
       - ./akmatori_data/memory:/akmatori/memory:ro
@@ -234,16 +222,7 @@ services:
       retries: 5
 
   frontend:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
-      args:
-        http_proxy:  ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy:    ${no_proxy:-}
-        HTTP_PROXY:  ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY:    ${NO_PROXY:-}
+    image: ghcr.io/akmatori/frontend:${AKMATORI_VERSION:-latest}
     container_name: akmatori-frontend
     restart: unless-stopped
     logging:

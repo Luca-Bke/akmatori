@@ -54,14 +54,14 @@ Files:
 - Create: `docker-compose.dev.yml`
 - Modify: `docker-compose.yml`
 
-- [ ] in `docker-compose.dev.yml` add a `services:` map containing only `akmatori-api`, `mcp-gateway`, `akmatori-agent`, `qmd`, `frontend`, each with the exact `build:` block (context, dockerfile, args) currently in `docker-compose.yml`
-- [ ] do not include `image:`, network, volume, or env keys in `docker-compose.dev.yml` — only the `build:` blocks (everything else merges from the base)
-- [ ] in `docker-compose.yml`, for each of the five service entries, delete the `build:` block and insert `image: ghcr.io/akmatori/<service>:${AKMATORI_VERSION:-latest}` (service ↔ image: `akmatori-api` → `api`, `mcp-gateway` → `mcp-gateway`, `akmatori-agent` → `agent`, `qmd` → `qmd`, `frontend` → `frontend`)
-- [ ] preserve every other field (`container_name`, `restart`, `logging`, `networks`, `depends_on`, `environment`, `volumes`, `healthcheck`) byte-for-byte
-- [ ] add a runtime `environment:` proxy block to `akmatori-api`, `mcp-gateway`, `akmatori-agent`, and `qmd` (NOT `frontend`, `postgres`, or `proxy`) with `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` in both upper- and lower-case variants, defaulting `NO_PROXY` to `postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1`
-- [ ] run `docker compose -f docker-compose.yml config -q` (must succeed)
-- [ ] run `docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q` (must succeed, and the resolved config must show `build:` blocks for the five services — the dev override wins)
-- [ ] diff the resolved base config against the original to confirm only `build` → `image` swaps and the new proxy env block changed
+- [x] in `docker-compose.dev.yml` add a `services:` map containing only `akmatori-api`, `mcp-gateway`, `akmatori-agent`, `qmd`, `frontend`, each with the exact `build:` block (context, dockerfile, args) currently in `docker-compose.yml`
+- [x] do not include `image:`, network, volume, or env keys in `docker-compose.dev.yml` — only the `build:` blocks (everything else merges from the base)
+- [x] in `docker-compose.yml`, for each of the five service entries, delete the `build:` block and insert `image: ghcr.io/akmatori/<service>:${AKMATORI_VERSION:-latest}` (service ↔ image: `akmatori-api` → `api`, `mcp-gateway` → `mcp-gateway`, `akmatori-agent` → `agent`, `qmd` → `qmd`, `frontend` → `frontend`)
+- [x] preserve every other field (`container_name`, `restart`, `logging`, `networks`, `depends_on`, `environment`, `volumes`, `healthcheck`) byte-for-byte
+- [x] add a runtime `environment:` proxy block to `akmatori-api`, `mcp-gateway`, `akmatori-agent`, and `qmd` (NOT `frontend`, `postgres`, or `proxy`) with `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` in both upper- and lower-case variants, defaulting `NO_PROXY` to `postgres,akmatori-api,mcp-gateway,akmatori-agent,qmd,frontend,localhost,127.0.0.1`
+- [x] run `docker compose -f docker-compose.yml config -q` (must succeed)
+- [x] run `docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q` (must succeed, and the resolved config must show `build:` blocks for the five services — the dev override wins)
+- [x] diff the resolved base config against the original to confirm only `build` → `image` swaps and the new proxy env block changed
 
 ### Task 3: Add Makefile dev target and update .env.example
 
