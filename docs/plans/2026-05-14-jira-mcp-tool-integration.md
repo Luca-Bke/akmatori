@@ -95,18 +95,18 @@ Files:
 Files:
 - Create: `mcp-gateway/internal/tools/jira/jira.go`
 
-- [ ] Define `JiraConfig` struct (URL, AuthType, APIVersion, Username, APIToken, AllowWrites, VerifySSL, Timeout, UseProxy, ProxyURL)
-- [ ] Define `JiraTool` struct (logger, configCache 5min, responseCache 30sec default, rateLimiter)
-- [ ] Implement `NewJiraTool(logger, limiter)`, `Stop()`
-- [ ] Implement `configCacheKey`, `responseCacheKey`, `clampTimeout`, `clampLimit` (max 100, Jira's `maxResults` cap), `extractLogicalName`
-- [ ] Implement `getConfig()` — credential resolution via `database.ResolveToolCredentials(...)`, including logical-name routing; honor `JiraEnabled` proxy flag
-- [ ] Implement `getCachedProxySettings()`
-- [ ] Implement `doRequest(ctx, method, path, params, body)` — applies rate limit, TLS verify, proxy, request timeout, and the auth header derived from `AuthType`; enforces 5 MB response cap
-- [ ] Implement `cachedGet(ctx, path, params, ttl)` wrapper around `doRequest`
-- [ ] Implement helper `apiPath(version, suffix)` so callers don't string-concat the version
-- [ ] Implement write-gate helper `requireWrites(config)` returning an error when `AllowWrites=false`
-- [ ] Write constructor + config + auth-header tests (cover all three auth types) and a write-gate test
-- [ ] Run `make test-mcp` — must pass before Task 3
+- [x] Define `JiraConfig` struct (URL, AuthType, APIVersion, Username, APIToken, AllowWrites, VerifySSL, Timeout, UseProxy, ProxyURL)
+- [x] Define `JiraTool` struct (logger, configCache 5min, responseCache 30sec default, rateLimiter)
+- [x] Implement `NewJiraTool(logger, limiter)`, `Stop()`
+- [x] Implement `configCacheKey`, `responseCacheKey`, `clampTimeout`, `clampLimit` (max 100, Jira's `maxResults` cap), `extractLogicalName`
+- [x] Implement `getConfig()` — credential resolution via `database.ResolveToolCredentials(...)`, including logical-name routing; honor `JiraEnabled` proxy flag
+- [x] Implement `getCachedProxySettings()`
+- [x] Implement `doRequest(ctx, method, path, params, body)` — applies rate limit, TLS verify, proxy, request timeout, and the auth header derived from `AuthType`; enforces 5 MB response cap
+- [x] Implement `cachedGet(ctx, path, params, ttl)` wrapper around `doRequest`
+- [x] Implement helper `apiPath(version, suffix)` so callers don't string-concat the version
+- [x] Implement write-gate helper `requireWrites(config)` returning an error when `AllowWrites=false`
+- [x] Write constructor + config + auth-header tests (cover all three auth types) and a write-gate test
+- [x] Run `make test-mcp` — must pass before Task 3
 
 ### Task 3: Read tool methods
 
