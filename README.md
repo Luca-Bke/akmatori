@@ -28,7 +28,7 @@ Akmatori is an AI-powered AIOps agent that integrates with monitoring systems an
 
 ## Install (end users)
 
-The recommended install flow pulls pre-built multi-arch images from GHCR — no `git clone`, no local build. QMD's ~940 MB of embedding/reranker GGUFs are baked into the published image, so you fetch them once with `docker compose pull` instead of downloading them during a build.
+The recommended install flow pulls pre-built multi-arch images from GHCR — no `git clone`, no local build.
 
 ### Prerequisites
 
@@ -67,7 +67,7 @@ The recommended install flow pulls pre-built multi-arch images from GHCR — no 
    ```bash
    docker compose ps
    ```
-   All 5 services should show "Up" status. QMD's first cold start can take a few minutes while it loads the baked-in models.
+   All services should show "Up" status.
 
 5. Access the web dashboard at `http://localhost:8080` (username `admin`). The first visit runs a one-time setup wizard that lets you set the admin password.
 
@@ -81,16 +81,6 @@ Bump `AKMATORI_VERSION` in `.env` (or leave it unset to track `latest`) and:
 docker compose pull
 docker compose up -d
 ```
-
-**One-time migration from a source-built install:** earlier releases downloaded QMD's embedding/reranker GGUFs at runtime into the `akmatori_qmd_cache` named volume. The published image bakes those weights in, so an existing non-empty cache volume can shadow them. On the first upgrade to a published-image install, reset the QMD cache once:
-
-```bash
-docker compose down qmd
-docker volume rm akmatori_qmd_cache
-docker compose up -d qmd
-```
-
-Skip this step on a fresh install — the volume doesn't exist yet.
 
 ## Behind an HTTP proxy
 
@@ -123,7 +113,7 @@ sudo systemctl restart docker
 
 ### B. Runtime egress through the proxy
 
-Set `HTTP_PROXY` / `HTTPS_PROXY` once in your `.env` (or in the shell that runs `docker compose up`); the `api`, `mcp-gateway`, `agent`, and `qmd` containers inherit them via the compose file. The default `NO_PROXY` bypasses internal service-to-service traffic (api↔postgres, agent↔gateway, gateway↔qmd, etc.) so internal hops never hit the corporate proxy.
+Set `HTTP_PROXY` / `HTTPS_PROXY` once in your `.env` (or in the shell that runs `docker compose up`); the `api`, `mcp-gateway`, and `agent` containers inherit them via the compose file. The default `NO_PROXY` bypasses internal service-to-service traffic (api↔postgres, agent↔gateway, etc.) so internal hops never hit the corporate proxy.
 
 ```dotenv
 # .env
@@ -132,7 +122,7 @@ HTTPS_PROXY=http://proxy.corp:3128
 # NO_PROXY defaults to the internal service names; override only if you need to add hosts.
 ```
 
-The runtime `HTTP_PROXY` covers the API server's outbound calls (Slack), the agent worker's LLM API calls, QMD's outbound HTTP, and the MCP Gateway's HTTP-connector tools and external MCP-server connections. The MCP Gateway's built-in monitoring/CMDB tools (Zabbix, Grafana, VictoriaMetrics, PagerDuty, NetBox, Kubernetes, Catchpoint, Jira) ignore the env-var proxy by design and have their own per-tool proxy toggle in **Settings → Proxy** — enable those if your monitoring endpoints also need to go through the corporate proxy.
+The runtime `HTTP_PROXY` covers the API server's outbound calls (Slack), the agent worker's LLM API calls, and the MCP Gateway's HTTP-connector tools and external MCP-server connections. The MCP Gateway's built-in monitoring/CMDB tools (Zabbix, Grafana, VictoriaMetrics, PagerDuty, NetBox, Kubernetes, Catchpoint, Jira) ignore the env-var proxy by design and have their own per-tool proxy toggle in **Settings → Proxy** — enable those if your monitoring endpoints also need to go through the corporate proxy.
 
 ## Maintainer / development
 
@@ -149,7 +139,7 @@ make dev               # docker compose -f docker-compose.yml -f docker-compose.
 
 ## Architecture
 
-Akmatori uses a secure 5-container architecture:
+Akmatori uses a secure multi-container architecture:
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
@@ -162,16 +152,17 @@ Akmatori uses a secure 5-container architecture:
 ┌─────────────────┐              ▼
 │  Slack Bot      │◀───▶┌─────────────────┐     ┌─────────────────┐
 │                 │     │  Agent Worker   │◀───▶│   MCP Gateway   │
-└─────────────────┘     │  (pi-mono)      │     │  (SSH, APIs)    │
-                        └────────┬────────┘     └────────┬────────┘
-                                 │                       │
-                                 ▼                       ▼
-                        ┌─────────────────┐     ┌─────────────────┐
-                        │  LLM Providers  │     │      QMD        │
-                        │  (OpenAI,       │     │  Hybrid search  │
-                        │   Anthropic,    │     │  (BM25 + vec +  │
-                        │   Google, etc.) │     │   HyDE + RRF)   │
-                        └─────────────────┘     └─────────────────┘
+└─────────────────┘     │  (pi-mono +     │     │  (SSH, APIs)    │
+                        │   subagents)    │     │                 │
+                        └────────┬────────┘     └─────────────────┘
+                                 │
+                                 ▼
+                        ┌─────────────────┐
+                        │  LLM Providers  │
+                        │  (OpenAI,       │
+                        │   Anthropic,    │
+                        │   Google, etc.) │
+                        └─────────────────┘
 ```
 
 **Security by design:**
@@ -179,6 +170,8 @@ Akmatori uses a secure 5-container architecture:
 - Credentials are fetched via MCP Gateway on-demand
 - Network isolation between containers
 - API keys passed per-incident via WebSocket
+
+**Runbook and memory search:** runbooks and cross-incident memory live as markdown files mounted into the agent container (`runbooks` read-only, `memory` read-write). The main agent reaches them through pi-mono subagents — `runbook-searcher` for SOP lookup, `memory-searcher` for prior-incident recall, and `memory-writer` to record durable findings at the end of an investigation. The API materializes new memory files back into Postgres at incident completion.
 
 ## Documentation
 

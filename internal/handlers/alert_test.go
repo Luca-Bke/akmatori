@@ -562,9 +562,9 @@ func TestAlertHandler_buildInvestigationPrompt(t *testing.T) {
 	// In the Slack-channel extractor fallback path, alert.Description carries the
 	// raw message (same string that lands in RawPayload.original_message).
 	// The labeled "Original alert text:" block is still rendered because the
-	// agent summarizes it into the natural-language QMD triplet query;
-	// suppressing the label here would push the agent onto the 100-char
-	// truncated summary in this exact path.
+	// agent feeds it to the runbook-searcher subagent; suppressing the label
+	// here would push the agent onto the 100-char truncated summary in this
+	// exact path.
 	t.Run("description equals original_message keeps verbatim block", func(t *testing.T) {
 		raw := "New notification from stream-health monitor: viewers dropping below threshold for region eu-central"
 		result := h.buildInvestigationPrompt(

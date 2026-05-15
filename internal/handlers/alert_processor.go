@@ -20,10 +20,9 @@ import (
 // originalAlertTextMaxBytes caps how much of the verbatim alert text
 // (raw_payload.original_message, populated by the Slack alert extractor) is
 // rendered into the investigation prompt. Long Slack messages are truncated
-// with a UTF-8-safe ellipsis. The agent summarizes this excerpt into the
-// one-sentence natural-language query it feeds to the {lex, vec, hyde} QMD
-// triplet, so a generous cap leaves room for distinctive phrasing on retries
-// without re-fetching the source message.
+// with a UTF-8-safe ellipsis. The agent feeds this excerpt to the
+// runbook-searcher subagent, so a generous cap leaves room for distinctive
+// phrasing on retries without re-fetching the source message.
 const originalAlertTextMaxBytes = 1500
 
 func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, normalized alerts.NormalizedAlert) {
@@ -256,14 +255,13 @@ Description: %s`,
 	}
 
 	// Always render the labeled "Original alert text:" block when the
-	// extractor populated raw_payload.original_message. The agent summarizes
-	// this raw excerpt into the one-sentence natural-language query fed to
-	// the {lex, vec, hyde} QMD triplet, so preserving it (even when
-	// Description carries the same string) gives the agent the full source
-	// text instead of the 100-char truncated summary that the Slack-channel
-	// fallback path otherwise leaves in Description. Duplicating the text
-	// under both Description and Original alert text is harmless (a few
-	// hundred extra prompt bytes) and keeps the labeled anchor stable.
+	// extractor populated raw_payload.original_message. The agent feeds this
+	// raw excerpt to the runbook-searcher subagent, so preserving it (even
+	// when Description carries the same string) gives the agent the full
+	// source text instead of the 100-char truncated summary that the
+	// Slack-channel fallback path otherwise leaves in Description. Duplicating
+	// the text under both Description and Original alert text is harmless (a
+	// few hundred extra prompt bytes) and keeps the labeled anchor stable.
 	if original := extractOriginalMessage(alert.RawPayload, originalAlertTextMaxBytes); original != "" {
 		prompt += "\n\nOriginal alert text:\n" + original
 	}

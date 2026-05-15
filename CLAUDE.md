@@ -6,7 +6,7 @@ Akmatori is an AI-powered AIOps platform for SRE teams. It ingests alerts from m
 
 ## Stack and Runtime
 
-- Docker deployment: API, Agent Worker, MCP Gateway, PostgreSQL, QMD
+- Docker deployment: API, Agent Worker, MCP Gateway, PostgreSQL
 - Backend: Go 1.24+
 - Agent Worker: Node.js 22+ / TypeScript with `@earendil-works/pi-coding-agent` (`v0.74.0`)
 - Frontend: React 19 + TypeScript + Vite + Tailwind
@@ -30,7 +30,6 @@ internal/slack/             Slack client, typing, reload logic
 internal/testhelpers/       builders, fixtures, mocks
 agent-worker/src/           worker orchestrator and tool bridge
 mcp-gateway/internal/       tool auth, rate limiting, MCP proxy, tool impls
-qmd/                        runbook search sidecar
 docs/                       OpenAPI specs
 tests/fixtures/             payloads and test data
 web/                        React frontend
@@ -70,7 +69,7 @@ Use the one-shot path for short non-agent calls such as:
 - free-form alert extraction
 - Slack final-message summarization
 - response formatting
-- feedback classification and memory extraction helpers
+- feedback classification
 
 Rules:
 - API frame type is `oneshot_llm_request`
@@ -88,14 +87,15 @@ Rules:
 - preserve raw fallback behavior when worker or LLM formatting fails
 - handler wiring happens via `SetResponseFormatter(...)`
 
-### Runbooks and QMD
+### Runbooks and memory search/write
 
-Runbooks are stored in Postgres and synced to markdown files.
+Runbooks live in Postgres and sync to markdown under `akmatori_data/runbooks/`. Cross-incident memory lives in markdown under `akmatori_data/memory/`. The agent reaches both via pi-mono subagents (`runbook-searcher`, `memory-searcher`, `memory-writer`) over read-only and read-write mounts respectively.
 
 Rules:
-- after runbook writes, trigger QMD reindex with `POST /update`
-- keep DB state and on-disk runbook files in sync
-- if you change runbook sync behavior, update tests around QMD reindexing
+- keep DB state and on-disk runbook files in sync (the runbook service writes both directions)
+- the incident-manager prompt invokes `subagent({agent: "runbook-searcher", task: ...})` for SOP lookup — do not introduce direct grep loops in the main agent
+- memory recall goes through `memory-searcher`; durable findings get written by `memory-writer` near end-of-investigation
+- on incident completion the API runs `MemoryService.IngestFromDisk` to materialize new memory files into Postgres (idempotent by scope + `name:` slug)
 
 ### Slack investigation UX
 
@@ -109,9 +109,10 @@ Rules:
 ### Memory system
 
 Rules:
-- incident learnings are extracted into long-lived memory through `MemoryExtractor`
+- incident learnings are recorded directly by the `memory-writer` subagent into `akmatori_data/memory/<scope>/`
+- `MemoryService.IngestFromDisk` re-materializes those files into Postgres after each incident
 - memory syncing is scope-aware and manifest-driven
-- memory upserts must stay idempotent by incident identity or semantic name where applicable
+- memory upserts must stay idempotent by `name:` slug + scope
 
 ## Important Files by Responsibility
 
@@ -127,12 +128,12 @@ Rules:
 ### Services
 
 - `internal/services/interfaces.go` - dependency interfaces used by handlers
-- `internal/services/runbook_service.go` - runbook CRUD plus QMD sync and reindex
+- `internal/services/runbook_service.go` - runbook CRUD and DB↔disk sync
 - `internal/services/response_formatter.go` - optional response rewrite stage
-- `internal/services/memory_service.go` - cross-incident memory CRUD and sync
-- `internal/services/memory_extractor.go` - memory distillation from completed incidents
+- `internal/services/memory_service.go` - cross-incident memory CRUD, DB↔disk sync, and `IngestFromDisk`
 - `internal/services/title_generator.go` - one-shot title generation
 - `internal/services/slack_summarizer.go` - Slack-safe final output compression
+- `akmatori_data/agents/` - `runbook-searcher`, `memory-searcher`, `memory-writer` subagent definitions
 
 ### Agent worker
 
@@ -214,17 +215,16 @@ Maintainers running from source use the dev override (`docker-compose.dev.yml`) 
 | MCP Gateway | `docker-compose -f docker-compose.yml -f docker-compose.dev.yml build mcp-gateway && docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d mcp-gateway` |
 | Agent worker | `docker-compose -f docker-compose.yml -f docker-compose.dev.yml build akmatori-agent && docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d akmatori-agent` |
 | Frontend | `docker-compose -f docker-compose.yml -f docker-compose.dev.yml build frontend && docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d frontend` |
-| QMD | `docker-compose -f docker-compose.yml -f docker-compose.dev.yml build qmd && docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d qmd` |
 
 ## Recent Features and Docs-Sensitive Areas
 
 Keep this file aligned with these current realities:
-- QMD is on `v2.1.0`; runbook sync triggers `/update` reindexing
+- runbook and cross-incident memory recall run through pi-mono subagents (`runbook-searcher`, `memory-searcher`); QMD is gone
+- the agent records durable findings via the `memory-writer` subagent; the API re-ingests `akmatori_data/memory/` into Postgres at incident completion
 - fresh Slack skill launches start fresh agent sessions unless the flow explicitly resumes
 - response formatting settings are live and backed by `/api/settings/formatting`
 - one-shot LLM calls share the worker transport and current provider settings
 - Slack loading banners use real reasoning lines instead of generic placeholder text
-- cross-incident memory extraction and scoped MEMORY sync are part of the normal incident lifecycle
 
 ## When Editing This File
 

@@ -33,7 +33,9 @@ func (Runbook) TableName() string {
 }
 
 // Memory stores cross-incident knowledge the AI agent and operators accumulate
-// over time. Scoped per skill or "global"; indexed by QMD via filesystem mirror.
+// over time. Scoped per skill or "global"; mirrored to disk for the
+// memory-searcher and memory-writer subagents, and ingested back into the
+// database after each incident.
 type Memory struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
 	Scope        string    `gorm:"type:varchar(255);not null;uniqueIndex:idx_memories_scope_name,priority:1" json:"scope"`

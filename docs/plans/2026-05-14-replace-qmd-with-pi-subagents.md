@@ -135,10 +135,10 @@ Delete the QMD container and the gateway-side runbook/memory proxies. Mount the 
 - Modify: `CLAUDE.md` — remove QMD bullets, replace with a short subagent-search-and-write note; verify `wc -c CLAUDE.md` stays under 30000
 - Modify: `README.md` — strip any QMD mentions and document the new search + write flow
 
-- [ ] remove QMD from `docker-compose.yml` / `docker-compose.dev.yml` / `.env.example` / release workflow
-- [ ] delete the `qmd/` source directory
-- [ ] update CLAUDE.md and README.md to describe the subagent-based runbook search, memory search, and memory write flows; remove the QMD/runbook-sync/reindex bullets
-- [ ] run `make verify` — must pass before task 8
+- [x] remove QMD from `docker-compose.yml` / `docker-compose.dev.yml` / `.env.example` / release workflow
+- [x] delete the `qmd/` source directory
+- [x] update CLAUDE.md and README.md to describe the subagent-based runbook search, memory search, and memory write flows; remove the QMD/runbook-sync/reindex bullets
+- [x] run `make verify` — must pass before task 8
 
 ### Task 8: Verify acceptance criteria
 

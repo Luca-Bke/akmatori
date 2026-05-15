@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api, mcp-gateway, agent, qmd, frontend]
+        service: [api, mcp-gateway, agent, frontend]
         arch: [amd64, arm64]
         include:
           - arch: amd64
@@ -44,9 +44,6 @@ jobs:
           - service: agent
             context: ./agent-worker
             dockerfile: ./agent-worker/Dockerfile
-          - service: qmd
-            context: ./qmd
-            dockerfile: ./qmd/Dockerfile
           - service: frontend
             context: ./web
             dockerfile: ./web/Dockerfile
@@ -123,7 +120,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api, mcp-gateway, agent, qmd, frontend]
+        service: [api, mcp-gateway, agent, frontend]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
