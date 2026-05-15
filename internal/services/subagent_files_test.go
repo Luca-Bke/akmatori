@@ -28,13 +28,15 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 		filename     string
 		wantName     string
 		wantTools    []string
+		bannedTools  []string
 		wantScopeDir string
 		wantPhrases  []string
 	}{
 		{
 			filename:     "runbook-searcher.md",
 			wantName:     "runbook-searcher",
-			wantTools:    []string{"read", "grep", "find", "ls", "bash"},
+			wantTools:    []string{"read", "grep", "find", "ls"},
+			bannedTools:  []string{"bash"},
 			wantScopeDir: "/akmatori/runbooks/",
 			wantPhrases: []string{
 				"out of scope",
@@ -44,7 +46,8 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 		{
 			filename:     "memory-searcher.md",
 			wantName:     "memory-searcher",
-			wantTools:    []string{"read", "grep", "find", "ls", "bash"},
+			wantTools:    []string{"read", "grep", "find", "ls"},
+			bannedTools:  []string{"bash"},
 			wantScopeDir: "/akmatori/memory/",
 			wantPhrases: []string{
 				"out of scope",
@@ -54,7 +57,8 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 		{
 			filename:     "memory-writer.md",
 			wantName:     "memory-writer",
-			wantTools:    []string{"read", "edit", "write", "grep", "ls", "bash"},
+			wantTools:    []string{"read", "edit", "write", "grep", "ls"},
+			bannedTools:  []string{"bash"},
 			wantScopeDir: "/akmatori/memory/",
 			wantPhrases: []string{
 				"out of scope",
@@ -105,6 +109,16 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 			for _, want := range tc.wantTools {
 				if !containsString(gotTools, want) {
 					t.Errorf("tools missing %q (got %v)", want, gotTools)
+				}
+			}
+			// `bash` is deliberately omitted from system-supplied subagents
+			// so a prompt injection cannot dump provider API key env vars
+			// from the child `pi` process (the parent-bash spawnHook scrub
+			// in agent-worker/src/agent-runner.ts does not extend to the
+			// child's bash tool).
+			for _, banned := range tc.bannedTools {
+				if containsString(gotTools, banned) {
+					t.Errorf("tools must not include %q (got %v)", banned, gotTools)
 				}
 			}
 

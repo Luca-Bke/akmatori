@@ -73,7 +73,16 @@ RUN cp -r node_modules/pi-subagents/. /opt/pi-extensions/pi-subagents/ && \
 # never populate the host-side ./akmatori_data/agents/ bind mount. The host
 # mount remains as an operator-override path: user agents loaded from
 # ~/.pi/agent/agents/ override these builtins by name (mergeAgentsForScope).
-COPY --chown=agent:agent akmatori_data/agents/*.md /opt/pi-extensions/pi-subagents/agents/
+#
+# COPY each tracked built-in agent file individually rather than a wildcard.
+# A wildcard plus the matching .dockerignore re-include (akmatori_data/agents/
+# is gitignored at the directory level for operator-authored files, but `*.md`
+# is re-included for the build context) would bake operator-local agent files
+# into developer images and could leak private prompts. Explicit names keep
+# this list to the three system-supplied builtins.
+COPY --chown=agent:agent akmatori_data/agents/runbook-searcher.md /opt/pi-extensions/pi-subagents/agents/runbook-searcher.md
+COPY --chown=agent:agent akmatori_data/agents/memory-searcher.md /opt/pi-extensions/pi-subagents/agents/memory-searcher.md
+COPY --chown=agent:agent akmatori_data/agents/memory-writer.md /opt/pi-extensions/pi-subagents/agents/memory-writer.md
 
 # Copy built JavaScript from builder
 COPY --from=builder /app/dist/ ./dist/

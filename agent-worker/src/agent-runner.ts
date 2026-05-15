@@ -214,16 +214,456 @@ const PROVIDER_ENV_KEY: Record<string, string> = {
 };
 
 /**
- * Copy the active API key into process.env under the provider's canonical
- * variable name so child `pi` processes spawned by pi-subagents inherit it.
- * No-op for "custom" providers, which rely on baseUrl-only auth (or whose
- * scheme isn't captured here) — subagent runs against custom endpoints will
- * still fail until the operator sets the env var directly.
+ * Copy the active API key into process.env so child `pi` processes spawned by
+ * pi-subagents inherit it. For built-in providers we use pi-ai's canonical env
+ * var name (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) so the child's env-api-keys
+ * resolver finds it. For "custom" providers we use a dedicated akmatori env
+ * var name that the models.json apiKey field references by name — keeps the
+ * literal secret out of on-disk config while still letting the child resolve it.
  */
 function propagateApiKeyToEnv(provider: string, apiKey: string): void {
+  if (!apiKey) return;
+  if (provider === "custom") {
+    process.env[AKMATORI_CUSTOM_API_KEY_ENV] = apiKey;
+    return;
+  }
   const envVar = PROVIDER_ENV_KEY[provider];
-  if (envVar && apiKey) {
+  if (envVar) {
     process.env[envVar] = apiKey;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Subagent child-process config materialization
+// ---------------------------------------------------------------------------
+
+/**
+ * Marker placed on any provider entry akmatori writes into models.json. Only
+ * marker-bearing entries are managed (overwritten or cleaned up) by future
+ * runs; entries without the marker are treated as operator-owned and never
+ * mutated. TypeBox's Object schema doesn't reject unknown properties, so the
+ * marker doesn't break pi's models.json validation.
+ */
+const AKMATORI_MANAGED_MARKER = "_akmatoriManaged" as const;
+
+/**
+ * Provider key in models.json that akmatori owns for "custom" UI selections.
+ * We deliberately do NOT write under `providers.custom` because an operator
+ * may have placed their own `providers.custom` there; clobbering it would be
+ * surprising, and falling back to their entry when its baseUrl/apiKey/models
+ * don't match the UI selection silently breaks subagent runs. Using a
+ * dedicated key keeps akmatori's child-process config collision-free
+ * regardless of operator state.
+ */
+const AKMATORI_CUSTOM_PROVIDER_KEY = "akmatori-custom" as const;
+
+/**
+ * Env var name written into models.json's apiKey field for the akmatori-custom
+ * provider. Pi-mono's config resolver (resolveConfigValueOrThrow in
+ * resolve-config-value.ts) treats an apiKey string as an env var name first
+ * and falls back to literal only if process.env[name] is unset. We set this
+ * env var in process.env so the child `pi` process inherits it through the
+ * normal env propagation, keeping the raw API key out of the persistent
+ * `<agentDir>/models.json` (which lives on the agent's home volume and is
+ * readable by future agent/tool executions).
+ */
+const AKMATORI_CUSTOM_API_KEY_ENV = "AKMATORI_CUSTOM_PROVIDER_API_KEY" as const;
+
+/**
+ * Env var names that may carry a provider API key in this process. Bash
+ * spawns inherit process.env by default (pi-mono's getShellEnv() spreads it),
+ * so without scrubbing, a prompt-injected `env` or `echo $ANTHROPIC_API_KEY`
+ * tool call would exfiltrate the operator's key through tool output. We
+ * keep the variables in this process's env (pi-subagents spawns its own
+ * child `pi` process with `{ ...process.env, ... }` to give the child its
+ * model-resolution credentials) and strip them only on the bash boundary.
+ *
+ * Note: this spawnHook only scrubs env for the parent agent's bash tool.
+ * Child `pi` processes spawned by pi-subagents instantiate their own bash
+ * tool with the default getShellEnv() and pi-mono offers no config hook to
+ * inject our spawnHook into the child. To prevent the same exfiltration
+ * path from the subagent side, the system-supplied subagent definitions
+ * (akmatori_data/agents/*.md) deliberately omit `bash` from their `tools:`
+ * list. Operator-authored subagents that add `bash` re-open this surface.
+ */
+const PROVIDER_API_KEY_ENV_VARS: readonly string[] = [
+  ...Object.values(PROVIDER_ENV_KEY),
+  AKMATORI_CUSTOM_API_KEY_ENV,
+];
+
+function scrubProviderApiKeysFromEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const name of PROVIDER_API_KEY_ENV_VARS) {
+    delete out[name];
+  }
+  return out;
+}
+
+/**
+ * Strip `//` line comments and trailing commas from JSON before parsing.
+ * Mirrors the JSONC tolerance pi-mono applies to its on-disk config files
+ * (see model-registry.js#stripJsonComments and settings-manager). Without
+ * this, a valid operator-maintained JSONC file would fail strict JSON.parse
+ * and we would otherwise either drop their customizations or refuse to read.
+ */
+function stripJsonComments(input: string): string {
+  return input
+    .replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
+    .replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (m, tail) => tail ?? (m[0] === '"' ? m : ""));
+}
+
+function writeFileAtomic(filePath: string, contents: string): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
+  fs.writeFileSync(tmp, contents, { mode: 0o600 });
+  fs.renameSync(tmp, filePath);
+}
+
+/**
+ * Reports whether `(provider, model)` resolves through pi-ai's built-in
+ * model catalogue. The parent's `resolveModel` papers over a registry miss
+ * by synthesizing a custom Model spec in memory, but the child `pi` process
+ * spawned by pi-subagents only knows what `models.json` + the built-in
+ * registry tell it. When this returns false for a built-in provider, the
+ * UI-selected model is an unknown id (e.g. a newly released Claude model,
+ * an OpenRouter id with vendor prefix, an on-prem deployment) and the child
+ * would otherwise skip the saved-default path (`modelRegistry.find` misses)
+ * and fall back to a hardcoded `defaultModelPerProvider` entry — running
+ * subagents on the wrong model. We materialize the model in models.json so
+ * the child's `find()` succeeds.
+ */
+function isBuiltInModelKnown(provider: string, model: string): boolean {
+  try {
+    // getModel returns undefined for unknown models in production but throws
+    // for unknown providers under some pi-ai versions and in our test mocks.
+    // Treat both as "not in the registry."
+    return !!getModel(provider as any, model as any);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write `<agentDir>/models.json` so child `pi` processes spawned by
+ * pi-subagents can resolve the parent's UI-selected model. The parent's
+ * `ModelRegistry.inMemory(authStorage)` plus `resolveModel(provider, model,
+ * baseUrl)` builds the model spec in this process's memory only — the
+ * spawned subagent runs `pi` with `ModelRegistry.create(...)`, which reads
+ * `<agentDir>/models.json` from disk. Without this file the child cannot
+ * find the model id and every `subagent({...})` call (runbook-searcher,
+ * memory-searcher, memory-writer) either fails to start or silently runs
+ * on the wrong model.
+ *
+ * Two materialization paths, both gated on whether the UI-selected model
+ * is unknown to the child's built-in registry:
+ *
+ *  1. provider === "custom" → write a dedicated `providers.akmatori-custom`
+ *     entry with baseUrl + apiKey + a single model. The custom slot name
+ *     decouples akmatori from any operator-supplied `providers.custom`.
+ *  2. provider is built-in (anthropic, openai, google, openrouter) and the
+ *     model id is NOT in pi-ai's built-in catalogue → write the model into
+ *     `providers.<provider>.models[]` as a marker-bearing entry. The child
+ *     inherits baseUrl/api/auth from pi-ai's built-in defaults (auth comes
+ *     from the env var propagated by propagateApiKeyToEnv); only the model
+ *     id needs to be registered. This handles newly released model
+ *     versions, custom OpenRouter routes, and on-prem variants — anything
+ *     the operator can enter as free text in the UI but isn't shipped in
+ *     pi-mono's `defaultModelPerProvider` table.
+ *
+ * In both cases akmatori-owned entries carry the AKMATORI_MANAGED_MARKER so
+ * we can identify them on the next sync. Unmarked entries are treated as
+ * operator-owned and never mutated. Stale managed entries (from a prior
+ * provider/model selection) are cleared as part of every write, so the
+ * file never accumulates dead config across UI changes.
+ *
+ * Writes are atomic (write-to-tmp + rename) so a concurrent subagent reader
+ * cannot observe a half-written file. If the existing models.json is
+ * unparseable (even after JSONC stripping), we leave it alone rather than
+ * overwriting — operators may keep their own JSONC config there and an
+ * overwrite would silently drop their customizations.
+ *
+ * In practice akmatori deployments use one global LLM config, so concurrent
+ * writes by parallel sessions produce identical content. If an operator
+ * runs concurrent sessions with different configs, the last writer wins;
+ * the child still resolves a valid model, just possibly not the one the
+ * parent is using. This matches the existing single-global-config
+ * assumption baked into propagateApiKeyToEnv.
+ */
+function writeCustomProviderModelsJson(
+  provider: string,
+  model: string,
+  baseUrl: string | undefined,
+): void {
+  const agentDir = getAgentDir();
+  const modelsPath = path.join(agentDir, "models.json");
+
+  if (provider === "custom" && !baseUrl) {
+    console.warn(
+      "[agent-runner] custom provider missing base_url; subagents will fail to resolve model",
+    );
+    return;
+  }
+
+  const fileExists = fs.existsSync(modelsPath);
+  let providers: Record<string, unknown> = {};
+  if (fileExists) {
+    try {
+      const raw = fs.readFileSync(modelsPath, "utf-8");
+      const parsed = JSON.parse(stripJsonComments(raw)) as { providers?: Record<string, unknown> };
+      if (parsed && typeof parsed === "object" && parsed.providers && typeof parsed.providers === "object") {
+        providers = { ...parsed.providers };
+      }
+    } catch (err) {
+      // Preserve operator-maintained files rather than blowing them away.
+      // Subagent invocations may fail to resolve the custom model, but
+      // operator state stays intact for them to repair.
+      console.warn(
+        `[agent-runner] failed to parse ${modelsPath} (${(err as Error).message}); leaving file unchanged so operator customizations are preserved`,
+      );
+      return;
+    }
+  }
+
+  const before = JSON.stringify(providers);
+
+  const existingAkmatoriSlot = providers[AKMATORI_CUSTOM_PROVIDER_KEY] as
+    | { [AKMATORI_MANAGED_MARKER]?: boolean }
+    | undefined;
+  const akmatoriSlotIsOperatorOwned =
+    existingAkmatoriSlot !== undefined && !existingAkmatoriSlot[AKMATORI_MANAGED_MARKER];
+
+  // Migration: prior versions wrote under `providers.custom` with the
+  // marker. Now that we use a dedicated slot, drop any stale marker-bearing
+  // `custom` entry so it cannot mislead an operator inspecting the file.
+  // Unmarked `custom` entries are operator state and stay untouched.
+  const existingCustom = providers.custom as { [AKMATORI_MANAGED_MARKER]?: boolean } | undefined;
+  if (existingCustom !== undefined && existingCustom[AKMATORI_MANAGED_MARKER] === true) {
+    delete providers.custom;
+  }
+
+  // Clear stale akmatori-managed *model* entries across every built-in
+  // provider. The active model may have moved between providers (e.g. from
+  // openai → anthropic), and we don't want the child's registry to keep
+  // resolving the previous custom id under the old provider. Operator-
+  // supplied models (no marker) are left alone.
+  for (const [providerName, providerCfg] of Object.entries(providers)) {
+    if (providerName === AKMATORI_CUSTOM_PROVIDER_KEY) continue;
+    if (typeof providerCfg !== "object" || providerCfg === null) continue;
+    const cfg = providerCfg as { models?: unknown };
+    if (!Array.isArray(cfg.models)) continue;
+    const filtered = (cfg.models as Array<Record<string, unknown>>).filter(
+      (m) => m?.[AKMATORI_MANAGED_MARKER] !== true,
+    );
+    if (filtered.length === (cfg.models as unknown[]).length) continue;
+    // Only mutate the provider config when we actually removed something —
+    // keeps the no-op short-circuit (before === after) honest.
+    const updated: Record<string, unknown> = { ...(providerCfg as Record<string, unknown>) };
+    if (filtered.length === 0) {
+      delete updated.models;
+    } else {
+      updated.models = filtered;
+    }
+    providers[providerName] = updated;
+  }
+
+  if (provider === "custom") {
+    if (akmatoriSlotIsOperatorOwned) {
+      // An operator placed an entry under our dedicated slot. Don't clobber
+      // it; subagents will still resolve through operator config, which is
+      // the safer failure mode.
+      console.warn(
+        `[agent-runner] operator-managed providers.${AKMATORI_CUSTOM_PROVIDER_KEY} found in ${modelsPath}; not overwriting`,
+      );
+    } else {
+      // Write the env var NAME, not the literal apiKey, so the secret stays
+      // out of persistent on-disk state. The caller is responsible for
+      // setting process.env[AKMATORI_CUSTOM_API_KEY_ENV] to the live key —
+      // pi-mono's resolveConfigValueOrThrow reads the env var when resolving.
+      providers[AKMATORI_CUSTOM_PROVIDER_KEY] = {
+        baseUrl,
+        api: "openai-completions",
+        apiKey: AKMATORI_CUSTOM_API_KEY_ENV,
+        compat: { supportsLongCacheRetention: false },
+        models: [
+          {
+            id: model,
+            name: model,
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 128000,
+            maxTokens: 16384,
+          },
+        ],
+        [AKMATORI_MANAGED_MARKER]: true,
+      };
+    }
+  } else {
+    if (existingAkmatoriSlot !== undefined && !akmatoriSlotIsOperatorOwned) {
+      // Provider switched off "custom" — clean up our dedicated slot so the
+      // child cannot stumble onto a stale baseUrl/apiKey. Operator-placed
+      // entries (unmarked) stay untouched.
+      delete providers[AKMATORI_CUSTOM_PROVIDER_KEY];
+    }
+    // Built-in provider with an unknown model id needs a registry entry on
+    // disk so the child's `findInitialModel` saved-default path can resolve
+    // it via `modelRegistry.find(provider, model)`. Without this the child
+    // would fall through to step 4 (first available model) and run the
+    // subagent on a hardcoded default, not the UI-selected model.
+    if (!isBuiltInModelKnown(provider, model)) {
+      const existing = (providers[provider] as Record<string, unknown> | undefined) ?? {};
+      const existingModels = Array.isArray(existing.models)
+        ? (existing.models as Array<Record<string, unknown>>)
+        : [];
+      // Stale-cleanup above already stripped any prior akmatori-managed
+      // model entry, so existingModels here contains only operator models.
+      // Append our managed entry so an operator-supplied list stays first.
+      providers[provider] = {
+        ...existing,
+        models: [
+          ...existingModels,
+          {
+            id: model,
+            name: model,
+            reasoning: true,
+            input: ["text"],
+            contextWindow: 128000,
+            maxTokens: 16384,
+            [AKMATORI_MANAGED_MARKER]: true,
+          },
+        ],
+      };
+    }
+  }
+
+  const after = JSON.stringify(providers);
+  if (before === after && fileExists) {
+    // No changes to persist — avoid touching mtime so operators watching
+    // for unexpected config drift don't see spurious writes.
+    return;
+  }
+  if (before === after && !fileExists) {
+    // No changes and no file to begin with — don't create an empty file.
+    return;
+  }
+
+  try {
+    writeFileAtomic(modelsPath, JSON.stringify({ providers }, null, 2));
+  } catch (err) {
+    console.warn(`[agent-runner] failed to write ${modelsPath}: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Write `<agentDir>/settings.json` (global) AND `<workDir>/.pi/settings.json`
+ * (project) so child `pi` processes pick the same provider+model+thinking the
+ * parent session uses. Without this, the child's `findInitialModel` falls back
+ * to its provider-default catalogue (e.g. `claude-opus-4-7` for anthropic) or
+ * the first available model when multiple provider env vars happen to be set —
+ * running subagents on the wrong model or, in env-pollution edge cases, the
+ * wrong provider entirely.
+ *
+ * Why both files: pi-mono's SettingsManager deep-merges global with project,
+ * project taking precedence (FileSettingsStorage in settings-manager.ts). If
+ * only the global file is written, a `<workDir>/.pi/settings.json` carrying
+ * `defaultProvider`/`defaultModel`/`enabledModels` would silently override our
+ * choice. The project file pins the same values at the higher-precedence
+ * scope so neither pre-existing state nor anything written into workDir during
+ * the session can shadow the parent's UI selection. The parent itself uses
+ * `SettingsManager.inMemory(...)` and does not read either file.
+ *
+ * For UI-selected "custom" providers we point the child at the dedicated
+ * `akmatori-custom` slot we materialize in models.json (see
+ * `writeCustomProviderModelsJson`) rather than the unmanaged `custom` slot
+ * an operator may own.
+ *
+ * `defaultThinkingLevel` is pinned so subagents honor the UI-selected thinking
+ * mode. This matters most for OpenAI-compatible custom endpoints where the UI
+ * set thinking "off" — without the explicit setting the child would fall back
+ * to "medium" and send reasoning parameters that the gateway rejects.
+ *
+ * `enabledModels` is also cleared: pi's CLI scope-resolution
+ * (main.ts#buildSessionOptions) applies `enabledModels` *before* falling
+ * back to saved defaults, so an operator-set `enabledModels: ["openai/*"]`
+ * would override our `defaultProvider: "anthropic"` and pick the first
+ * OpenAI model in scope. The cycling restriction makes sense for an
+ * operator running `pi` interactively in this agentDir, but subagent
+ * subprocesses are headless and must use the UI-selected model.
+ *
+ * Reads/writes are JSONC-tolerant so operator-maintained settings.json
+ * files (with comments) survive a round-trip. Only `defaultProvider`,
+ * `defaultModel`, `defaultThinkingLevel`, and `enabledModels` are touched;
+ * every other operator preference (theme, keybindings, custom skills, etc.)
+ * is preserved. On parse failure we skip the write and warn — overwriting an
+ * operator's settings on every incident would be worse than the subagent
+ * picking a default.
+ */
+function writeSubagentDefaultsSettings(
+  provider: string,
+  model: string,
+  thinkingLevel: PiThinkingLevel | "off",
+  workDir: string,
+): void {
+  // For UI-selected "custom", route the child at the dedicated akmatori
+  // slot so the operator's `providers.custom` (if any) cannot intercept.
+  const targetProvider = provider === "custom" ? AKMATORI_CUSTOM_PROVIDER_KEY : provider;
+
+  const globalPath = path.join(getAgentDir(), "settings.json");
+  writeSubagentSettingsFile(globalPath, targetProvider, model, thinkingLevel);
+
+  // Project scope wins over global. We unconditionally pin the same values
+  // at workDir/.pi/settings.json so any project-level override (intentional
+  // or accidental) cannot shadow the parent's selection.
+  const projectPath = path.join(workDir, ".pi", "settings.json");
+  writeSubagentSettingsFile(projectPath, targetProvider, model, thinkingLevel);
+}
+
+function writeSubagentSettingsFile(
+  settingsPath: string,
+  targetProvider: string,
+  model: string,
+  thinkingLevel: PiThinkingLevel | "off",
+): void {
+  let settings: Record<string, unknown> = {};
+  const fileExists = fs.existsSync(settingsPath);
+  if (fileExists) {
+    try {
+      const raw = fs.readFileSync(settingsPath, "utf-8");
+      const parsed = JSON.parse(stripJsonComments(raw));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        settings = parsed as Record<string, unknown>;
+      }
+    } catch (err) {
+      console.warn(
+        `[agent-runner] failed to parse ${settingsPath} (${(err as Error).message}); leaving file unchanged`,
+      );
+      return;
+    }
+  }
+
+  const hadEnabledModels = Object.prototype.hasOwnProperty.call(settings, "enabledModels");
+  if (
+    settings.defaultProvider === targetProvider &&
+    settings.defaultModel === model &&
+    settings.defaultThinkingLevel === thinkingLevel &&
+    !hadEnabledModels
+  ) {
+    // Avoid touching mtime when nothing changed; reduces noise for
+    // operators watching for unexpected config drift.
+    return;
+  }
+
+  settings.defaultProvider = targetProvider;
+  settings.defaultModel = model;
+  settings.defaultThinkingLevel = thinkingLevel;
+  if (hadEnabledModels) {
+    delete settings.enabledModels;
+  }
+
+  try {
+    writeFileAtomic(settingsPath, JSON.stringify(settings, null, 2));
+  } catch (err) {
+    console.warn(`[agent-runner] failed to write ${settingsPath}: ${(err as Error).message}`);
   }
 }
 
@@ -278,6 +718,16 @@ export class AgentRunner {
     // provider's canonical variable name. Without this, every `subagent({...})`
     // invocation fails with "no API key configured".
     propagateApiKeyToEnv(params.llmSettings.provider, params.llmSettings.api_key);
+    // For "custom" providers the env-var path isn't enough — the child also
+    // needs to discover the model id and the operator's baseUrl. We hand
+    // those over via `<agentDir>/models.json`, which the child's
+    // ModelRegistry.create() reads at startup. The apiKey is referenced by
+    // env var name so the literal secret stays out of the persistent file.
+    writeCustomProviderModelsJson(
+      params.llmSettings.provider,
+      params.llmSettings.model,
+      params.llmSettings.base_url,
+    );
 
     // Model
     const model = resolveModel(
@@ -286,6 +736,22 @@ export class AgentRunner {
       params.llmSettings.base_url,
     );
     const thinkingLevel = mapThinkingLevel(params.llmSettings.thinking_level);
+
+    // Pin the child's default provider+model+thinking so subagents run on the
+    // same model/thinking the parent session uses. Without this, the child's
+    // `findInitialModel` picks the provider's catalogue default (e.g.
+    // `claude-opus-4-7` for anthropic) and can drift to a different
+    // provider entirely if multiple provider env vars are set. We write both
+    // global (agentDir) and project (workDir/.pi) scopes because pi-mono
+    // merges them with project taking precedence — pinning both prevents a
+    // pre-existing or in-session project file from shadowing the parent's
+    // selection.
+    writeSubagentDefaultsSettings(
+      params.llmSettings.provider,
+      params.llmSettings.model,
+      thinkingLevel,
+      params.workDir,
+    );
 
     // Session management: persist to disk so resume can restore conversation history.
     // For resume, use continueRecent to load the most recent session from the
@@ -358,11 +824,18 @@ export class AgentRunner {
     // ToolDefinition with typed promptGuidelines instead of requiring `as any`.
     // Passed via customTools so AgentSession picks up both the spawnHook and
     // the guidelines (the built-in bash tool is overridden by name match).
+    //
+    // We scrub provider API key env vars from the spawned shell so a
+    // prompt-injected `env`/`curl $ANTHROPIC_API_KEY ...` cannot exfiltrate
+    // the operator's LLM credentials via tool output. The keys still live in
+    // this process's env so pi-subagents (which spawns its own child `pi` via
+    // node:child_process.spawn with explicit `{ ...process.env, ... }`) can
+    // resolve them.
     const bashToolDef = createBashToolDefinition(params.workDir, {
       spawnHook: (ctx) => ({
         ...ctx,
         env: {
-          ...ctx.env,
+          ...scrubProviderApiKeysFromEnv(ctx.env),
           MCP_GATEWAY_URL: this.mcpGatewayUrl,
           INCIDENT_ID: params.incidentId,
         },

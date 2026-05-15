@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/akmatori/akmatori/internal/database"
 )
@@ -461,5 +463,358 @@ func TestCanonicalIngestName(t *testing.T) {
 		if got := canonicalIngestName(c.filename, c.name); got != c.want {
 			t.Errorf("canonicalIngestName(%q, %q) = %v, want %v", c.filename, c.name, got, c.want)
 		}
+	}
+}
+
+func TestIngestFromDisk_SkipsSymlinks(t *testing.T) {
+	// The agent worker has rw access to the memory mount, so a prompt-
+	// injected memory-writer could plant a symlink pointing outside the
+	// memory root. IngestFromDisk must skip symlinks rather than follow
+	// them via os.ReadFile, which would happily resolve /etc/passwd or any
+	// other readable path under the API container's mount namespace.
+	svc := setupMemoryServiceTest(t)
+	globalDir := filepath.Join(svc.MemoryDir(), MemoryScopeGlobal)
+	writeMemoryFile(t, globalDir, "real", "real memory", MemoryTypeHost, MemoryScopeGlobal, "inc-1", "real body")
+
+	// Drop a sensitive target outside the memory root and symlink to it
+	// from inside the scope. If symlink-following ever returns, this would
+	// be parsed and either ingested or surface in logs.
+	outside := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(outside, []byte("---\nname: leaked\ndescription: leaked\ntype: tool_quirk\nscope: global\n---\n\n# leaked\n\nleaked\n"), 0644); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+	linkPath := filepath.Join(globalDir, "evil.md")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := svc.IngestFromDisk(context.Background()); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	mems, _ := svc.ListMemoriesByScope(MemoryScopeGlobal)
+	if len(mems) != 1 || mems[0].Name != "real" {
+		t.Fatalf("symlinked file should be skipped; got %+v", mems)
+	}
+}
+
+func TestReadMemoryFileFromRoot_RejectsSymlinkAtPath(t *testing.T) {
+	// The IngestFromDisk readdir-time DirEntry.Type() check is a fast-path
+	// only; the open in readMemoryFileFromRoot is what closes the TOCTOU gap
+	// where a writer swaps a regular file for a symlink between readdir and
+	// read. O_NOFOLLOW must refuse to open a symlink at the final path
+	// component regardless of what readdir saw.
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.md")
+	if err := os.WriteFile(target, []byte("payload"), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "link.md")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open root: %v", err)
+	}
+	defer root.Close()
+
+	if _, ok := readMemoryFileFromRoot(root, "link.md"); ok {
+		t.Fatalf("readMemoryFileFromRoot should refuse to open a symlink path")
+	}
+}
+
+func TestReadMemoryFileFromRoot_RejectsSymlinkAtParentComponent(t *testing.T) {
+	// Defense in depth against the parent-component swap: even though
+	// os.Root scopes traversal to a single inode, we still reject a symlink
+	// at the final scope/file component. A planted symlink at <root>/<scope>
+	// pointing to another path inside the root would let an attacker funnel
+	// reads through a name they control. os.Root.OpenFile with O_NOFOLLOW
+	// catches this when the symlink IS the final component, and refuses to
+	// resolve symlinks outside the root in any case.
+	dir := t.TempDir()
+	realScope := filepath.Join(dir, "real-scope")
+	if err := os.MkdirAll(realScope, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	target := filepath.Join(realScope, "x.md")
+	if err := os.WriteFile(target, []byte("payload"), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	// Plant a symlink at <dir>/escape pointing OUTSIDE the root.
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open root: %v", err)
+	}
+	defer root.Close()
+
+	// os.Root.Open must refuse to traverse the escape symlink because its
+	// target lives outside the pinned root.
+	if _, err := root.Open("escape"); err == nil {
+		t.Fatalf("root.Open should refuse to traverse a symlink that escapes the root")
+	}
+}
+
+func TestReadMemoryFileFromRoot_RejectsFifoAtPath(t *testing.T) {
+	// A FIFO planted at the path would block os.ReadFile indefinitely.
+	// O_NONBLOCK lets the open return immediately and the fstat-then-mode
+	// check rejects it as non-regular without hanging.
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "pipe.md")
+	if err := syscall.Mkfifo(fifo, 0644); err != nil {
+		t.Skipf("mkfifo not supported in this environment: %v", err)
+	}
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open root: %v", err)
+	}
+	defer root.Close()
+
+	done := make(chan struct {
+		ok bool
+	}, 1)
+	go func() {
+		_, ok := readMemoryFileFromRoot(root, "pipe.md")
+		done <- struct{ ok bool }{ok: ok}
+	}()
+	select {
+	case res := <-done:
+		if res.ok {
+			t.Fatalf("readMemoryFileFromRoot should refuse to read from a FIFO")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("readMemoryFileFromRoot hung on a FIFO instead of returning")
+	}
+}
+
+func TestIngestFromDisk_SkipsOversizedFiles(t *testing.T) {
+	// A hostile (or buggy) memory-writer could plant a multi-GB .md file.
+	// os.ReadFile would slurp it into memory and OOM the API. The size
+	// gate must reject anything larger than maxMemoryFileBytes before
+	// reading.
+	svc := setupMemoryServiceTest(t)
+	globalDir := filepath.Join(svc.MemoryDir(), MemoryScopeGlobal)
+	writeMemoryFile(t, globalDir, "small", "small memory", MemoryTypeHost, MemoryScopeGlobal, "inc-1", "small body")
+
+	huge := make([]byte, maxMemoryFileBytes+1)
+	for i := range huge {
+		huge[i] = 'a'
+	}
+	if err := os.WriteFile(filepath.Join(globalDir, "huge.md"), huge, 0644); err != nil {
+		t.Fatalf("write huge: %v", err)
+	}
+
+	if err := svc.IngestFromDisk(context.Background()); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	mems, _ := svc.ListMemoriesByScope(MemoryScopeGlobal)
+	if len(mems) != 1 || mems[0].Name != "small" {
+		t.Fatalf("oversized file should be skipped; got %+v", mems)
+	}
+}
+
+// TestSyncMemoryFiles_DoesNotFollowSymlinkAtFilePath guards the write path
+// against a memory-writer-planted symlink at <memoryDir>/<scope>/<file>
+// pointing outside the memory root. Plain os.WriteFile would follow that
+// symlink and truncate the API-owned target (e.g. /akmatori/secrets/...) as
+// UID 1000. SyncMemoryFiles must refuse to follow the link and instead
+// either rewrite the slot in place or unlink it cleanly.
+func TestSyncMemoryFiles_DoesNotFollowSymlinkAtFilePath(t *testing.T) {
+	svc := setupMemoryServiceTest(t)
+	mem := &database.Memory{
+		Scope:       MemoryScopeGlobal,
+		Type:        MemoryTypeHost,
+		Name:        "real-memory",
+		Description: "real description",
+		Body:        "real body",
+		CreatedBy:   MemoryCreatedByOperator,
+	}
+	if _, err := svc.CreateMemory(mem); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Plant a "secret" file outside the memory root, then replace the
+	// canonical memory file with a symlink pointing at it. A vulnerable
+	// SyncMemoryFiles would follow the link and overwrite the secret.
+	outsideDir := t.TempDir()
+	secretPath := filepath.Join(outsideDir, "secret")
+	secretContent := []byte("SUPER-SECRET-CONTENT")
+	if err := os.WriteFile(secretPath, secretContent, 0600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+
+	scopeDir := filepath.Join(svc.MemoryDir(), MemoryScopeGlobal)
+	canonicalFile := filepath.Join(scopeDir, fmt.Sprintf("%d-real-memory.md", mem.ID))
+	if err := os.Remove(canonicalFile); err != nil {
+		t.Fatalf("remove canonical: %v", err)
+	}
+	if err := os.Symlink(secretPath, canonicalFile); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	// Trigger a sync (Update touches mtime; UpsertByName re-runs SyncMemoryFiles).
+	if _, err := svc.UpsertByName(&database.Memory{
+		Scope:       MemoryScopeGlobal,
+		Type:        MemoryTypeHost,
+		Name:        "real-memory",
+		Description: "updated description",
+		Body:        "updated body",
+		CreatedBy:   MemoryCreatedByOperator,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Secret must NOT be overwritten by SyncMemoryFiles.
+	got, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatalf("read secret after sync: %v", err)
+	}
+	if string(got) != string(secretContent) {
+		t.Fatalf("symlink followed: secret was rewritten\nwant: %q\ngot:  %q", secretContent, got)
+	}
+
+	// The canonical filename should now hold the rewritten memory content,
+	// not point at the secret. Either the sync replaced the link with a
+	// regular file (preferred — O_NOFOLLOW + create-fresh after stale-cleanup)
+	// or it left it broken; both are acceptable as long as the secret is
+	// intact. We assert the canonical file is no longer a symlink to the
+	// outside path so the next ingest cycle doesn't keep tripping over it.
+	info, err := os.Lstat(canonicalFile)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, _ := os.Readlink(canonicalFile)
+		if target == secretPath {
+			t.Fatalf("symlink at canonical path still points outside the memory root: %s -> %s", canonicalFile, target)
+		}
+	}
+}
+
+// TestSyncMemoryFiles_DoesNotHangOnFifoAtFilePath guards the write path
+// against a memory-writer-planted FIFO at the canonical file slot. A plain
+// open(O_WRONLY) on a FIFO with no reader blocks indefinitely, which would
+// hold syncMu and stall every subsequent SyncMemoryFiles call. The pre-Lstat
+// in writeMemoryFileInRoot must unlink the FIFO before opening so the write
+// proceeds without hanging.
+func TestSyncMemoryFiles_DoesNotHangOnFifoAtFilePath(t *testing.T) {
+	svc := setupMemoryServiceTest(t)
+	mem := &database.Memory{
+		Scope:       MemoryScopeGlobal,
+		Type:        MemoryTypeHost,
+		Name:        "fifo-target",
+		Description: "real description",
+		Body:        "real body",
+		CreatedBy:   MemoryCreatedByOperator,
+	}
+	if _, err := svc.CreateMemory(mem); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	scopeDir := filepath.Join(svc.MemoryDir(), MemoryScopeGlobal)
+	canonicalFile := filepath.Join(scopeDir, fmt.Sprintf("%d-fifo-target.md", mem.ID))
+	if err := os.Remove(canonicalFile); err != nil {
+		t.Fatalf("remove canonical: %v", err)
+	}
+	if err := syscall.Mkfifo(canonicalFile, 0644); err != nil {
+		t.Skipf("mkfifo not supported in this environment: %v", err)
+	}
+
+	// Trigger a sync from a goroutine with a watchdog. Without the pre-Lstat
+	// fix, UpsertByName's SyncMemoryFiles call blocks forever inside open()
+	// on the FIFO and the watchdog fires.
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.UpsertByName(&database.Memory{
+			Scope:       MemoryScopeGlobal,
+			Type:        MemoryTypeHost,
+			Name:        "fifo-target",
+			Description: "updated description",
+			Body:        "updated body",
+			CreatedBy:   MemoryCreatedByOperator,
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("SyncMemoryFiles hung on a FIFO instead of unlinking it and writing")
+	}
+
+	// After the sync, the canonical slot must hold a regular file (the
+	// freshly rewritten memory content), not the FIFO.
+	info, err := os.Lstat(canonicalFile)
+	if err != nil {
+		t.Fatalf("lstat canonical after sync: %v", err)
+	}
+	if info.Mode()&os.ModeNamedPipe != 0 {
+		t.Fatalf("canonical slot still holds a FIFO after sync; expected a regular file")
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("canonical slot is not a regular file after sync: mode=%v", info.Mode())
+	}
+}
+
+// TestSyncMemoryFiles_SkipsScopeDirReplacedWithSymlink guards against a
+// memory-writer swapping a scope directory for a symlink to outside the
+// memory root. SyncMemoryFiles must detect the symlink, skip the scope, and
+// leave the link's target untouched. Without the os.Root + Lstat guard, the
+// follow-up MkdirAll/Chmod would resolve through the link and either widen
+// permissions on an attacker-chosen directory or write into it.
+func TestSyncMemoryFiles_SkipsScopeDirReplacedWithSymlink(t *testing.T) {
+	svc := setupMemoryServiceTest(t)
+	// Seed a real memory so the sync has something to write.
+	mem := &database.Memory{
+		Scope:       "redis",
+		Type:        MemoryTypeHost,
+		Name:        "redis-port",
+		Description: "redis runs on 16379",
+		Body:        "redis prod cluster",
+		CreatedBy:   MemoryCreatedByOperator,
+	}
+	if _, err := svc.CreateMemory(mem); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Replace the scope dir with a symlink to an outside path that has
+	// mode 0700 (so we can detect a chmod-widening regression).
+	scopeDir := filepath.Join(svc.MemoryDir(), "redis")
+	if err := os.RemoveAll(scopeDir); err != nil {
+		t.Fatalf("rm scope: %v", err)
+	}
+	outsideDir := t.TempDir()
+	sensitive := filepath.Join(outsideDir, "sensitive")
+	if err := os.MkdirAll(sensitive, 0700); err != nil {
+		t.Fatalf("mkdir sensitive: %v", err)
+	}
+	if err := os.Symlink(sensitive, scopeDir); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	// Sync; should skip the scope and not touch the link's target.
+	if err := svc.SyncMemoryFiles(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	info, err := os.Stat(sensitive)
+	if err != nil {
+		t.Fatalf("stat sensitive: %v", err)
+	}
+	// chmod through the symlink would have widened to 0777. The Lstat-then-
+	// skip guard must prevent that.
+	if info.Mode().Perm() != 0700 {
+		t.Errorf("symlink target permissions were widened: got %o, want 0700", info.Mode().Perm())
+	}
+	// No files written under the link target either.
+	entries, _ := os.ReadDir(sensitive)
+	if len(entries) != 0 {
+		t.Errorf("symlink target was written into: %v", entries)
 	}
 }

@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/akmatori/akmatori/internal/database"
 	"gopkg.in/yaml.v3"
@@ -314,6 +319,13 @@ const (
 	manifestMaxLines = 200
 	manifestMaxBytes = 25 * 1024
 	manifestFile     = "MEMORY.md"
+
+	// maxMemoryFileBytes caps the per-file size IngestFromDisk will read.
+	// The agent worker has rw access to the shared memory mount, so a
+	// prompt-injected or buggy memory-writer could plant a huge .md and
+	// OOM the API. 1 MiB is well above any reasonable agent-produced
+	// memory and small enough that a hostile file is rejected cheaply.
+	maxMemoryFileBytes int64 = 1 << 20
 )
 
 // SyncMemoryFiles writes one directory per scope under memoryDir:
@@ -323,6 +335,17 @@ const (
 //	                                          YAML frontmatter and body.
 //
 // Stale scope directories and files are removed.
+//
+// The agent worker has rw access to /akmatori/memory, so a prompt-injected
+// memory-writer could plant a symlink at <memoryDir>/<scope> or
+// <memoryDir>/<scope>/<file> pointing at API-owned files outside the memory
+// tree (e.g. /akmatori/secrets/postgres_password). Plain os.WriteFile would
+// follow such a symlink and truncate the target as UID 1000. To prevent that,
+// every path lookup goes through *os.Root (openat-style, rejects symlinks
+// that escape the root) and every file write uses O_NOFOLLOW (rejects a
+// symlink at the final component). Scope dirs are Lstat'd before any write
+// so a swapped-in symlink/non-directory is detected and skipped rather than
+// followed.
 func (s *MemoryService) SyncMemoryFiles() error {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -341,6 +364,12 @@ func (s *MemoryService) SyncMemoryFiles() error {
 		slog.Warn("failed to widen memory directory permissions", "dir", s.memoryDir, "err", err)
 	}
 
+	root, err := os.OpenRoot(s.memoryDir)
+	if err != nil {
+		return fmt.Errorf("open memory root: %w", err)
+	}
+	defer root.Close()
+
 	var memories []database.Memory
 	if err := s.db.Order("created_at desc").Find(&memories).Error; err != nil {
 		return fmt.Errorf("failed to query memories: %w", err)
@@ -354,41 +383,118 @@ func (s *MemoryService) SyncMemoryFiles() error {
 	expectedScopes := make(map[string]bool, len(byScope))
 	for scope, entries := range byScope {
 		expectedScopes[scope] = true
-		scopeDir := filepath.Join(s.memoryDir, scope)
-		if err := os.MkdirAll(scopeDir, 0777); err != nil {
+
+		// Lstat before any mkdir/write: if the agent planted a symlink or a
+		// non-directory at this scope path, refuse to follow it. We do NOT
+		// remove it — that's the agent's mount and an operator may want to
+		// inspect what got planted before it disappears.
+		if info, lerr := root.Lstat(scope); lerr == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				slog.Warn("memory sync: scope path is a symlink; skipping", "scope", scope)
+				continue
+			}
+			if !info.IsDir() {
+				slog.Warn("memory sync: scope path is not a directory; skipping", "scope", scope, "mode", info.Mode().String())
+				continue
+			}
+		}
+
+		if err := root.MkdirAll(scope, 0777); err != nil {
 			return fmt.Errorf("failed to create scope dir %s: %w", scope, err)
 		}
 		// MkdirAll honors the process umask, so re-chmod to the intended mode.
-		if err := os.Chmod(scopeDir, 0777); err != nil {
+		if err := root.Chmod(scope, 0777); err != nil {
 			slog.Warn("failed to widen scope dir permissions", "scope", scope, "err", err)
 		}
 
+		scopeRoot, err := root.OpenRoot(scope)
+		if err != nil {
+			slog.Warn("memory sync: open scope subroot", "scope", scope, "err", err)
+			continue
+		}
+
 		expectedFiles := map[string]bool{manifestFile: true}
+		var writeErr error
 		for _, m := range entries {
 			fileName := fmt.Sprintf("%d-%s.md", m.ID, m.Name)
 			expectedFiles[fileName] = true
 			body := renderMemoryFile(m)
-			path := filepath.Join(scopeDir, fileName)
-			if err := os.WriteFile(path, []byte(body), 0666); err != nil {
-				return fmt.Errorf("failed to write memory file %s: %w", path, err)
+			if err := writeMemoryFileInRoot(scopeRoot, fileName, []byte(body)); err != nil {
+				writeErr = fmt.Errorf("failed to write memory file %s/%s: %w", scope, fileName, err)
+				break
 			}
+		}
+		if writeErr != nil {
+			scopeRoot.Close()
+			return writeErr
 		}
 
 		manifest := renderManifest(scope, entries)
-		manifestPath := filepath.Join(scopeDir, manifestFile)
-		if err := os.WriteFile(manifestPath, []byte(manifest), 0666); err != nil {
-			return fmt.Errorf("failed to write manifest %s: %w", manifestPath, err)
+		if err := writeMemoryFileInRoot(scopeRoot, manifestFile, []byte(manifest)); err != nil {
+			scopeRoot.Close()
+			return fmt.Errorf("failed to write manifest %s/%s: %w", scope, manifestFile, err)
 		}
 
-		if err := removeStaleFiles(scopeDir, expectedFiles); err != nil {
+		if err := removeStaleFilesInRoot(scopeRoot, expectedFiles); err != nil {
 			slog.Warn("failed to clean stale memory files", "scope", scope, "err", err)
 		}
+		scopeRoot.Close()
 	}
 
-	if err := removeStaleScopes(s.memoryDir, expectedScopes); err != nil {
+	if err := removeStaleScopesInRoot(root, expectedScopes); err != nil {
 		slog.Warn("failed to clean stale memory scope dirs", "err", err)
 	}
 
+	return nil
+}
+
+// writeTmpCounter disambiguates concurrent writes to the same scope from
+// within a single process. Combined with pid + nanosecond clock + the
+// original basename, it produces tmp names that cannot collide in practice.
+var writeTmpCounter uint64
+
+// writeMemoryFileInRoot writes data to <root>/<name> using a temp-file-and-
+// rename pattern: open a fresh tmp file with O_CREATE|O_EXCL|O_NOFOLLOW,
+// write the data, then atomically rename it onto <name>.
+//
+// Why this shape: the agent worker has rw access to the memory mount and a
+// prompt-injected memory-writer could plant a symlink, FIFO, or socket at
+// the canonical slot. Opening <name> directly for write is TOCTOU-unsafe —
+// even with a pre-Lstat, a writer could swap a FIFO with a pre-attached
+// reader into the slot between the check and the open, and our memory
+// content would flow to the attacker's reader instead of landing on disk.
+// rename(2) on Linux replaces the destination entry atomically without
+// opening it for write, so an attacker-planted FIFO/symlink/regular file
+// at <name> is replaced by our fresh regular file and the original target
+// (for a symlink) is never touched.
+//
+// O_EXCL on the tmp open guarantees we create a fresh regular file at a
+// previously-unused name. O_NOFOLLOW rejects a symlink at the tmp slot
+// too. Any tmp files left behind by a crash between open and rename are
+// cleaned up by removeStaleFilesInRoot on the next successful sync (their
+// names aren't in expectedFiles).
+func writeMemoryFileInRoot(root *os.Root, name string, data []byte) error {
+	tmpName := fmt.Sprintf("%s.tmp.%d.%d.%d", name, os.Getpid(), time.Now().UnixNano(), atomic.AddUint64(&writeTmpCounter, 1))
+
+	openFlags := os.O_WRONLY | os.O_CREATE | os.O_EXCL | syscall.O_NOFOLLOW
+	f, err := root.OpenFile(tmpName, openFlags, 0666)
+	if err != nil {
+		return fmt.Errorf("open tmp %s: %w", tmpName, err)
+	}
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil {
+		_ = root.Remove(tmpName)
+		return writeErr
+	}
+	if closeErr != nil {
+		_ = root.Remove(tmpName)
+		return closeErr
+	}
+	if err := root.Rename(tmpName, name); err != nil {
+		_ = root.Remove(tmpName)
+		return fmt.Errorf("rename %s -> %s: %w", tmpName, name, err)
+	}
 	return nil
 }
 
@@ -424,11 +530,26 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 		return fmt.Errorf("resolve memory dir: %w", err)
 	}
 
-	scopeEntries, err := os.ReadDir(rootAbs)
+	// os.OpenRoot pins the directory tree to a single inode and rejects any
+	// path component that escapes the root via symlink or `..`. The previous
+	// implementation used path-string operations (os.ReadDir on rootAbs and
+	// then on filepath.Join(rootAbs, scope)), which only protected against
+	// symlinks at the *final* component via O_NOFOLLOW. A prompt-injected
+	// memory-writer could plant a symlink at <memoryDir>/<scope> pointing
+	// outside the tree and the path-string walk would silently follow it
+	// during ReadDir. Going through *os.Root for all subsequent reads /
+	// opens makes the whole walk rooted at the original inode.
+	root, err := os.OpenRoot(rootAbs)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return fmt.Errorf("open memory root: %w", err)
+	}
+	defer root.Close()
+
+	scopeEntries, err := readDirFromRoot(root, ".")
+	if err != nil {
 		return fmt.Errorf("read memory dir: %w", err)
 	}
 
@@ -450,9 +571,8 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 			slog.Debug("memory ingest: skipping non-slug scope dir", "scope", scope)
 			continue
 		}
-		scopeDir := filepath.Join(rootAbs, scope)
 
-		files, err := os.ReadDir(scopeDir)
+		files, err := readDirFromRoot(root, scope)
 		if err != nil {
 			slog.Warn("memory ingest: read scope dir", "scope", scope, "err", err)
 			continue
@@ -473,20 +593,30 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 			if !strings.HasSuffix(f.Name(), ".md") {
 				continue
 			}
-			// os.ReadDir returns leaf names only (no slashes, no ".."), so
-			// filepath.Join cannot produce a path outside scopeDir. No
-			// symlink-following happens here; if hostile symlinks ever become
-			// a concern, switch to filepath.EvalSymlinks before reading.
-			cleaned := filepath.Join(scopeDir, f.Name())
+			// readDirFromRoot returns leaf names only (no slashes, no ".."),
+			// so building the rel path can't escape `scope`. The agent worker
+			// has rw access to this mount (docker-compose.yml :184), so a
+			// prompt-injected memory-writer could plant a symlink, FIFO,
+			// socket, or oversized file. We defend in depth: DirEntry.Type()
+			// is a cheap fast-path that rejects obvious non-regular entries
+			// seen at readdir time, then the root.OpenFile + fstat below is
+			// what makes the check TOCTOU-free (the descriptor pins a
+			// specific inode and *os.Root refuses to traverse outside the
+			// pinned root, so a writer swapping any path component
+			// afterwards can't redirect our read).
+			if !f.Type().IsRegular() {
+				slog.Warn("memory ingest: skipping non-regular file", "scope", scope, "name", f.Name(), "mode", f.Type().String())
+				continue
+			}
+			rel := filepath.Join(scope, f.Name())
 
-			data, err := os.ReadFile(cleaned)
-			if err != nil {
-				slog.Warn("memory ingest: read file", "path", cleaned, "err", err)
+			data, ok := readMemoryFileFromRoot(root, rel)
+			if !ok {
 				continue
 			}
 			mem, err := parseMemoryFile(data, scope)
 			if err != nil {
-				slog.Warn("memory ingest: parse file", "path", cleaned, "err", err)
+				slog.Warn("memory ingest: parse file", "path", rel, "err", err)
 				continue
 			}
 			if mem.CreatedBy == "" {
@@ -536,6 +666,76 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 
 	slog.Info("memory ingest complete", "ingested", ingested)
 	return nil
+}
+
+// readDirFromRoot is a thin wrapper around root.Open + Readdir that mirrors
+// os.ReadDir's semantics (sorted by name, returning DirEntry) but keeps every
+// path lookup pinned to *os.Root. The standard library's os.ReadDir resolves
+// its path argument via the global filesystem namespace, which would re-walk
+// /akmatori/memory/<scope> through any symlink an attacker swapped in after
+// the previous readdir saw a real directory there. Using root.Open with
+// path components like "." or "<scope>" makes the resolution happen via
+// openat(rootFd, name) so a swapped-in symlink at any intermediate level
+// can only resolve to something still under the original root inode.
+func readDirFromRoot(root *os.Root, name string) ([]os.DirEntry, error) {
+	dir, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
+}
+
+// readMemoryFileFromRoot opens `rel` relative to the pinned root with
+// O_NOFOLLOW|O_NONBLOCK so:
+//   - a symlink swapped in at any intermediate path component can only
+//     resolve to a location still under the original root (os.Root refuses
+//     to traverse outside its pinned directory),
+//   - O_NOFOLLOW rejects a symlink at the final component,
+//   - O_NONBLOCK keeps us from hanging if a FIFO ever slips past the
+//     readdir-time DirEntry.Type() filter (O_NOFOLLOW alone wouldn't catch
+//     a pre-existing pipe or socket),
+//   - fstat on the descriptor (rather than a pre-read Lstat on the path) is
+//     the only TOCTOU-free regular-file check — a writer can't invalidate
+//     it after the fact because we hold the fd,
+//   - the size check + io.LimitReader cap the read at maxMemoryFileBytes
+//     so a file growing under us can't OOM the API.
+//
+// Returns (data, true) on success, (nil, false) on any skip reason
+// already logged.
+func readMemoryFileFromRoot(root *os.Root, rel string) ([]byte, bool) {
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		slog.Warn("memory ingest: open file", "path", rel, "err", err)
+		return nil, false
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		slog.Warn("memory ingest: fstat file", "path", rel, "err", err)
+		return nil, false
+	}
+	if !info.Mode().IsRegular() {
+		slog.Warn("memory ingest: skipping non-regular file (fstat)", "path", rel, "mode", info.Mode().String())
+		return nil, false
+	}
+	if info.Size() > maxMemoryFileBytes {
+		slog.Warn("memory ingest: skipping oversized file", "path", rel, "size", info.Size(), "limit", maxMemoryFileBytes)
+		return nil, false
+	}
+
+	data, err := io.ReadAll(io.LimitReader(f, maxMemoryFileBytes))
+	if err != nil {
+		slog.Warn("memory ingest: read file", "path", rel, "err", err)
+		return nil, false
+	}
+	return data, true
 }
 
 // canonicalIngestName reports whether the on-disk filename matches the
@@ -776,10 +976,22 @@ func renderManifest(scope string, entries []database.Memory) string {
 	return b.String()
 }
 
-// removeStaleFiles deletes regular files in dir whose names are not in keep.
-// Subdirectories are left alone.
-func removeStaleFiles(dir string, keep map[string]bool) error {
-	entries, err := os.ReadDir(dir)
+// removeStaleFilesInRoot deletes regular files in the pinned scope root whose
+// names are not in keep. Symlinks and any other non-regular entries are also
+// purged — they have no business being there and the agent could swap a real
+// file for one between syncs. Subdirectories are left alone (we don't expect
+// nested layout inside a scope dir, and RemoveAll on an unknown subdirectory
+// could destroy operator state we don't recognize).
+//
+// All path lookups go through *os.Root so a symlink at any component cannot
+// redirect Remove() to a target outside the scope directory.
+func removeStaleFilesInRoot(scopeRoot *os.Root, keep map[string]bool) error {
+	dir, err := scopeRoot.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := dir.ReadDir(-1)
+	dir.Close()
 	if err != nil {
 		return err
 	}
@@ -788,7 +1000,11 @@ func removeStaleFiles(dir string, keep map[string]bool) error {
 			continue
 		}
 		if !keep[e.Name()] {
-			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+			// scopeRoot.Remove on a symlink unlinks the symlink itself
+			// (not its target). This is the safe operation here — we want
+			// to drop the planted link without touching whatever it points
+			// at, which may be an API-owned file outside the memory tree.
+			if err := scopeRoot.Remove(e.Name()); err != nil {
 				slog.Warn("failed to remove stale memory file", "file", e.Name(), "err", err)
 			}
 		}
@@ -796,24 +1012,36 @@ func removeStaleFiles(dir string, keep map[string]bool) error {
 	return nil
 }
 
-// removeStaleScopes deletes scope directories no longer present in keep.
-// Files inside such directories are removed first to keep the operation
-// best-effort even when ordering matters (e.g. on Windows-style locks).
-func removeStaleScopes(root string, keep map[string]bool) error {
-	entries, err := os.ReadDir(root)
+// removeStaleScopesInRoot deletes scope directories no longer present in keep.
+// Entries that aren't directories (e.g. an agent-planted symlink at a scope
+// path) are purged too so a future sync can recreate the slot from scratch.
+// All operations go through *os.Root.
+func removeStaleScopesInRoot(root *os.Root, keep map[string]bool) error {
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := dir.ReadDir(-1)
+	dir.Close()
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
+		name := e.Name()
+		if keep[name] {
+			continue
+		}
 		if !e.IsDir() {
+			// A non-directory at scope-root level (e.g. an agent-planted
+			// symlink or stray file) gets cleaned up — Remove unlinks the
+			// entry itself without following any symlink target.
+			if err := root.Remove(name); err != nil {
+				slog.Warn("failed to remove stale scope entry", "name", name, "err", err)
+			}
 			continue
 		}
-		if keep[e.Name()] {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
-		if err := os.RemoveAll(dir); err != nil {
-			slog.Warn("failed to remove stale scope dir", "dir", dir, "err", err)
+		if err := root.RemoveAll(name); err != nil {
+			slog.Warn("failed to remove stale scope dir", "dir", name, "err", err)
 		}
 	}
 	return nil
