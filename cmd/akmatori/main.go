@@ -169,11 +169,11 @@ func main() {
 		slog.Warn("failed to sync runbook files", "err", err)
 	}
 
-	// Wire post-investigation memory extraction. When skillService finishes
-	// an incident with status=completed, the extractor distills the transcript
-	// into long-lived memory entries via a one-shot LLM call.
-	memoryExtractor := services.NewMemoryExtractor(agentWSHandler, memoryService)
-	skillService.SetMemoryExtractor(memoryExtractor)
+	// Wire post-investigation memory ingest. When skillService finishes
+	// an incident with status=completed, the on-disk memory directory written
+	// by the memory-writer subagent is re-ingested into Postgres so REST and
+	// UI surfaces see fresh entries.
+	skillService.SetMemoryIngester(memoryService)
 
 	// Initialize default alert source types
 	if err := alertService.InitializeDefaultSourceTypes(); err != nil {

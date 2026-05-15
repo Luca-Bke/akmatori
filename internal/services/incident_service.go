@@ -146,9 +146,11 @@ func (s *SkillService) UpdateIncidentStatus(incidentUUID string, status database
 }
 
 // UpdateIncidentComplete updates the incident with final status, log, and response.
-// When the incident transitions to "completed" and a memory extractor is wired,
-// extraction is fired in a detached goroutine — the request context may already
-// be cancelled by the time this runs, so a fresh context is used.
+// When the incident transitions to "completed" and a memory ingester is wired,
+// the on-disk memory directory is re-ingested into Postgres in a detached
+// goroutine. The agent's memory-writer subagent has already produced the
+// files; ingest reconciles them with the DB so the REST API and Slack/UI
+// surfaces see fresh entries without restarting the API.
 func (s *SkillService) UpdateIncidentComplete(incidentUUID string, status database.IncidentStatus, sessionID string, fullLog string, response string, tokensUsed int, executionTimeMs int64) error {
 	now := time.Now()
 	updates := map[string]interface{}{
@@ -165,20 +167,18 @@ func (s *SkillService) UpdateIncidentComplete(incidentUUID string, status databa
 		return fmt.Errorf("failed to update incident: %w", err)
 	}
 
-	if status == database.IncidentStatusCompleted && s.memoryExtractor != nil {
-		// Re-read so the extractor sees the persisted final state (response/fullLog
-		// are passed into this method but a separate read is cheap and avoids
-		// stale caller-side data).
-		incident, err := s.GetIncident(incidentUUID)
-		if err == nil {
-			extractor := s.memoryExtractor
-			go func(i *database.Incident) {
-				ctx := context.Background()
-				extractor.Extract(ctx, i)
-			}(incident)
-		} else {
-			slog.Warn("memory extraction skipped: could not reload incident", "uuid", incidentUUID, "err", err)
-		}
+	if status == database.IncidentStatusCompleted && s.memoryIngester != nil {
+		// Detached: the request context may already be cancelled by the time
+		// this runs, so a fresh background context is used. Failures are
+		// logged-only — ingest is best-effort and must not affect the caller.
+		ingester := s.memoryIngester
+		uuid := incidentUUID
+		go func() {
+			ctx := context.Background()
+			if err := ingester.IngestFromDisk(ctx); err != nil {
+				slog.Warn("memory ingest from disk failed", "incident", uuid, "err", err)
+			}
+		}()
 	}
 
 	return nil

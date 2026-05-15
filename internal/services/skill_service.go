@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -22,14 +23,14 @@ type SkillService struct {
 	toolService      *ToolService
 	contextService   *ContextService
 	oneShotLLMCaller OneShotLLMCaller // optional; nil = title generation falls back deterministically
-	memoryExtractor  *MemoryExtractor // optional; nil = post-investigation extraction is a no-op
+	memoryIngester   MemoryIngester   // optional; nil = post-investigation file ingest is a no-op
 }
 
-// SetMemoryExtractor wires the post-investigation extractor that runs in a
-// goroutine when an incident transitions to a terminal status.
-// Optional — when unset, extraction is skipped silently.
-func (s *SkillService) SetMemoryExtractor(e *MemoryExtractor) {
-	s.memoryExtractor = e
+// SetMemoryIngester wires the post-investigation memory file ingester that
+// runs in a detached goroutine when an incident transitions to a terminal
+// status. Optional — when unset, ingest is skipped silently.
+func (s *SkillService) SetMemoryIngester(m MemoryIngester) {
+	s.memoryIngester = m
 }
 
 // NewSkillService creates a new skill service. The oneShotLLMCaller is optional:
@@ -45,6 +46,13 @@ func NewSkillService(dataDir string, toolService *ToolService, contextService *C
 		contextService:   contextService,
 		oneShotLLMCaller: oneShotLLMCaller,
 	}
+}
+
+// MemoryIngester represents the post-incident file-to-DB ingest call.
+// Kept as a narrow interface so SkillService can be tested without pulling
+// in the full MemoryService.
+type MemoryIngester interface {
+	IngestFromDisk(ctx context.Context) error
 }
 
 // ValidateSkillName validates that skill name follows kebab-case format

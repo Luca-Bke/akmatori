@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -428,6 +429,205 @@ func (s *MemoryService) SyncMemoryFiles() error {
 
 	go s.triggerQMDReindex()
 	return nil
+}
+
+// IngestFromDisk walks <memoryDir>/<scope>/*.md (skipping MEMORY.md) and
+// upserts each well-formed memory file into the database keyed by (scope, name).
+// Paths that escape a known scope directory are rejected. Files that fail to
+// parse or validate are logged and skipped — ingest is best-effort and must
+// never partial-fail the caller (called from post-incident hooks).
+//
+// Idempotency: re-running on the same directory state is a no-op at the row
+// level (UpsertByName conflict on (scope, name) overwrites in place). The
+// caller (UpdateIncidentComplete) tolerates being called more than once for
+// the same incident.
+//
+// CreatedBy is forced to "agent" because the file producer is the
+// memory-writer subagent. Operator-authored rows come through different
+// CRUD paths and are not represented as files written by the agent.
+//
+// All files are read and parsed first, then upserted in a second pass. The
+// upsert path triggers SyncMemoryFiles, which renames new files into the
+// canonical <id>-<name>.md form and purges "stale" files from the scope dir
+// — including any file the read pass hasn't gotten to yet. Collecting all
+// parsed memories before any DB write decouples the file-reading loop from
+// the file-rewriting side effect.
+func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
+	if s.memoryDir == "" {
+		return fmt.Errorf("memory directory not configured")
+	}
+
+	rootAbs, err := filepath.Abs(s.memoryDir)
+	if err != nil {
+		return fmt.Errorf("resolve memory dir: %w", err)
+	}
+
+	scopeEntries, err := os.ReadDir(rootAbs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read memory dir: %w", err)
+	}
+
+	// Two-pass walk: collect first, upsert second. See doc comment above.
+	var parsed []*database.Memory
+	for _, scopeEnt := range scopeEntries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !scopeEnt.IsDir() {
+			continue
+		}
+		scope := scopeEnt.Name()
+		if !validMemoryName(scope) {
+			slog.Debug("memory ingest: skipping non-slug scope dir", "scope", scope)
+			continue
+		}
+		scopeDir := filepath.Join(rootAbs, scope)
+		scopePrefix := scopeDir + string(filepath.Separator)
+
+		files, err := os.ReadDir(scopeDir)
+		if err != nil {
+			slog.Warn("memory ingest: read scope dir", "scope", scope, "err", err)
+			continue
+		}
+		// Deduplicate by (scope, name): the same memory may exist on disk as
+		// both `<name>.md` (just written by the agent) and `<id>-<name>.md`
+		// (the canonical form from a prior sync). Keep whichever is read
+		// last; ReadDir returns lexically sorted entries, so the canonical
+		// form ("1-foo.md") sorts before the agent's "foo.md" and the
+		// agent's newer write wins.
+		seenInScope := map[string]int{}
+		for _, f := range files {
+			if f.IsDir() || f.Name() == manifestFile {
+				continue
+			}
+			if !strings.HasSuffix(f.Name(), ".md") {
+				continue
+			}
+			rawPath := filepath.Join(scopeDir, f.Name())
+			cleaned, err := filepath.Abs(rawPath)
+			if err != nil {
+				slog.Warn("memory ingest: resolve path", "path", rawPath, "err", err)
+				continue
+			}
+			// Defense in depth: cleaned must live under scopeDir. Without
+			// this check, a path traversal via a symlink or a crafted
+			// filename could let a file outside the scope dir be claimed
+			// against this scope.
+			if !strings.HasPrefix(cleaned, scopePrefix) {
+				slog.Warn("memory ingest: rejecting path outside scope dir", "path", cleaned, "scope_dir", scopeDir)
+				continue
+			}
+
+			data, err := os.ReadFile(cleaned)
+			if err != nil {
+				slog.Warn("memory ingest: read file", "path", cleaned, "err", err)
+				continue
+			}
+			mem, err := parseMemoryFile(data, scope)
+			if err != nil {
+				slog.Warn("memory ingest: parse file", "path", cleaned, "err", err)
+				continue
+			}
+			mem.CreatedBy = MemoryCreatedByAgent
+
+			if idx, ok := seenInScope[mem.Name]; ok {
+				parsed[idx] = mem
+				continue
+			}
+			seenInScope[mem.Name] = len(parsed)
+			parsed = append(parsed, mem)
+		}
+	}
+
+	ingested := 0
+	for _, mem := range parsed {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := s.UpsertByName(mem); err != nil {
+			slog.Warn("memory ingest: upsert", "scope", mem.Scope, "name", mem.Name, "err", err)
+			continue
+		}
+		ingested++
+	}
+
+	slog.Info("memory ingest complete", "ingested", ingested)
+	return nil
+}
+
+// parseMemoryFile decodes a memory markdown file (YAML frontmatter + body)
+// into a Memory ready for UpsertByName. The scope argument is the on-disk
+// directory the file came from; if the file's frontmatter scope is empty or
+// mismatches, the on-disk scope wins (the directory layout is authoritative).
+func parseMemoryFile(data []byte, scope string) (*database.Memory, error) {
+	src := strings.TrimLeft(string(data), " \t\r\n")
+	const fence = "---"
+	if !strings.HasPrefix(src, fence) {
+		return nil, fmt.Errorf("missing opening frontmatter fence")
+	}
+	rest := strings.TrimLeft(src[len(fence):], "\r\n")
+	end := strings.Index(rest, "\n"+fence)
+	if end < 0 {
+		return nil, fmt.Errorf("missing closing frontmatter fence")
+	}
+	fmBytes := rest[:end]
+	body := strings.TrimLeft(rest[end+len("\n"+fence):], "\r\n")
+
+	var fm memoryFrontmatter
+	if err := yaml.Unmarshal([]byte(fmBytes), &fm); err != nil {
+		return nil, fmt.Errorf("parse frontmatter: %w", err)
+	}
+	if strings.TrimSpace(fm.Name) == "" {
+		return nil, fmt.Errorf("frontmatter missing name")
+	}
+	if strings.TrimSpace(fm.Description) == "" {
+		return nil, fmt.Errorf("frontmatter missing description")
+	}
+	if !ValidMemoryType(fm.Type) {
+		return nil, fmt.Errorf("invalid memory type %q", fm.Type)
+	}
+
+	// Strip the `# <name>` header and the description echo so the persisted
+	// Body field doesn't duplicate frontmatter content on every round-trip.
+	body = stripBodyHeader(body, fm.Name, fm.Description)
+
+	return &database.Memory{
+		Scope:        scope,
+		Type:         fm.Type,
+		Name:         strings.TrimSpace(fm.Name),
+		Description:  strings.ReplaceAll(strings.TrimSpace(fm.Description), "\n", " "),
+		Body:         body,
+		IncidentUUID: strings.TrimSpace(fm.IncidentUUID),
+	}, nil
+}
+
+// stripBodyHeader removes the `# <name>` heading and the description echo
+// that renderMemoryFile emits at the top of the body, leaving only the
+// caller-supplied long-form body. The renderer is the inverse of this
+// helper — together they form a clean round-trip.
+func stripBodyHeader(body, name, description string) string {
+	body = strings.TrimLeft(body, " \t\n\r")
+
+	header := "# " + name
+	if strings.HasPrefix(body, header+"\n") {
+		body = body[len(header)+1:]
+	} else if strings.HasPrefix(body, header+"\r\n") {
+		body = body[len(header)+2:]
+	}
+	body = strings.TrimLeft(body, " \t\n\r")
+
+	desc := strings.ReplaceAll(strings.TrimSpace(description), "\n", " ")
+	if desc != "" && strings.HasPrefix(body, desc) {
+		body = body[len(desc):]
+		body = strings.TrimLeft(body, " \t\n\r")
+	}
+	// Trim trailing whitespace so a roundtrip (parse → render) doesn't keep
+	// accumulating a blank line on every cycle. renderMemoryFile re-adds the
+	// single terminating newline as needed.
+	return strings.TrimRight(body, " \t\n\r")
 }
 
 // memoryFrontmatter is the on-disk YAML schema for memory files. yaml.Marshal

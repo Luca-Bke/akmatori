@@ -91,12 +91,12 @@ Delete the QMD container and the gateway-side runbook/memory proxies. Mount the 
 - Modify: `cmd/akmatori/main.go` — drop `NewMemoryExtractor` + `SetMemoryExtractor` wiring
 - Create: `internal/services/memory_service_ingest_test.go` — table-driven test that drops fixture .md files into a tmp memory dir and asserts they round-trip into the DB via `IngestFromDisk`, including: new files create rows, modified files update rows (by name+scope), files with same identity stay idempotent, files outside the scope dirs are rejected
 
-- [ ] implement `MemoryService.IngestFromDisk` with strict path validation (`filepath.Clean` + scope-dir prefix check)
-- [ ] swap the post-incident extractor invocation for `IngestFromDisk`
-- [ ] delete `memory_extractor.go`, `memory_extractor_test.go`, and the extractor wiring in `main.go` + `skill_service.go`
-- [ ] add the ingest test
-- [ ] update `memory_prompt_test.go` to drop extractor-prompt assertions
-- [ ] run `make test` — must pass before task 5
+- [x] implement `MemoryService.IngestFromDisk` with strict path validation (`filepath.Clean` + scope-dir prefix check)
+- [x] swap the post-incident extractor invocation for `IngestFromDisk`
+- [x] delete `memory_extractor.go`, `memory_extractor_test.go`, and the extractor wiring in `main.go` + `skill_service.go`
+- [x] add the ingest test
+- [x] update `memory_prompt_test.go` to drop extractor-prompt assertions (no changes needed — file had no extractor references)
+- [x] run `make test` — must pass before task 5
 
 ### Task 5: Remove QMD-related backend code
 
