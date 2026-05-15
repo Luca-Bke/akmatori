@@ -1,5 +1,14 @@
 .claude
-akmatori_data
+akmatori_data/*
+# System-supplied subagent definitions ship with the repo so operators get
+# runbook-searcher / memory-searcher / memory-writer out of the box. Operator
+# customisations under akmatori_data/agents/ remain untracked (the recursive
+# ignore below still hides them).
+!akmatori_data/agents/
+akmatori_data/agents/*
+!akmatori_data/agents/runbook-searcher.md
+!akmatori_data/agents/memory-searcher.md
+!akmatori_data/agents/memory-writer.md
 # Binaries for programs and plugins
 *.exe
 *.exe~

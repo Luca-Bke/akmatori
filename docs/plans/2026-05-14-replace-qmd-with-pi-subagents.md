@@ -61,11 +61,11 @@ Delete the QMD container and the gateway-side runbook/memory proxies. Mount the 
 - Create: `akmatori_data/agents/memory-writer.md` (frontmatter with read + write + edit tools; body explains memory file format, scope dirs, idempotent upserts by `name:` slug, refuses to escape `/akmatori/memory/`)
 - Modify: `docker-compose.yml` (verify runbooks RO and memory RW mounts are in place for the agent — no change expected beyond task 1)
 
-- [ ] write `runbook-searcher.md` with `tools: read, grep, find, ls, bash, rg, fzf` and a system prompt that: cd's into `/akmatori/runbooks/`, runs rg/find against the alert summary, returns top-3 candidate file paths + 5-line snippets, and refuses to leave that directory
-- [ ] write `memory-searcher.md` mirroring the same shape, scoped to `/akmatori/memory/`, returning top hits with file paths and brief excerpts
-- [ ] write `memory-writer.md` with `tools: read, edit, write, grep, ls, rg`, a system prompt that: receives a `task` describing what to remember + the originating incident UUID, searches `/akmatori/memory/<scope>/` for an existing file with that semantic name first (idempotency), upserts using the existing markdown+frontmatter shape produced by `MemoryService.formatMemoryFile`, refuses paths outside `/akmatori/memory/`, and emits a short summary of files written/changed
-- [ ] add a Go-side unit test that opens all three files and asserts the frontmatter parses and the body references the correct mount path
-- [ ] run `make test` — must pass before task 3
+- [x] write `runbook-searcher.md` with `tools: read, grep, find, ls, bash, rg, fzf` and a system prompt that: cd's into `/akmatori/runbooks/`, runs rg/find against the alert summary, returns top-3 candidate file paths + 5-line snippets, and refuses to leave that directory
+- [x] write `memory-searcher.md` mirroring the same shape, scoped to `/akmatori/memory/`, returning top hits with file paths and brief excerpts
+- [x] write `memory-writer.md` with `tools: read, edit, write, grep, ls, rg`, a system prompt that: receives a `task` describing what to remember + the originating incident UUID, searches `/akmatori/memory/<scope>/` for an existing file with that semantic name first (idempotency), upserts using the existing markdown+frontmatter shape produced by `MemoryService.formatMemoryFile`, refuses paths outside `/akmatori/memory/`, and emits a short summary of files written/changed
+- [x] add a Go-side unit test that opens all three files and asserts the frontmatter parses and the body references the correct mount path
+- [x] run `make test` — must pass before task 3
 
 ### Task 3: Switch incident-manager and skill prompts to call subagents (search + write)
 
