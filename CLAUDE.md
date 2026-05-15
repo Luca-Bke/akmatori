@@ -89,13 +89,14 @@ Rules:
 
 ### Runbooks and memory search/write
 
-Runbooks live in Postgres and sync to markdown under `akmatori_data/runbooks/`. Cross-incident memory lives in markdown under `akmatori_data/memory/`. The agent reaches both via pi-mono subagents (`runbook-searcher`, `memory-searcher`, `memory-writer`) over read-only and read-write mounts respectively.
+Runbooks live in Postgres and sync to markdown under `akmatori_data/runbooks/` (mounted read-only into the agent). Cross-incident memory lives in markdown under `akmatori_data/memory/` (mounted read-write so the memory-writer subagent can edit in place). The agent reaches both via pi-mono subagents (`runbook-searcher`, `memory-searcher`, `memory-writer`).
 
 Rules:
 - keep DB state and on-disk runbook files in sync (the runbook service writes both directions)
 - the incident-manager prompt invokes `subagent({agent: "runbook-searcher", task: ...})` for SOP lookup — do not introduce direct grep loops in the main agent
 - memory recall goes through `memory-searcher`; durable findings get written by `memory-writer` near end-of-investigation
-- on incident completion the API runs `MemoryService.IngestFromDisk` to materialize new memory files into Postgres (idempotent by scope + `name:` slug)
+- the memory-writer subagent must be invoked with `{agent: "memory-writer", task, scope, incident}` — scope and incident are required so `IngestFromDisk` upserts route to the correct row
+- on incident completion the API runs `MemoryService.IngestFromDisk` to materialize new memory files into Postgres (idempotent by scope + `name:` slug); operator-authored rows carry `created_by: operator` in their frontmatter and ingest preserves that
 
 ### Slack investigation UX
 
@@ -174,6 +175,8 @@ Akmatori intentionally keeps working when optional AI pieces fail. When adding A
 - `typebox` is imported from `typebox`, not `@sinclair/typebox`
 - `DefaultResourceLoader` requires `agentDir`; pass `getAgentDir()` in production and mocks
 - Provider SDKs are lazy-loaded; Akmatori forwards retry and timeout settings and uses long provider timeouts for slow models
+- Subagent support: `agent-runner.ts` keeps `noExtensions: false` and passes `additionalExtensionPaths: ["/opt/pi-extensions/pi-subagents"]`. The pi-subagents extension is baked into the image at that path; `~/.pi/agent/extensions` is a thin operator-supplied mount. The agent image must have `pi` on `PATH` and `ripgrep`/`fzf` installed for subagent recon to function
+- Subagent subprocess auth: pi-subagents spawns each subagent in a child `pi` process whose AuthStorage is independent — `agent-runner.ts` mirrors the active API key into `process.env[<provider env var>]` so the child inherits it. Subagent `.md` files intentionally omit `model:` so the child inherits the parent provider/model (hard-coding a model name would break non-Anthropic deployments)
 
 ## Testing Rules
 

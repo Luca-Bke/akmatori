@@ -34,7 +34,7 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 		{
 			filename:     "runbook-searcher.md",
 			wantName:     "runbook-searcher",
-			wantTools:    []string{"read", "grep", "find", "ls", "bash", "rg", "fzf"},
+			wantTools:    []string{"read", "grep", "find", "ls", "bash"},
 			wantScopeDir: "/akmatori/runbooks/",
 			wantPhrases: []string{
 				"out of scope",
@@ -44,7 +44,7 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 		{
 			filename:     "memory-searcher.md",
 			wantName:     "memory-searcher",
-			wantTools:    []string{"read", "grep", "find", "ls", "bash", "rg", "fzf"},
+			wantTools:    []string{"read", "grep", "find", "ls", "bash"},
 			wantScopeDir: "/akmatori/memory/",
 			wantPhrases: []string{
 				"out of scope",
@@ -54,7 +54,7 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 		{
 			filename:     "memory-writer.md",
 			wantName:     "memory-writer",
-			wantTools:    []string{"read", "edit", "write", "grep", "ls", "rg"},
+			wantTools:    []string{"read", "edit", "write", "grep", "ls", "bash"},
 			wantScopeDir: "/akmatori/memory/",
 			wantPhrases: []string{
 				"out of scope",
@@ -93,8 +93,12 @@ func TestSubagentDefinitionFiles(t *testing.T) {
 			if strings.TrimSpace(meta.Description) == "" {
 				t.Errorf("description must not be empty")
 			}
-			if strings.TrimSpace(meta.Model) == "" {
-				t.Errorf("model must not be empty (subagent runs need an explicit model)")
+			// `model:` is intentionally omitted so the subagent inherits the
+			// parent session's provider+model. Hard-coding (e.g.
+			// `claude-haiku-4-5`) would break deployments configured for
+			// OpenAI/Google/OpenRouter/custom providers.
+			if strings.TrimSpace(meta.Model) != "" {
+				t.Errorf("model must be empty so the subagent inherits the parent provider/model (got %q)", meta.Model)
 			}
 
 			gotTools := splitCommaList(meta.Tools)

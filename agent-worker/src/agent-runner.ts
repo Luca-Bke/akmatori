@@ -196,6 +196,38 @@ export function resolveModel(
 }
 
 // ---------------------------------------------------------------------------
+// Provider env var propagation
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider → env var name used by pi-ai's env-api-keys resolver. Mirrors the
+ * single-key mapping from
+ * @earendil-works/pi-ai/dist/env-api-keys.js#getApiKeyEnvVars so spawned
+ * subagent subprocesses can authenticate against the same provider/key the
+ * parent session uses. Only includes providers Akmatori actually configures.
+ */
+const PROVIDER_ENV_KEY: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GEMINI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+};
+
+/**
+ * Copy the active API key into process.env under the provider's canonical
+ * variable name so child `pi` processes spawned by pi-subagents inherit it.
+ * No-op for "custom" providers, which rely on baseUrl-only auth (or whose
+ * scheme isn't captured here) — subagent runs against custom endpoints will
+ * still fail until the operator sets the env var directly.
+ */
+function propagateApiKeyToEnv(provider: string, apiKey: string): void {
+  const envVar = PROVIDER_ENV_KEY[provider];
+  if (envVar && apiKey) {
+    process.env[envVar] = apiKey;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // AgentRunner
 // ---------------------------------------------------------------------------
 
@@ -239,6 +271,13 @@ export class AgentRunner {
     // Auth
     const authStorage = AuthStorage.inMemory();
     authStorage.setRuntimeApiKey(params.llmSettings.provider, params.llmSettings.api_key);
+    // pi-subagents spawns each subagent in a child `pi` process whose
+    // AuthStorage is independent from this one — `setRuntimeApiKey` lives in
+    // the parent's memory only. The child resolves keys from env vars (pi-ai
+    // env-api-keys.js), so we mirror the active key into process.env using the
+    // provider's canonical variable name. Without this, every `subagent({...})`
+    // invocation fails with "no API key configured".
+    propagateApiKeyToEnv(params.llmSettings.provider, params.llmSettings.api_key);
 
     // Model
     const model = resolveModel(
@@ -305,6 +344,13 @@ export class AgentRunner {
         : {}),
     });
     await resourceLoader.reload();
+    // Surface extension load failures so a missing pi-subagents (transitive
+    // dep break, jiti error, peer-dep mismatch) shows up as a startup signal
+    // instead of silently disabling `subagent({...})` calls mid-investigation.
+    const extResult = resourceLoader.getExtensions();
+    for (const extErr of extResult.errors ?? []) {
+      console.warn(`[agent-runner] extension load error path=${extErr.path}: ${extErr.error}`);
+    }
 
     // Create a typed bash ToolDefinition with spawnHook to inject MCP Gateway
     // env vars per-session, and promptGuidelines for system prompt inclusion.

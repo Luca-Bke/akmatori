@@ -404,16 +404,17 @@ func (s *MemoryService) SyncMemoryFiles() error {
 // caller (UpdateIncidentComplete) tolerates being called more than once for
 // the same incident.
 //
-// CreatedBy is forced to "agent" because the file producer is the
-// memory-writer subagent. Operator-authored rows come through different
-// CRUD paths and are not represented as files written by the agent.
+// CreatedBy defaults to "agent" (the memory-writer subagent produces these
+// files), but a frontmatter `created_by: operator` value is preserved so a
+// SyncMemoryFiles round-trip of operator-authored rows doesn't silently flip
+// authorship to agent on the next ingest.
 //
-// All files are read and parsed first, then upserted in a second pass. The
-// upsert path triggers SyncMemoryFiles, which renames new files into the
-// canonical <id>-<name>.md form and purges "stale" files from the scope dir
-// — including any file the read pass hasn't gotten to yet. Collecting all
-// parsed memories before any DB write decouples the file-reading loop from
-// the file-rewriting side effect.
+// All files are read and parsed first, then upserted in a single batch. The
+// per-row UpsertByName path otherwise triggers SyncMemoryFiles, which renames
+// new files into the canonical <id>-<name>.md form and purges "stale" files
+// from the scope dir — including any file the read pass hasn't gotten to yet.
+// Collecting all parsed memories first decouples reading from rewriting and
+// keeps the cost linear instead of O(N²) full re-syncs.
 func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 	if s.memoryDir == "" {
 		return fmt.Errorf("memory directory not configured")
@@ -433,7 +434,11 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 	}
 
 	// Two-pass walk: collect first, upsert second. See doc comment above.
-	var parsed []*database.Memory
+	type parsedEntry struct {
+		mem       *database.Memory
+		canonical bool // true if filename matches `<id>-<name>.md`
+	}
+	var parsed []*parsedEntry
 	for _, scopeEnt := range scopeEntries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -447,7 +452,6 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 			continue
 		}
 		scopeDir := filepath.Join(rootAbs, scope)
-		scopePrefix := scopeDir + string(filepath.Separator)
 
 		files, err := os.ReadDir(scopeDir)
 		if err != nil {
@@ -455,11 +459,13 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 			continue
 		}
 		// Deduplicate by (scope, name): the same memory may exist on disk as
-		// both `<name>.md` (just written by the agent) and `<id>-<name>.md`
-		// (the canonical form from a prior sync). Keep whichever is read
-		// last; ReadDir returns lexically sorted entries, so the canonical
-		// form ("1-foo.md") sorts before the agent's "foo.md" and the
-		// agent's newer write wins.
+		// both `<name>.md` (the agent's freshly written file) and
+		// `<id>-<name>.md` (the canonical form from a prior sync). Prefer the
+		// non-canonical entry — that's the agent's newer write. Falling back
+		// to lex-sort order is unreliable: a short numeric id can be smaller
+		// than the first character of the name (e.g. id 5, name "3foo"
+		// produces "5-3foo.md" > "3foo.md") and the canonical form would
+		// wrongly win.
 		seenInScope := map[string]int{}
 		for _, f := range files {
 			if f.IsDir() || f.Name() == manifestFile {
@@ -468,20 +474,11 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 			if !strings.HasSuffix(f.Name(), ".md") {
 				continue
 			}
-			rawPath := filepath.Join(scopeDir, f.Name())
-			cleaned, err := filepath.Abs(rawPath)
-			if err != nil {
-				slog.Warn("memory ingest: resolve path", "path", rawPath, "err", err)
-				continue
-			}
-			// Defense in depth: cleaned must live under scopeDir. Without
-			// this check, a path traversal via a symlink or a crafted
-			// filename could let a file outside the scope dir be claimed
-			// against this scope.
-			if !strings.HasPrefix(cleaned, scopePrefix) {
-				slog.Warn("memory ingest: rejecting path outside scope dir", "path", cleaned, "scope_dir", scopeDir)
-				continue
-			}
+			// os.ReadDir returns leaf names only (no slashes, no ".."), so
+			// filepath.Join cannot produce a path outside scopeDir. No
+			// symlink-following happens here; if hostile symlinks ever become
+			// a concern, switch to filepath.EvalSymlinks before reading.
+			cleaned := filepath.Join(scopeDir, f.Name())
 
 			data, err := os.ReadFile(cleaned)
 			if err != nil {
@@ -493,31 +490,106 @@ func (s *MemoryService) IngestFromDisk(ctx context.Context) error {
 				slog.Warn("memory ingest: parse file", "path", cleaned, "err", err)
 				continue
 			}
-			mem.CreatedBy = MemoryCreatedByAgent
+			if mem.CreatedBy == "" {
+				mem.CreatedBy = MemoryCreatedByAgent
+			}
 
+			entry := &parsedEntry{mem: mem, canonical: canonicalIngestName(f.Name(), mem.Name)}
 			if idx, ok := seenInScope[mem.Name]; ok {
-				parsed[idx] = mem
+				prior := parsed[idx]
+				// Keep the existing entry only if it's already the agent's
+				// (non-canonical) write. Replace it when the prior was the
+				// canonical snapshot and the new file is the agent's write,
+				// or when both are the same form (later wins, stable for
+				// re-ingest determinism).
+				if prior.canonical && !entry.canonical {
+					parsed[idx] = entry
+				} else if prior.canonical == entry.canonical {
+					parsed[idx] = entry
+				}
 				continue
 			}
 			seenInScope[mem.Name] = len(parsed)
-			parsed = append(parsed, mem)
+			parsed = append(parsed, entry)
 		}
 	}
 
 	ingested := 0
-	for _, mem := range parsed {
+	for _, entry := range parsed {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if _, err := s.UpsertByName(mem); err != nil {
-			slog.Warn("memory ingest: upsert", "scope", mem.Scope, "name", mem.Name, "err", err)
+		if _, err := s.upsertByNameNoSync(entry.mem); err != nil {
+			slog.Warn("memory ingest: upsert", "scope", entry.mem.Scope, "name", entry.mem.Name, "err", err)
 			continue
 		}
 		ingested++
 	}
 
+	// Single sync after the batch instead of one per row: SyncMemoryFiles
+	// reads the full memories table and rewrites every file, so calling it
+	// inside the loop turned ingest into O(N²) disk churn.
+	if ingested > 0 {
+		if err := s.SyncMemoryFiles(); err != nil {
+			slog.Warn("memory ingest: post-batch sync failed", "err", err)
+		}
+	}
+
 	slog.Info("memory ingest complete", "ingested", ingested)
 	return nil
+}
+
+// canonicalIngestName reports whether the on-disk filename matches the
+// `<id>-<name>.md` shape produced by SyncMemoryFiles. The agent's freshly
+// written files are just `<name>.md`; when both forms exist for the same
+// memory we prefer the latter (agent's newer write) over the former (prior
+// canonical snapshot).
+func canonicalIngestName(filename, name string) bool {
+	plain := name + ".md"
+	if filename == plain {
+		return false
+	}
+	suffix := "-" + plain
+	if !strings.HasSuffix(filename, suffix) {
+		return false
+	}
+	prefix := filename[:len(filename)-len(suffix)]
+	if prefix == "" {
+		return false
+	}
+	for _, r := range prefix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// upsertByNameNoSync is UpsertByName without the trailing SyncMemoryFiles.
+// IngestFromDisk batches a single sync at the end of the walk to avoid
+// O(N²) disk churn (each per-row sync re-reads the whole table and rewrites
+// every file).
+func (s *MemoryService) upsertByNameNoSync(m *database.Memory) (*database.Memory, error) {
+	if err := s.validate(m); err != nil {
+		return nil, err
+	}
+	m.Scope = strings.TrimSpace(m.Scope)
+	m.Name = strings.TrimSpace(m.Name)
+
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "scope"}, {Name: "name"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"type", "description", "body", "incident_uuid", "created_by", "updated_at",
+		}),
+	}).Create(m).Error; err != nil {
+		return nil, fmt.Errorf("failed to upsert memory: %w", err)
+	}
+
+	var saved database.Memory
+	if err := s.db.Where("scope = ? AND name = ?", m.Scope, m.Name).First(&saved).Error; err != nil {
+		return nil, fmt.Errorf("failed to read upserted memory: %w", err)
+	}
+	return &saved, nil
 }
 
 // parseMemoryFile decodes a memory markdown file (YAML frontmatter + body)
@@ -563,6 +635,7 @@ func parseMemoryFile(data []byte, scope string) (*database.Memory, error) {
 		Description:  strings.ReplaceAll(strings.TrimSpace(fm.Description), "\n", " "),
 		Body:         body,
 		IncidentUUID: strings.TrimSpace(fm.IncidentUUID),
+		CreatedBy:    strings.TrimSpace(fm.CreatedBy),
 	}, nil
 }
 

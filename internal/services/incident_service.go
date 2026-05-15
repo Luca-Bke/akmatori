@@ -97,7 +97,8 @@ func (s *SkillService) SpawnIncidentManager(ctx *IncidentContext) (string, strin
 // The cross-incident "global" memory manifest is appended below the prompt so
 // the incident manager sees a small, always-up-to-date summary of long-lived
 // facts and operator feedback before any tool call. Full bodies are fetched
-// on demand via memory.search / memory.get.
+// on demand via the memory-searcher subagent or a direct read of the
+// matching file under /akmatori/memory/<scope>/.
 func (s *SkillService) generateIncidentAgentsMd(path string) error {
 	// Get incident manager prompt from the system skill
 	prompt, err := s.GetSkillPrompt("incident-manager")

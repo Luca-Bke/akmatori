@@ -38,6 +38,7 @@ services:
         fi &&
         chmod 644 /akmatori/secrets/postgres_password &&
         chown -R 1000:1000 /akmatori &&
+        chmod -R g+rwX,o+rwX /akmatori/memory &&
         echo 'Data directories initialized with correct permissions'
       "
     restart: "no"
@@ -179,7 +180,7 @@ services:
       - ./akmatori_data/context:/akmatori/context:ro  # Shared context files (read-only)
       - ./akmatori_data/skills:/akmatori/skills:ro    # Skill definitions for pi-mono resource loader
       - ./akmatori_data/runbooks:/akmatori/runbooks:ro  # Runbook SOPs scoped to runbook-searcher subagent
-      - ./akmatori_data/memory:/akmatori/memory:rw      # Cross-incident memory (memory-writer subagent edits in place)
+      - ./akmatori_data/memory:/akmatori/memory:rw      # Cross-incident memory (memory-writer subagent edits in place; init-dirs widens perms to o+rwX so UID 1001 can write)
       - ./akmatori_data/agents:/home/agent/.pi/agent/agents:ro       # Subagent definitions (runbook-searcher, memory-searcher, memory-writer)
       - ./akmatori_data/extensions:/home/agent/.pi/agent/extensions:ro  # Operator-supplied pi extensions (baked pi-subagents lives at /opt/pi-extensions and is loaded via additionalExtensionPaths)
     healthcheck:

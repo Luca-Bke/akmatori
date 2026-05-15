@@ -286,3 +286,102 @@ func TestParseMemoryFile_RejectsInvalidType(t *testing.T) {
 		t.Fatal("expected error on invalid type")
 	}
 }
+
+// TestIngestFromDisk_PreservesOperatorCreatedBy guards against the original
+// IngestFromDisk forcing CreatedBy=agent on every parsed file. SyncMemoryFiles
+// rolls operator-authored memories to disk with `created_by: operator`; a
+// follow-on ingest must NOT silently rewrite them as agent-authored.
+func TestIngestFromDisk_PreservesOperatorCreatedBy(t *testing.T) {
+	svc := setupMemoryServiceTest(t)
+	dir := filepath.Join(svc.MemoryDir(), MemoryScopeGlobal)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	raw := "---\n" +
+		"name: operator-feedback-rename\n" +
+		"description: prefer renaming the zabbix host before the upgrade\n" +
+		"type: feedback\n" +
+		"scope: global\n" +
+		"incident_uuid: inc-7\n" +
+		"created_by: operator\n" +
+		"---\n\n" +
+		"# operator-feedback-rename\n\n" +
+		"prefer renaming the zabbix host before the upgrade\n\n" +
+		"longer body explaining why\n"
+	if err := os.WriteFile(filepath.Join(dir, "operator-feedback-rename.md"), []byte(raw), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := svc.IngestFromDisk(context.Background()); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	mems, _ := svc.ListMemoriesByScope(MemoryScopeGlobal)
+	if len(mems) != 1 {
+		t.Fatalf("expected 1 row, got %d: %+v", len(mems), mems)
+	}
+	if mems[0].CreatedBy != MemoryCreatedByOperator {
+		t.Errorf("operator authorship should be preserved on ingest; got created_by=%q", mems[0].CreatedBy)
+	}
+}
+
+// TestIngestFromDisk_PrefersAgentFilenameOverCanonical asserts that when both
+// `<name>.md` (agent's fresh write) and `<id>-<name>.md` (prior canonical
+// snapshot) exist in the same scope dir, the agent's newer content wins —
+// regardless of lex-sort order between the two filenames.
+func TestIngestFromDisk_PrefersAgentFilenameOverCanonical(t *testing.T) {
+	svc := setupMemoryServiceTest(t)
+	dir := filepath.Join(svc.MemoryDir(), MemoryScopeGlobal)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Drop the canonical snapshot first (older body).
+	canonical := "---\nname: edge-case\ndescription: old summary\ntype: host\nscope: global\nincident_uuid: inc-1\ncreated_by: agent\n---\n\n# edge-case\n\nold summary\n\nold body content\n"
+	if err := os.WriteFile(filepath.Join(dir, "99-edge-case.md"), []byte(canonical), 0644); err != nil {
+		t.Fatalf("seed canonical: %v", err)
+	}
+	// Drop the agent's freshly-written file with the same memory name and
+	// newer body. Lex-sort puts "99-..." first, but the dedup rule must
+	// still pick the non-canonical version.
+	agentFresh := "---\nname: edge-case\ndescription: NEW summary\ntype: host\nscope: global\nincident_uuid: inc-1\ncreated_by: agent\n---\n\n# edge-case\n\nNEW summary\n\nNEW body content\n"
+	if err := os.WriteFile(filepath.Join(dir, "edge-case.md"), []byte(agentFresh), 0644); err != nil {
+		t.Fatalf("seed agent fresh: %v", err)
+	}
+
+	if err := svc.IngestFromDisk(context.Background()); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	mems, _ := svc.ListMemoriesByScope(MemoryScopeGlobal)
+	if len(mems) != 1 {
+		t.Fatalf("expected 1 row, got %d: %+v", len(mems), mems)
+	}
+	if !strings.Contains(mems[0].Body, "NEW body content") {
+		t.Errorf("dedup picked the wrong file: body=%q", mems[0].Body)
+	}
+	if !strings.Contains(mems[0].Description, "NEW summary") {
+		t.Errorf("dedup picked the wrong file: description=%q", mems[0].Description)
+	}
+}
+
+func TestCanonicalIngestName(t *testing.T) {
+	cases := []struct {
+		filename string
+		name     string
+		want     bool
+	}{
+		{"5-foo.md", "foo", true},
+		{"123-foo-bar.md", "foo-bar", true},
+		{"foo.md", "foo", false},
+		{"-foo.md", "foo", false},          // empty numeric prefix
+		{"abc-foo.md", "foo", false},       // non-numeric prefix
+		{"5-foo.md", "different", false},   // name mismatch
+		{"5-foo-extra.md", "foo", false},   // trailing extra not part of name
+		{"5foo.md", "foo", false},          // no hyphen separator
+	}
+	for _, c := range cases {
+		if got := canonicalIngestName(c.filename, c.name); got != c.want {
+			t.Errorf("canonicalIngestName(%q, %q) = %v, want %v", c.filename, c.name, got, c.want)
+		}
+	}
+}
