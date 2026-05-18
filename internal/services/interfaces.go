@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/akmatori/akmatori/internal/database"
+	"github.com/akmatori/akmatori/internal/messaging"
 )
 
 // SkillManager defines the interface for skill CRUD and lifecycle operations.
@@ -134,6 +135,35 @@ type HTTPConnectorManager interface {
 	UpdateHTTPConnector(id uint, updates map[string]interface{}) (*database.HTTPConnector, error)
 	DeleteHTTPConnector(id uint) error
 	ListHTTPConnectors() ([]database.HTTPConnector, error)
+}
+
+// ChannelManager defines the interface for messaging Integration and Channel
+// CRUD plus resolution from alert sources / per-provider defaults. Handlers
+// consume this rather than the concrete ChannelService so tests can swap in
+// fakes that do not require a live database.
+type ChannelManager interface {
+	ListIntegrations() ([]database.Integration, error)
+	GetIntegrationByUUID(uuid string) (*database.Integration, error)
+	CreateIntegration(provider database.MessagingProvider, name string, credentials database.JSONB, enabled bool) (*database.Integration, error)
+	UpdateIntegration(uuid string, name *string, credentials database.JSONB, enabled *bool) (*database.Integration, error)
+	DeleteIntegration(uuid string) error
+
+	ListChannels(filter ListChannelsFilter) ([]database.Channel, error)
+	GetChannelByUUID(uuid string) (*database.Channel, error)
+	CreateChannel(c *database.Channel) (*database.Channel, error)
+	UpdateChannel(uuid string, patch ChannelUpdate) (*database.Channel, error)
+	DeleteChannel(uuid string) error
+
+	ResolveDefault(provider database.MessagingProvider) (*database.Channel, error)
+	ResolveForAlertSource(asi *database.AlertSourceInstance, provider database.MessagingProvider) (*database.Channel, error)
+}
+
+// ProviderRegistry is the handler-facing view of the messaging provider
+// registry. It is satisfied by *messaging.Registry; handlers depend on the
+// interface so a stub registry can be wired in tests.
+type ProviderRegistry interface {
+	Get(name database.MessagingProvider) (messaging.Provider, error)
+	List() []database.MessagingProvider
 }
 
 // MCPServerManager defines the interface for MCP server configuration CRUD operations.

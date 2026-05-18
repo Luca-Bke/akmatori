@@ -71,13 +71,13 @@ Introduce a first-class Channel concept (under provider Integrations) that trigg
 - Create: `internal/services/channel_service.go`
 - Modify: `internal/services/interfaces.go`, `internal/slack/manager.go` (expose the underlying client needed by the slack provider)
 
-- [ ] define `Provider` interface (`Name`, `PostMessage`, `PostThreadReply`, `UpdateMessage`) and `ProviderRegistry` interface (`Get`, `List`)
-- [ ] implement slack provider as a thin wrapper over the existing `internal/slack/` client
-- [ ] add telegram stub that is either absent from the registry or returns `ErrNotImplemented` — make the gap explicit, not silent
-- [ ] implement `ChannelService` with CRUD + `ResolveDefault(provider)` + `ResolveForAlertSource(asi *AlertSourceInstance)` (falls back to default when `notification_channel_id` is nil)
-- [ ] extend `internal/services/interfaces.go` with `ChannelService` and `ProviderRegistry` handler dependencies
-- [ ] add unit tests for `ChannelService` (default resolution, fallback path, partial-unique-index enforcement) and registry (`Get` returns provider, returns error for unknown)
-- [ ] run `make test` — must pass before Task 3
+- [x] define `Provider` interface (`Name`, `PostMessage`, `PostThreadReply`, `UpdateMessage`) and `ProviderRegistry` interface (`Get`, `List`)
+- [x] implement slack provider as a thin wrapper over the existing `internal/slack/` client
+- [x] add telegram stub that is either absent from the registry or returns `ErrNotImplemented` — make the gap explicit, not silent
+- [x] implement `ChannelService` with CRUD + `ResolveDefault(provider)` + `ResolveForAlertSource(asi *AlertSourceInstance)` (falls back to default when `notification_channel_id` is nil)
+- [x] extend `internal/services/interfaces.go` with `ChannelService` and `ProviderRegistry` handler dependencies
+- [x] add unit tests for `ChannelService` (default resolution, fallback path, partial-unique-index enforcement) and registry (`Get` returns provider, returns error for unknown)
+- [x] run `make test` — must pass before Task 3
 
 ### Task 3: Route outbound through Channel + Provider
 
