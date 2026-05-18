@@ -96,13 +96,13 @@ Introduce a first-class Channel concept (under provider Integrations) that trigg
 - Create: `internal/handlers/api_integrations.go`, `internal/handlers/api_channels.go`
 - Modify: `internal/handlers/api.go`, `docs/` (OpenAPI spec)
 
-- [ ] implement REST handlers: `GET/POST /api/integrations`, `GET/PUT/DELETE /api/integrations/{uuid}`
-- [ ] implement REST handlers: `GET /api/channels` (with `?integration_uuid=&can_post=&can_listen=` filters), `POST /api/channels`, `GET/PUT/DELETE /api/channels/{uuid}`
-- [ ] validation: at most one `is_default_post=true` per provider (service-layer check matching the DB partial-unique index); `external_id` non-empty for slack; provider must be a known registry name on create
-- [ ] register routes in `internal/handlers/api.go`; keep `/api/settings/slack` returning 308 redirect to `/api/integrations` for one release
-- [ ] add handler tests (parallel to `api_handler_test.go` style) covering CRUD happy paths, validation errors, default-post uniqueness
-- [ ] update OpenAPI spec under `docs/`
-- [ ] run `make test` — must pass before Task 5
+- [x] implement REST handlers: `GET/POST /api/integrations`, `GET/PUT/DELETE /api/integrations/{uuid}`
+- [x] implement REST handlers: `GET /api/channels` (with `?integration_uuid=&can_post=&can_listen=` filters), `POST /api/channels`, `GET/PUT/DELETE /api/channels/{uuid}`
+- [x] validation: at most one `is_default_post=true` per provider (service-layer check matching the DB partial-unique index); `external_id` non-empty for slack; provider must be a known registry name on create
+- [x] register routes in `internal/handlers/api.go`; keep `/api/settings/slack` returning 308 redirect to `/api/integrations` for one release
+- [x] add handler tests (parallel to `api_handler_test.go` style) covering CRUD happy paths, validation errors, default-post uniqueness
+- [x] update OpenAPI spec under `docs/`
+- [x] run `make test` — must pass before Task 5
 
 ### Task 5: Frontend — Integrations, Channels, ChannelPicker, AlertSourceForm
 

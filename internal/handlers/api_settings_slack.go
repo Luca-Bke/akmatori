@@ -8,8 +8,25 @@ import (
 	"github.com/akmatori/akmatori/internal/database"
 )
 
-// handleSlackSettings handles GET /api/settings/slack and PUT /api/settings/slack
+// handleSlackSettings handles GET /api/settings/slack and PUT /api/settings/slack.
+//
+// Deprecated: once the new Integrations + Channels infrastructure is wired
+// (channelService non-nil), this endpoint returns a 308 Permanent Redirect to
+// /api/integrations so clients migrate. The legacy CRUD path is kept as a
+// fallback for deployments that have not yet provisioned a ChannelManager;
+// Task 10 of the unified-channels plan removes the redirect entirely (or
+// downgrades it to 410 Gone).
 func (h *APIHandler) handleSlackSettings(w http.ResponseWriter, r *http.Request) {
+	if h.channelService != nil {
+		w.Header().Set("Location", "/api/integrations")
+		// 308 preserves method + body so clients that follow the redirect
+		// can re-issue the request shape against the new endpoint; in
+		// practice the body shape differs, but the redirect is the
+		// machine-readable signal to migrate.
+		http.Error(w, "Use /api/integrations — /api/settings/slack is deprecated", http.StatusPermanentRedirect)
+		return
+	}
+
 	db := database.GetDB()
 
 	switch r.Method {

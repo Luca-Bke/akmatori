@@ -288,6 +288,11 @@ func main() {
 	mcpServerService := services.NewMCPServerService()
 	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, agentExecutor, agentWSHandler, slackManager, runbookService, memoryService, httpConnectorService, mcpServerService)
 	apiHandler.SetResponseFormatter(responseFormatter)
+	// Wire the Integrations + Channels CRUD surface (Task 4 of the
+	// unified-channels plan). Once these are wired, /api/settings/slack
+	// returns a 308 redirect to /api/integrations.
+	apiHandler.SetChannelManager(channelService)
+	apiHandler.SetProviderRegistry(providerRegistry)
 
 	// Wire alert channel reload: when alert sources are created/updated/deleted via API,
 	// reload the Slack handler's channel mappings so changes take effect immediately.

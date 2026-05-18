@@ -82,6 +82,103 @@ components:
         incident_uuid: {type: string}
         created_by: {type: string, enum: [agent, operator]}
 
+    Integration:
+      type: object
+      description: |
+        A configured connection to a messaging provider (Slack, Telegram, ...).
+        Credentials are stored as a JSON blob whose shape is provider-specific.
+      properties:
+        id: {type: integer}
+        uuid: {type: string, format: uuid}
+        provider:
+          type: string
+          enum: [slack, telegram]
+        name: {type: string}
+        credentials:
+          type: object
+          additionalProperties: true
+        enabled: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    IntegrationCreateRequest:
+      type: object
+      required: [provider, name]
+      properties:
+        provider:
+          type: string
+          enum: [slack, telegram]
+        name: {type: string}
+        credentials:
+          type: object
+          additionalProperties: true
+        enabled: {type: boolean}
+
+    IntegrationUpdateRequest:
+      type: object
+      description: Provider is immutable on update.
+      properties:
+        name: {type: string}
+        credentials:
+          type: object
+          additionalProperties: true
+        enabled: {type: boolean}
+
+    Channel:
+      type: object
+      description: |
+        A specific addressable destination within an Integration (a Slack
+        channel, a Telegram chat). Capability flags determine which triggers
+        can reference it.
+      properties:
+        id: {type: integer}
+        uuid: {type: string, format: uuid}
+        integration_id: {type: integer}
+        external_id:
+          type: string
+          description: Provider-specific channel handle (e.g. Slack channel ID or name)
+        display_name: {type: string}
+        can_post: {type: boolean}
+        can_listen: {type: boolean}
+        is_default_post:
+          type: boolean
+          description: At most one is_default_post=true per provider is enforced.
+        extraction_prompt:
+          type: string
+          description: Optional per-channel system prompt for inbound extraction
+        process_human_messages: {type: boolean}
+        enabled: {type: boolean}
+        integration: {$ref: '#/components/schemas/Integration'}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    ChannelCreateRequest:
+      type: object
+      required: [integration_uuid, external_id]
+      properties:
+        integration_uuid: {type: string, format: uuid}
+        external_id: {type: string}
+        display_name: {type: string}
+        can_post: {type: boolean}
+        can_listen: {type: boolean}
+        is_default_post: {type: boolean}
+        extraction_prompt: {type: string}
+        process_human_messages: {type: boolean}
+        enabled: {type: boolean}
+
+    ChannelUpdateRequest:
+      type: object
+      description: Partial patch; integration cannot be changed after creation.
+      properties:
+        external_id: {type: string}
+        display_name: {type: string}
+        can_post: {type: boolean}
+        can_listen: {type: boolean}
+        is_default_post: {type: boolean}
+        extraction_prompt: {type: string}
+        process_human_messages: {type: boolean}
+        enabled: {type: boolean}
+
     PaginationMeta:
       type: object
       properties:
@@ -886,14 +983,27 @@ paths:
   # ===== Settings =====
   /settings/slack:
     get:
-      summary: Get Slack settings
+      summary: Get Slack settings (deprecated)
+      description: |
+        Deprecated. When the Integrations + Channels infrastructure is wired
+        this endpoint returns 308 Permanent Redirect to /api/integrations.
+        Older deployments without an Integration row continue to read the
+        legacy SlackSettings shape until Task 10 of the unified-channels plan
+        removes the fallback.
+      deprecated: true
       operationId: getSlackSettings
       tags: [Settings]
       responses:
         '200':
-          description: Slack settings (tokens masked)
+          description: Legacy Slack settings (tokens masked)
+        '308':
+          description: Redirect clients to /api/integrations
     put:
-      summary: Update Slack settings
+      summary: Update Slack settings (deprecated)
+      description: |
+        Deprecated. Returns 308 to /api/integrations when the new channel
+        infrastructure is wired. Use the Integrations + Channels CRUD APIs.
+      deprecated: true
       operationId: updateSlackSettings
       tags: [Settings]
       requestBody:
@@ -915,6 +1025,8 @@ paths:
       responses:
         '200':
           description: Updated settings
+        '308':
+          description: Redirect clients to /api/integrations
 
   /settings/llm:
     get:
@@ -1161,6 +1273,202 @@ paths:
                       type: string
 
   # ===== Alert Sources =====
+  # ===== Messaging Integrations + Channels =====
+  /integrations:
+    get:
+      summary: List messaging provider integrations
+      operationId: listIntegrations
+      tags: [Integrations]
+      responses:
+        '200':
+          description: Configured integrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Integration'}
+        '503':
+          description: Channel service is not configured
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+    post:
+      summary: Create a new integration
+      operationId: createIntegration
+      tags: [Integrations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/IntegrationCreateRequest'}
+      responses:
+        '201':
+          description: Integration created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Integration'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Conflict (duplicate name or invariant violation)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  /integrations/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      summary: Get integration by UUID
+      operationId: getIntegration
+      tags: [Integrations]
+      responses:
+        '200':
+          description: Integration details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Integration'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update integration (provider is immutable)
+      operationId: updateIntegration
+      tags: [Integrations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/IntegrationUpdateRequest'}
+      responses:
+        '200':
+          description: Updated integration
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Integration'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete integration (cascades channels)
+      operationId: deleteIntegration
+      tags: [Integrations]
+      responses:
+        '204':
+          description: Integration deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /channels:
+    get:
+      summary: List channels (optionally filtered)
+      operationId: listChannels
+      tags: [Channels]
+      parameters:
+        - name: integration_uuid
+          in: query
+          schema: {type: string, format: uuid}
+          description: Filter to channels belonging to this integration
+        - name: can_post
+          in: query
+          schema: {type: boolean}
+          description: Filter to channels whose can_post flag matches
+        - name: can_listen
+          in: query
+          schema: {type: boolean}
+          description: Filter to channels whose can_listen flag matches
+      responses:
+        '200':
+          description: Channels matching the filter
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Channel'}
+        '503':
+          description: Channel service is not configured
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+    post:
+      summary: Create a new channel
+      operationId: createChannel
+      tags: [Channels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChannelCreateRequest'}
+      responses:
+        '201':
+          description: Channel created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Channel'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Integration not found
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '409':
+          description: Default-post invariant violated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  /channels/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      summary: Get channel by UUID
+      operationId: getChannel
+      tags: [Channels]
+      responses:
+        '200':
+          description: Channel details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Channel'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update channel
+      operationId: updateChannel
+      tags: [Channels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChannelUpdateRequest'}
+      responses:
+        '200':
+          description: Updated channel
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Channel'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Default-post invariant violated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+    delete:
+      summary: Delete channel
+      operationId: deleteChannel
+      tags: [Channels]
+      responses:
+        '204':
+          description: Channel deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /alert-source-types:
     get:
       summary: List alert source types

@@ -22,6 +22,8 @@ type APIHandler struct {
 	memoryService        services.MemoryManager
 	httpConnectorService services.HTTPConnectorManager
 	mcpServerService     services.MCPServerManager
+	channelService       services.ChannelManager
+	providerRegistry     services.ProviderRegistry
 	responseFormatter    *services.ResponseFormatter
 	alertChannelReloader func()       // called after alert source create/update/delete to reload Slack channel mappings
 	gatewayReloader      func() error // called after HTTP connector CRUD to reload gateway tools
@@ -71,6 +73,21 @@ func (h *APIHandler) SetMCPServerReloader(fn func() error) {
 	h.mcpServerReloader = fn
 }
 
+// SetChannelManager wires the ChannelManager used by /api/integrations and
+// /api/channels. Optional; routes return 503 when unset so the API still
+// boots without the new infrastructure (graceful degradation per CLAUDE.md).
+func (h *APIHandler) SetChannelManager(svc services.ChannelManager) {
+	h.channelService = svc
+}
+
+// SetProviderRegistry wires the messaging provider registry used to validate
+// integration provider names at create time. Optional; when unset the handler
+// falls back to the database.IsValidMessagingProvider whitelist so the model
+// constants remain the source of truth.
+func (h *APIHandler) SetProviderRegistry(reg services.ProviderRegistry) {
+	h.providerRegistry = reg
+}
+
 // reloadAlertChannels triggers the alert channel reload callback if set
 func (h *APIHandler) reloadAlertChannels() {
 	if h.alertChannelReloader != nil {
@@ -94,8 +111,15 @@ func (h *APIHandler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/incidents", h.handleIncidents)
 	mux.HandleFunc("/api/incidents/", h.handleIncidentByID)
 
-	// Slack settings
+	// Slack settings (deprecated: 308 redirect to /api/integrations once
+	// channel infrastructure is wired; falls through to legacy CRUD when not)
 	mux.HandleFunc("/api/settings/slack", h.handleSlackSettings)
+
+	// Messaging integrations (provider configurations) and Channels
+	mux.HandleFunc("/api/integrations", h.handleIntegrations)
+	mux.HandleFunc("/api/integrations/", h.handleIntegrationByUUID)
+	mux.HandleFunc("/api/channels", h.handleChannels)
+	mux.HandleFunc("/api/channels/", h.handleChannelByUUID)
 
 	// LLM settings
 	mux.HandleFunc("/api/settings/llm", h.handleLLMSettings)
