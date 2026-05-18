@@ -239,6 +239,10 @@ func main() {
 		// Wire up alert channel support
 		slackHandler.SetAlertHandler(alertHandler)
 		slackHandler.SetAlertService(alertService)
+		// ChannelService is the source of truth for listener channels after
+		// Task 6 of the unified-channels plan; LoadListenerChannels reads
+		// from the channels table.
+		slackHandler.SetChannelService(channelService)
 		slackHandler.SetSlackSummarizer(slackSummarizer)
 		slackHandler.SetResponseFormatter(responseFormatter)
 		// Wire LLM-classified Slack feedback capture: thread replies on incident
@@ -256,13 +260,13 @@ func main() {
 			slog.Warn("could not get bot user ID", "err", err)
 		}
 
-		// Load alert channel configurations
-		if err := slackHandler.LoadAlertChannels(); err != nil {
-			slog.Warn("failed to load alert channels", "err", err)
+		// Load listener channel configurations from the channels table.
+		if err := slackHandler.LoadListenerChannels(); err != nil {
+			slog.Warn("failed to load listener channels", "err", err)
 		}
 
 		slackHandler.HandleSocketMode(socketClient)
-		slog.Info("Slack components initialized (with alert channel support)")
+		slog.Info("Slack components initialized (with listener channel support)")
 	})
 
 	slackEnabled := slackSettings.IsActive()
@@ -294,11 +298,12 @@ func main() {
 	apiHandler.SetChannelManager(channelService)
 	apiHandler.SetProviderRegistry(providerRegistry)
 
-	// Wire alert channel reload: when alert sources are created/updated/deleted via API,
-	// reload the Slack handler's channel mappings so changes take effect immediately.
+	// Wire listener channel reload: when channels (or, transitionally, alert
+	// sources) are created/updated/deleted via API, reload the Slack handler's
+	// channel mappings so changes take effect immediately.
 	apiHandler.SetAlertChannelReloader(func() {
 		if slackHandler != nil {
-			slackHandler.ReloadAlertChannels()
+			slackHandler.ReloadListenerChannels()
 		}
 	})
 

@@ -141,7 +141,7 @@ func TestExtractSlackMessageText_AttachmentFieldValueOnly(t *testing.T) {
 
 // testSlackHandler creates a minimal SlackHandler for routing tests.
 // No Slack API client or services are needed since we test routing logic only.
-func testSlackHandler(botUserID string, alertChannels map[string]*database.AlertSourceInstance) *SlackHandler {
+func testSlackHandler(botUserID string, alertChannels map[string]*database.Channel) *SlackHandler {
 	return &SlackHandler{
 		botUserID:     botUserID,
 		alertChannels: alertChannels,
@@ -159,7 +159,7 @@ func classifyMessage(h *SlackHandler, event *slackevents.MessageEvent) string {
 	}
 
 	h.alertChannelsMu.RLock()
-	instance, isAlert := h.alertChannels[event.Channel]
+	ch, isAlert := h.alertChannels[event.Channel]
 	h.alertChannelsMu.RUnlock()
 
 	if isAlert {
@@ -177,7 +177,7 @@ func classifyMessage(h *SlackHandler, event *slackevents.MessageEvent) string {
 		}
 
 		if !isBotMessage {
-			if shouldProcessHuman, _ := instance.Settings["process_human_messages"].(bool); shouldProcessHuman {
+			if ch != nil && ch.ProcessHumanMessages {
 				return "human_top_level_alert"
 			}
 			return "ignore_non_bot"
@@ -189,7 +189,7 @@ func classifyMessage(h *SlackHandler, event *slackevents.MessageEvent) string {
 }
 
 func TestHandleMessage_SkipsSelfMessages(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{
@@ -202,7 +202,7 @@ func TestHandleMessage_SkipsSelfMessages(t *testing.T) {
 }
 
 func TestHandleMessage_TopLevelBotMessage(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{
@@ -216,7 +216,7 @@ func TestHandleMessage_TopLevelBotMessage(t *testing.T) {
 }
 
 func TestHandleMessage_TopLevelBotByBotIDOnly(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	// Some integrations set BotID without bot_message subtype
@@ -230,7 +230,7 @@ func TestHandleMessage_TopLevelBotByBotIDOnly(t *testing.T) {
 }
 
 func TestHandleMessage_TopLevelHumanIgnored(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{
@@ -244,7 +244,7 @@ func TestHandleMessage_TopLevelHumanIgnored(t *testing.T) {
 }
 
 func TestHandleMessage_BotMessage_ThreadTSEqualTS_ProcessedAsTopLevel(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	// PagerDuty sets thread_ts == ts on initial messages (thread roots).
@@ -261,7 +261,7 @@ func TestHandleMessage_BotMessage_ThreadTSEqualTS_ProcessedAsTopLevel(t *testing
 }
 
 func TestHandleMessage_ThreadReplyBotMessage_Ignored(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	// Bot thread replies (PagerDuty escalations, status changes, etc.)
@@ -279,7 +279,7 @@ func TestHandleMessage_ThreadReplyBotMessage_Ignored(t *testing.T) {
 }
 
 func TestHandleMessage_ThreadReplyBotByBotIDOnly_Ignored(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{
@@ -294,7 +294,7 @@ func TestHandleMessage_ThreadReplyBotByBotIDOnly_Ignored(t *testing.T) {
 }
 
 func TestHandleMessage_ThreadReplyHumanMention(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{
@@ -316,7 +316,7 @@ func TestHandleMessage_ThreadReplyHumanMention(t *testing.T) {
 // This catches regressions of the slack.go:403 routing decision.
 func TestHandleMessage_ThreadReplyHumanMention_FeedbackShortCircuits(t *testing.T) {
 	fx := newRouteFixture(t, "1707000001.000100")
-	fx.handler.alertChannels = map[string]*database.AlertSourceInstance{
+	fx.handler.alertChannels = map[string]*database.Channel{
 		"C_ALERT": {},
 	}
 
@@ -347,7 +347,7 @@ func TestHandleMessage_ThreadReplyHumanMention_FeedbackShortCircuits(t *testing.
 // claim the dedup key first and bypass the classifier entirely.
 func TestHandleAppMention_ThreadReply_RoutesThroughClassifier(t *testing.T) {
 	fx := newRouteFixture(t, "1707000001.000100")
-	fx.handler.alertChannels = map[string]*database.AlertSourceInstance{
+	fx.handler.alertChannels = map[string]*database.Channel{
 		"C_ALERT": {},
 	}
 
@@ -371,7 +371,7 @@ func TestHandleAppMention_ThreadReply_RoutesThroughClassifier(t *testing.T) {
 }
 
 func TestHandleMessage_ThreadReplyHumanNoMention(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{
@@ -387,9 +387,9 @@ func TestHandleMessage_ThreadReplyHumanNoMention(t *testing.T) {
 }
 
 func TestHandleMessage_TopLevelHumanMessage_ProcessEnabled(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {
-			Settings: database.JSONB{"process_human_messages": true},
+			ProcessHumanMessages: true,
 		},
 	})
 	event := &slackevents.MessageEvent{
@@ -403,9 +403,9 @@ func TestHandleMessage_TopLevelHumanMessage_ProcessEnabled(t *testing.T) {
 }
 
 func TestHandleMessage_TopLevelHumanMessage_ProcessDisabled(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {
-			Settings: database.JSONB{"process_human_messages": false},
+			ProcessHumanMessages: false,
 		},
 	})
 	event := &slackevents.MessageEvent{
@@ -418,11 +418,14 @@ func TestHandleMessage_TopLevelHumanMessage_ProcessDisabled(t *testing.T) {
 	}
 }
 
+// TestHandleMessage_TopLevelHumanMessage_SettingMissing verifies the default
+// when ProcessHumanMessages is not set on a Channel row: human top-level
+// messages are ignored rather than routed as alerts. This preserves the
+// pre-Task-6 backward-compat behavior of the slack_channel AlertSourceInstance
+// path, which also defaulted to ignore.
 func TestHandleMessage_TopLevelHumanMessage_SettingMissing(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
-		"C_ALERT": {
-			Settings: database.JSONB{},
-		},
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
+		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{
 		Channel: "C_ALERT",
@@ -435,7 +438,7 @@ func TestHandleMessage_TopLevelHumanMessage_SettingMissing(t *testing.T) {
 }
 
 func TestHandleMessage_NonAlertChannel(t *testing.T) {
-	h := testSlackHandler("U_BOT", map[string]*database.AlertSourceInstance{
+	h := testSlackHandler("U_BOT", map[string]*database.Channel{
 		"C_ALERT": {},
 	})
 	event := &slackevents.MessageEvent{

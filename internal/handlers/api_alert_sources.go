@@ -94,12 +94,15 @@ func (h *APIHandler) handleAlertSources(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		if req.SourceTypeName == "slack_channel" {
-			channelID, _ := req.Settings["slack_channel_id"].(string)
-			if strings.TrimSpace(channelID) == "" {
-				api.RespondError(w, http.StatusBadRequest, "slack_channel_id is required in settings for slack_channel source type")
-				return
-			}
+		// Reject creation against deprecated source types. slack_channel is
+		// deprecated as of Task 6 of the unified-channels plan — operators
+		// should configure listener channels under /api/channels instead.
+		// Missing rows (sterr or sourceType==nil) fall through to the
+		// AlertService.CreateInstance call, which surfaces the error in its
+		// own response shape; we only intercept on a definite deprecated row.
+		if sourceType, sterr := h.alertService.GetAlertSourceTypeByName(req.SourceTypeName); sterr == nil && sourceType != nil && sourceType.Deprecated {
+			api.RespondError(w, http.StatusBadRequest, "alert source type '"+req.SourceTypeName+"' is deprecated; configure a Channel under /api/channels instead")
+			return
 		}
 
 		// Resolve optional notification_channel_uuid up-front so we can

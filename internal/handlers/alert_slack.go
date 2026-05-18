@@ -190,7 +190,7 @@ func (h *AlertHandler) updateSlackChannelReactions(channelID, messageTS string, 
 	}
 
 	// The hourglass reaction is now removed by the TypingController in
-	// runSlackChannelInvestigation's deferred Stop.
+	// runListenerChannelInvestigation's deferred Stop.
 
 	// Add result reaction
 	reactionName := "white_check_mark"

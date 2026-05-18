@@ -67,13 +67,18 @@ func TestSlackHandler_SetAlertService(t *testing.T) {
 // Alert Channel Loading Tests
 // ========================================
 
-func TestSlackHandler_LoadAlertChannels_NoService(t *testing.T) {
+func TestSlackHandler_LoadListenerChannels_NoService(t *testing.T) {
 	h := NewSlackHandler(nil, nil, nil, nil, nil)
 
-	// Should not error when service is nil
-	err := h.LoadAlertChannels()
-	if err != nil {
-		t.Errorf("LoadAlertChannels with nil service should not error: %v", err)
+	// Should not error when ChannelManager is nil — degrades to a Slack
+	// handler that processes DMs only.
+	if err := h.LoadListenerChannels(); err != nil {
+		t.Errorf("LoadListenerChannels with nil channel service should not error: %v", err)
+	}
+
+	// Pre-Task-6 alias must still work.
+	if err := h.LoadAlertChannels(); err != nil {
+		t.Errorf("LoadAlertChannels alias should not error: %v", err)
 	}
 }
 
@@ -132,9 +137,9 @@ func TestSlackHandler_MessageClassification_ThreadReplies(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			alertChannels := make(map[string]*database.AlertSourceInstance)
+			alertChannels := make(map[string]*database.Channel)
 			if tt.isAlertChannel {
-				alertChannels["C_ALERT"] = &database.AlertSourceInstance{}
+				alertChannels["C_ALERT"] = &database.Channel{}
 			}
 			h := testSlackHandler(tt.botUserID, alertChannels)
 
@@ -192,9 +197,9 @@ func TestSlackHandler_MessageClassification_TopLevel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			alertChannels := make(map[string]*database.AlertSourceInstance)
+			alertChannels := make(map[string]*database.Channel)
 			if tt.isAlertChannel {
-				alertChannels["C_ALERT"] = &database.AlertSourceInstance{}
+				alertChannels["C_ALERT"] = &database.Channel{}
 			}
 			h := testSlackHandler(tt.botUserID, alertChannels)
 
@@ -400,15 +405,15 @@ func TestSlackHandler_Deduplication_MultipleKeys(t *testing.T) {
 func TestSlackHandler_AlertChannelMapping(t *testing.T) {
 	h := NewSlackHandler(nil, nil, nil, nil, nil)
 
-	// Add some alert channels
+	// Add some listener channels
 	h.alertChannelsMu.Lock()
-	h.alertChannels["C_ALERTS"] = &database.AlertSourceInstance{
-		UUID: "uuid-1",
-		Name: "alerts-channel",
+	h.alertChannels["C_ALERTS"] = &database.Channel{
+		UUID:        "uuid-1",
+		DisplayName: "alerts-channel",
 	}
-	h.alertChannels["C_MONITORING"] = &database.AlertSourceInstance{
-		UUID: "uuid-2",
-		Name: "monitoring-channel",
+	h.alertChannels["C_MONITORING"] = &database.Channel{
+		UUID:        "uuid-2",
+		DisplayName: "monitoring-channel",
 	}
 	h.alertChannelsMu.Unlock()
 
@@ -528,7 +533,7 @@ func BenchmarkSlackHandler_Deduplication(b *testing.B) {
 }
 
 func BenchmarkClassifyMessage(b *testing.B) {
-	alertChannels := map[string]*database.AlertSourceInstance{
+	alertChannels := map[string]*database.Channel{
 		"C_ALERT": {},
 	}
 	h := testSlackHandler("U_BOT", alertChannels)

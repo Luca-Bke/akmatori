@@ -124,11 +124,11 @@ Introduce a first-class Channel concept (under provider Integrations) that trigg
 - Modify: `internal/handlers/slack.go` (the `LoadAlertChannels` function around lines 125-150), `internal/handlers/slack_processor.go`
 - Modify: `internal/database/db.go` (or seed) to remove the `slack_channel` alert-source type from active types
 
-- [ ] rename `LoadAlertChannels` to `LoadListenerChannels`; source rows from `channels` where `can_listen=true`
-- [ ] change `slack_processor.go` extraction-prompt source from alert-source `Settings` JSONB to `Channel.ExtractionPrompt`; same for `ProcessHumanMessages`
-- [ ] hide `slack_channel` from the alert-source-types picker on the API/UI level (already-deprecated from Task 1 migration)
-- [ ] update tests in `internal/handlers/slack_test.go`, `slack_processor` tests, and `slack_integration_test.go` to seed `Channel` rows instead of `slack_channel` AlertSourceInstances
-- [ ] run `make test` — must pass before Task 7
+- [x] rename `LoadAlertChannels` to `LoadListenerChannels`; source rows from `channels` where `can_listen=true`
+- [x] change `slack_processor.go` extraction-prompt source from alert-source `Settings` JSONB to `Channel.ExtractionPrompt`; same for `ProcessHumanMessages`
+- [x] hide `slack_channel` from the alert-source-types picker on the API/UI level (already-deprecated from Task 1 migration)
+- [x] update tests in `internal/handlers/slack_test.go`, `slack_processor` tests, and `slack_integration_test.go` to seed `Channel` rows instead of `slack_channel` AlertSourceInstances
+- [x] run `make test` — must pass before Task 7
 
 ### Task 7: Cron model + scheduler + oneshot mode
 

@@ -173,3 +173,46 @@ func TestHandleAlertSources_Update_SetsChannelFromUUID(t *testing.T) {
 		t.Fatalf("expected channel ID 42, got %v", got)
 	}
 }
+
+// deprecatedTypeAlertManager extends notifAlertManager so a named lookup
+// returns a row flagged Deprecated. Used to exercise the Task 6 rejection
+// of slack_channel (and any other deprecated type) in the alert-source POST
+// handler.
+type deprecatedTypeAlertManager struct {
+	notifAlertManager
+	deprecatedName string
+}
+
+func (m *deprecatedTypeAlertManager) GetAlertSourceTypeByName(name string) (*database.AlertSourceType, error) {
+	if name == m.deprecatedName {
+		return &database.AlertSourceType{Name: name, Deprecated: true}, nil
+	}
+	return nil, nil
+}
+
+// TestHandleAlertSources_Create_RejectsDeprecatedSourceType asserts that the
+// POST handler refuses to create an instance of a deprecated source type. The
+// slack_channel type is the live example after Task 6 of the unified-channels
+// plan: operators are expected to configure a Channel row instead.
+func TestHandleAlertSources_Create_RejectsDeprecatedSourceType(t *testing.T) {
+	alertMgr := &deprecatedTypeAlertManager{deprecatedName: "slack_channel"}
+	h := NewAPIHandler(nil, nil, nil, alertMgr, nil, nil, nil, nil, nil, nil, nil)
+
+	body := map[string]interface{}{
+		"source_type_name": "slack_channel",
+		"name":             "Old Slack Channel",
+		"settings":         map[string]interface{}{"slack_channel_id": "C12345678"},
+	}
+	raw, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/alert-sources", bytes.NewReader(raw))
+	w := httptest.NewRecorder()
+	h.handleAlertSources(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for deprecated source type, got %d: %s", w.Code, w.Body.String())
+	}
+	if alertMgr.lastUpdates != nil {
+		t.Fatalf("UpdateInstance must not be called when create is rejected, got %#v", alertMgr.lastUpdates)
+	}
+}
