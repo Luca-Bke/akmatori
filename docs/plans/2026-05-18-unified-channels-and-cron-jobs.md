@@ -56,13 +56,13 @@ Introduce a first-class Channel concept (under provider Integrations) that trigg
 - Modify: `internal/database/models_settings.go`, `internal/database/models_alerts.go`, `internal/database/models_incidents.go`, `internal/database/db.go`
 - Create: `internal/database/models_channels.go` (`Integration`, `Channel`), `internal/database/models_cron.go` (`CronJob`)
 
-- [ ] add `Integration`, `Channel`, `CronJob` models with the fields specified in /tmp/plan.md (UUID public id, FK relationships, `is_default_post`, `can_post`, `can_listen`, `extraction_prompt`, `process_human_messages`, cron fields incl. `next_run_at`, `last_run_status`)
-- [ ] add `notification_channel_id *uint` (nullable FK to channels) on `AlertSourceInstance`
-- [ ] add `source_kind` and `source_uuid` columns on `Incident`
-- [ ] register new models in AutoMigrate; add partial-unique index ensuring at most one `is_default_post=true` per provider
-- [ ] write an idempotent backfill (single transaction per step) that: (a) if a `SlackSettings` row exists, inserts one `integrations` row (`provider=slack`, credentials from tokens) plus one `channels` row from `alerts_channel` with `is_default_post=true`; (b) for each `AlertSourceInstance` of type `slack_channel`, inserts a `channels` row with `can_listen=true` and the existing `extraction_prompt`/`process_human_messages`, then deletes that AlertSourceInstance; (c) marks the `slack_channel` row in `alert_source_types` deprecated (hidden from UI)
-- [ ] add tests: migration runs cleanly on empty DB; migration backfills correctly on a seeded DB; migration is a no-op on re-run
-- [ ] run `make test` — must pass before Task 2
+- [x] add `Integration`, `Channel`, `CronJob` models with the fields specified in /tmp/plan.md (UUID public id, FK relationships, `is_default_post`, `can_post`, `can_listen`, `extraction_prompt`, `process_human_messages`, cron fields incl. `next_run_at`, `last_run_status`)
+- [x] add `notification_channel_id *uint` (nullable FK to channels) on `AlertSourceInstance`
+- [x] add `source_kind` and `source_uuid` columns on `Incident`
+- [x] register new models in AutoMigrate; add partial-unique index ensuring at most one `is_default_post=true` per provider
+- [x] write an idempotent backfill (single transaction per step) that: (a) if a `SlackSettings` row exists, inserts one `integrations` row (`provider=slack`, credentials from tokens) plus one `channels` row from `alerts_channel` with `is_default_post=true`; (b) for each `AlertSourceInstance` of type `slack_channel`, inserts a `channels` row with `can_listen=true` and the existing `extraction_prompt`/`process_human_messages`, then deletes that AlertSourceInstance; (c) marks the `slack_channel` row in `alert_source_types` deprecated (hidden from UI)
+- [x] add tests: migration runs cleanly on empty DB; migration backfills correctly on a seeded DB; migration is a no-op on re-run
+- [x] run `make test` — must pass before Task 2
 
 ### Task 2: Provider abstraction + ChannelService
 

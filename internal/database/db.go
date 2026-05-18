@@ -136,9 +136,37 @@ func runMigrations(db *gorm.DB) error {
 		&MCPServerConfig{},
 		&RetentionSettings{},
 		&FormattingSettings{},
+		// Channels & cron (unified channels + cron jobs feature)
+		&Integration{},
+		&Channel{},
+		&CronJob{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// Partial-unique index: at most one Channel.IsDefaultPost=true per
+	// Integration. Combined with the MVP "one Integration per provider"
+	// assumption, this enforces "one default channel per provider" at the DB
+	// level. The service layer adds an additional check across integrations
+	// of the same provider for the case where a deployment configures more
+	// than one Integration per provider.
+	if err := ensureChannelsDefaultPartialIndex(db); err != nil {
+		return fmt.Errorf("failed to ensure channels default partial index: %w", err)
+	}
+
+	// Backfill legacy SlackSettings + slack_channel AlertSourceInstance rows
+	// into the new Integration/Channel rows. Read-old → write-new →
+	// don't-delete-old-until-verified, one transaction per step, idempotent
+	// on re-run.
+	if err := migrateSlackSettingsToIntegrations(db); err != nil {
+		return err
+	}
+	if err := migrateSlackChannelAlertSourcesToChannels(db); err != nil {
+		return err
+	}
+	if err := deprecateSlackChannelAlertSourceType(db); err != nil {
+		return err
 	}
 
 	// Migrate open_ai_enabled → llm_enabled in proxy_settings table.
