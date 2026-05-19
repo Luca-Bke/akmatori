@@ -5,11 +5,43 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akmatori/akmatori/internal/database"
 	"github.com/akmatori/akmatori/internal/services"
 )
+
+// TestHandleChannels_MasksIntegrationCredentials asserts the eagerly-preloaded
+// Integration on a Channel response carries masked credentials. Otherwise the
+// /api/channels surface would re-expose the secrets that /api/integrations
+// already masks.
+func TestHandleChannels_MasksIntegrationCredentials(t *testing.T) {
+	creds := database.JSONB{"bot_token": "xoxb-SECRET-1234"}
+	mgr := &mockChannelManager{
+		channels: []database.Channel{{
+			ID:           1,
+			UUID:         "c1",
+			ExternalID:   "#ops",
+			CanPost:      true,
+			Integration:  database.Integration{ID: 9, UUID: "u1", Provider: database.MessagingProviderSlack, Name: "Slack", Credentials: creds, Enabled: true},
+		}},
+	}
+	h := newHandlerWithChannelManager(mgr)
+	req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
+	w := httptest.NewRecorder()
+	h.handleChannels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "xoxb-SECRET-1234") {
+		t.Fatalf("channel response leaked raw secret via embedded integration: %s", body)
+	}
+	if !strings.Contains(body, "****1234") {
+		t.Fatalf("expected masked credential in embedded integration: %s", body)
+	}
+}
 
 // TestHandleChannels_List exercises the happy path of GET /api/channels.
 func TestHandleChannels_List(t *testing.T) {

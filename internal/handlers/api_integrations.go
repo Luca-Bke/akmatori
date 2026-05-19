@@ -10,6 +10,78 @@ import (
 	"github.com/akmatori/akmatori/internal/services"
 )
 
+// integrationCredentialMaskFields lists the credential keys that should be
+// masked when an Integration row is returned over the API. Operator inputs
+// (tokens, secrets) are accepted on write but never echoed back in plaintext —
+// the same posture the retired /api/settings/slack endpoint maintained.
+var integrationCredentialMaskFields = []string{
+	"bot_token",
+	"signing_secret",
+	"app_token",
+	"api_token",
+	"webhook_secret",
+}
+
+// integrationResponse is the API-facing shape of an Integration row. It
+// mirrors the GORM model fields but replaces Credentials with masked values
+// so secrets do not leak to authenticated callers via GET responses.
+type integrationResponse struct {
+	ID          uint                       `json:"id"`
+	UUID        string                     `json:"uuid"`
+	Provider    database.MessagingProvider `json:"provider"`
+	Name        string                     `json:"name"`
+	Credentials map[string]interface{}     `json:"credentials"`
+	Enabled     bool                       `json:"enabled"`
+	CreatedAt   interface{}                `json:"created_at"`
+	UpdatedAt   interface{}                `json:"updated_at"`
+}
+
+// toIntegrationResponse returns a redacted view of the supplied integration
+// suitable for API responses. Credential values for keys listed in
+// integrationCredentialMaskFields are replaced with maskToken so that the
+// UI can render "configured: yes" without ever exposing the plaintext secret.
+func toIntegrationResponse(row *database.Integration) integrationResponse {
+	resp := integrationResponse{
+		ID:          row.ID,
+		UUID:        row.UUID,
+		Provider:    row.Provider,
+		Name:        row.Name,
+		Enabled:     row.Enabled,
+		CreatedAt:   row.CreatedAt,
+		UpdatedAt:   row.UpdatedAt,
+		Credentials: map[string]interface{}{},
+	}
+	for k, v := range row.Credentials {
+		if shouldMaskCredentialField(k) {
+			str, _ := v.(string)
+			resp.Credentials[k] = maskToken(str)
+			continue
+		}
+		resp.Credentials[k] = v
+	}
+	return resp
+}
+
+// shouldMaskCredentialField reports whether the given credential key carries a
+// secret that must be masked before going on the wire.
+func shouldMaskCredentialField(key string) bool {
+	for _, k := range integrationCredentialMaskFields {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// toIntegrationResponses applies toIntegrationResponse across a slice.
+func toIntegrationResponses(rows []database.Integration) []integrationResponse {
+	out := make([]integrationResponse, len(rows))
+	for i := range rows {
+		out[i] = toIntegrationResponse(&rows[i])
+	}
+	return out
+}
+
 // CreateIntegrationRequest is the request body for POST /api/integrations.
 // Credentials are stored verbatim as JSONB; their shape is provider-specific.
 type CreateIntegrationRequest struct {
@@ -42,7 +114,7 @@ func (h *APIHandler) handleIntegrations(w http.ResponseWriter, r *http.Request) 
 			api.RespondError(w, http.StatusInternalServerError, "Failed to list integrations")
 			return
 		}
-		api.RespondJSON(w, http.StatusOK, rows)
+		api.RespondJSON(w, http.StatusOK, toIntegrationResponses(rows))
 
 	case http.MethodPost:
 		var req CreateIntegrationRequest
@@ -74,7 +146,7 @@ func (h *APIHandler) handleIntegrations(w http.ResponseWriter, r *http.Request) 
 			api.RespondError(w, integrationErrStatus(err), err.Error())
 			return
 		}
-		api.RespondJSON(w, http.StatusCreated, row)
+		api.RespondJSON(w, http.StatusCreated, toIntegrationResponse(row))
 
 	default:
 		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -101,7 +173,7 @@ func (h *APIHandler) handleIntegrationByUUID(w http.ResponseWriter, r *http.Requ
 			api.RespondError(w, integrationErrStatus(err), err.Error())
 			return
 		}
-		api.RespondJSON(w, http.StatusOK, row)
+		api.RespondJSON(w, http.StatusOK, toIntegrationResponse(row))
 
 	case http.MethodPut:
 		var req UpdateIntegrationRequest
@@ -118,7 +190,7 @@ func (h *APIHandler) handleIntegrationByUUID(w http.ResponseWriter, r *http.Requ
 			api.RespondError(w, integrationErrStatus(err), err.Error())
 			return
 		}
-		api.RespondJSON(w, http.StatusOK, row)
+		api.RespondJSON(w, http.StatusOK, toIntegrationResponse(row))
 
 	case http.MethodDelete:
 		if err := h.channelService.DeleteIntegration(uuid); err != nil {

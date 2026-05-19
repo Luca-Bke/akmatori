@@ -169,6 +169,42 @@ func TestChannelService_CreateChannel_RejectsSecondDefaultSameIntegration(t *tes
 	}
 }
 
+// TestChannelService_UpdateChannel_RejectsCanPostFalseOnExistingDefault asserts
+// the invariant guard fires when the patch flips can_post=false without
+// touching is_default_post. Without this guard, the row ends in the forbidden
+// state is_default_post=true && can_post=false, where ResolveDefault's
+// can_post=true filter silently drops it and creating a fresh default
+// elsewhere appears to collide with a row the operator believes is no longer
+// the default.
+func TestChannelService_UpdateChannel_RejectsCanPostFalseOnExistingDefault(t *testing.T) {
+	svc, db := setupChannelServiceTest(t)
+	integration := seedSlackIntegration(t, db)
+	channel, err := svc.CreateChannel(&database.Channel{
+		IntegrationID: integration.ID,
+		ExternalID:    "C-default",
+		CanPost:       true,
+		IsDefaultPost: true,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("seed default channel: %v", err)
+	}
+
+	no := false
+	if _, err := svc.UpdateChannel(channel.UUID, ChannelUpdate{CanPost: &no}); err == nil {
+		t.Fatal("UpdateChannel with can_post=false on existing default-post row succeeded; want validation error")
+	}
+
+	// Verify the row was not actually mutated.
+	reloaded, err := svc.GetChannelByUUID(channel.UUID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.CanPost || !reloaded.IsDefaultPost {
+		t.Fatalf("UpdateChannel mutated row despite returning error: %+v", reloaded)
+	}
+}
+
 func TestChannelService_UpdateChannel_AllowsSelfReSaveAsDefault(t *testing.T) {
 	svc, db := setupChannelServiceTest(t)
 	integration := seedSlackIntegration(t, db)

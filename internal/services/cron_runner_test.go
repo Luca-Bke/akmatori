@@ -864,6 +864,93 @@ func TestCronRunner_Start_LoadsEnabledJobs(t *testing.T) {
 	}
 }
 
+// TestCronRunner_Start_DoesNotMarkStartedOnDBError asserts the runner does
+// not flip its started flag when the initial jobs load fails. Otherwise a
+// transient DB hiccup at boot would wedge the scheduler permanently — Start
+// would be a no-op on the next attempt while the scheduler never ticked.
+func TestCronRunner_Start_DoesNotMarkStartedOnDBError(t *testing.T) {
+	runner, db, sched, _, _ := setupCronRunnerTest(t)
+	// Drop the cron_jobs table so the Find call surfaces a real DB error.
+	if err := db.Migrator().DropTable(&database.CronJob{}); err != nil {
+		t.Fatalf("drop cron_jobs: %v", err)
+	}
+	if err := runner.Start(context.Background()); err == nil {
+		t.Fatal("expected Start to return an error after DB failure")
+	}
+	runner.mu.Lock()
+	started := runner.started
+	runner.mu.Unlock()
+	if started {
+		t.Fatal("runner.started left true after Start returned an error — subsequent Start calls would be silent no-ops")
+	}
+	if sched.started {
+		t.Fatal("scheduler was started even though jobs load failed")
+	}
+
+	// Restore the table and verify a follow-up Start succeeds.
+	if err := db.AutoMigrate(&database.CronJob{}); err != nil {
+		t.Fatalf("restore cron_jobs: %v", err)
+	}
+	if err := runner.Start(context.Background()); err != nil {
+		t.Fatalf("retry Start: %v", err)
+	}
+	if !sched.started {
+		t.Fatal("scheduler not started on retry")
+	}
+}
+
+// TestCronRunner_ResolveChannel_FallsBackWhenExplicitDisabled asserts that an
+// explicit ChannelID pointing at a disabled or non-posting channel resolves to
+// the per-provider default at fire time instead of failing the tick. Mirrors
+// ChannelService.ResolveForAlertSource's semantics so the cron path and the
+// alert-routing path agree on what "explicit but unusable" means.
+func TestCronRunner_ResolveChannel_FallsBackWhenExplicitDisabled(t *testing.T) {
+	runner, db, sched, chMgr, prov := setupCronRunnerTest(t)
+	defaultCh := chMgr.channels[0]
+	// Seed a second channel that's explicitly disabled in both the DB
+	// (so fire's Preload sees it) and the mock channel manager (so the
+	// CreateJob lookup resolves the UUID to an ID). The default channel
+	// remains the fallback target.
+	disabled := database.Channel{
+		UUID:          uuid.New().String(),
+		IntegrationID: defaultCh.IntegrationID,
+		ExternalID:    "C-disabled",
+		DisplayName:   "#disabled",
+		CanPost:       true,
+		Enabled:       false,
+		Integration:   defaultCh.Integration,
+	}
+	if err := db.Create(&disabled).Error; err != nil {
+		t.Fatalf("seed disabled channel: %v", err)
+	}
+	// GORM honors the gorm:"default:true" column tag when a bool field is its
+	// zero value at insert time. Explicitly flip enabled=false so the row in
+	// the DB actually reflects the disabled state we want to test.
+	if err := db.Model(&database.Channel{}).Where("id = ?", disabled.ID).Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable channel: %v", err)
+	}
+	disabled.Enabled = false
+	chMgr.channels = append(chMgr.channels, disabled)
+
+	if _, err := runner.CreateJob("status", "", "*/2 * * * *", "Summarize", database.CronJobModeOneshot, disabled.UUID, true); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	for id := range sched.jobs {
+		sched.fire(id)
+	}
+
+	prov.mu.Lock()
+	defer prov.mu.Unlock()
+	if len(prov.posts) != 1 {
+		t.Fatalf("expected one post, got %d", len(prov.posts))
+	}
+	// The post should have landed on the default (fallback), not the disabled
+	// explicit channel.
+	if prov.posts[0].channel.UUID != defaultCh.UUID {
+		t.Fatalf("post landed on %s (disabled explicit), want fallback to default %s", prov.posts[0].channel.UUID, defaultCh.UUID)
+	}
+}
+
 func TestCronRunner_Start_Idempotent(t *testing.T) {
 	runner, _, sched, _, _ := setupCronRunnerTest(t)
 	if err := runner.Start(context.Background()); err != nil {

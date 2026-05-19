@@ -125,13 +125,20 @@ func (r *CronRunner) Start(parent context.Context) error {
 		r.mu.Unlock()
 		return nil
 	}
-	r.started = true
 	r.mu.Unlock()
 
+	// Load before flipping `started` so a transient DB error at boot does not
+	// leave the runner in a half-started state where Start is a no-op but the
+	// scheduler never actually ticks.
 	var jobs []database.CronJob
 	if err := r.db.Where("enabled = ?", true).Find(&jobs).Error; err != nil {
 		return fmt.Errorf("load cron jobs: %w", err)
 	}
+
+	r.mu.Lock()
+	r.started = true
+	r.mu.Unlock()
+
 	for _, job := range jobs {
 		if err := r.register(job); err != nil {
 			slog.Warn("failed to register cron job", "uuid", job.UUID, "err", err)
@@ -513,21 +520,14 @@ func formatCronAgentMessage(job *database.CronJob, response string, hasError boo
 }
 
 // resolveChannel returns the Channel the supplied cron job should post into.
-// Per the MVP, every cron job has an explicit ChannelID; if absent we fall
-// back to the per-provider default so misconfiguration does not silently
-// drop the post.
+// The explicit ChannelID wins as long as the channel and its integration are
+// both enabled and the channel can post; otherwise we fall back to the
+// per-provider default so a disabled or non-posting channel does not silently
+// black-hole the message. Matches the semantics of
+// ChannelService.ResolveForAlertSource for the outbound-alert path.
 func (r *CronRunner) resolveChannel(job *database.CronJob) (*database.Channel, error) {
-	if job.Channel != nil && job.Channel.ID != 0 {
-		return job.Channel, nil
-	}
-	if job.ChannelID != nil {
-		ch, err := r.loadChannelByID(*job.ChannelID)
-		if err == nil {
-			return ch, nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
+	if ch := r.usableExplicitChannel(job); ch != nil {
+		return ch, nil
 	}
 	ch, err := r.channels.ResolveDefault(cronProviderResolveDefault)
 	if err != nil {
@@ -537,6 +537,30 @@ func (r *CronRunner) resolveChannel(job *database.CronJob) (*database.Channel, e
 		return nil, err
 	}
 	return ch, nil
+}
+
+// usableExplicitChannel returns the cron's explicit Channel when present AND
+// usable for outbound posting. A nil return signals the caller to fall back to
+// the workspace default; a non-recoverable DB error returns nil here too
+// (resolveChannel will surface ResolveDefault's error in that case).
+func (r *CronRunner) usableExplicitChannel(job *database.CronJob) *database.Channel {
+	var candidate *database.Channel
+	switch {
+	case job.Channel != nil && job.Channel.ID != 0:
+		candidate = job.Channel
+	case job.ChannelID != nil:
+		ch, err := r.loadChannelByID(*job.ChannelID)
+		if err != nil {
+			return nil
+		}
+		candidate = ch
+	default:
+		return nil
+	}
+	if !candidate.Enabled || !candidate.CanPost || !candidate.Integration.Enabled {
+		return nil
+	}
+	return candidate
 }
 
 // loadChannelByID is a small helper around the DB so the resolver can keep its

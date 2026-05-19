@@ -312,18 +312,26 @@ func (s *ChannelService) UpdateChannel(uuidStr string, patch ChannelUpdate) (*da
 		return row, nil
 	}
 
+	// Compute effective post-update values for the invariant guard: take the
+	// patched value when supplied, otherwise fall back to the existing row.
+	// Forbid is_default_post=true && can_post=false regardless of which side
+	// the patch touches — otherwise an operator can flip can_post=false on a
+	// default-post row and produce a ghost default that fails ResolveDefault's
+	// can_post=true filter without surfacing as an error at write time.
+	effectiveIsDefaultPost := row.IsDefaultPost
+	if patch.IsDefaultPost != nil {
+		effectiveIsDefaultPost = *patch.IsDefaultPost
+	}
+	effectiveCanPost := row.CanPost
+	if patch.CanPost != nil {
+		effectiveCanPost = *patch.CanPost
+	}
+	if effectiveIsDefaultPost && !effectiveCanPost {
+		return nil, fmt.Errorf("channel marked is_default_post must also have can_post=true")
+	}
+
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if patch.IsDefaultPost != nil && *patch.IsDefaultPost {
-			// Determine the effective can_post for the post-update row: the
-			// patched value if supplied, else the existing row value. Reject
-			// is_default_post=true when can_post would end up false.
-			effectiveCanPost := row.CanPost
-			if patch.CanPost != nil {
-				effectiveCanPost = *patch.CanPost
-			}
-			if !effectiveCanPost {
-				return fmt.Errorf("channel marked is_default_post must also have can_post=true")
-			}
 			if err := s.assertNoOtherDefaultPostTx(tx, row.IntegrationID, row.ID); err != nil {
 				return err
 			}

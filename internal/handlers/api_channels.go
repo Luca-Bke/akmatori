@@ -10,6 +10,58 @@ import (
 	"github.com/akmatori/akmatori/internal/services"
 )
 
+// channelResponse is the API-facing view of a database.Channel row. The
+// channel itself has no secret fields but eagerly preloads its parent
+// Integration via GORM; that Integration carries Credentials, so the response
+// shape uses toIntegrationResponse to mask them before going on the wire.
+type channelResponse struct {
+	ID                   uint                 `json:"id"`
+	UUID                 string               `json:"uuid"`
+	IntegrationID        uint                 `json:"integration_id"`
+	ExternalID           string               `json:"external_id"`
+	DisplayName          string               `json:"display_name"`
+	CanPost              bool                 `json:"can_post"`
+	CanListen            bool                 `json:"can_listen"`
+	IsDefaultPost        bool                 `json:"is_default_post"`
+	ExtractionPrompt     string               `json:"extraction_prompt"`
+	ProcessHumanMessages bool                 `json:"process_human_messages"`
+	Enabled              bool                 `json:"enabled"`
+	CreatedAt            interface{}          `json:"created_at"`
+	UpdatedAt            interface{}          `json:"updated_at"`
+	Integration          *integrationResponse `json:"integration,omitempty"`
+}
+
+func toChannelResponse(row *database.Channel) channelResponse {
+	resp := channelResponse{
+		ID:                   row.ID,
+		UUID:                 row.UUID,
+		IntegrationID:        row.IntegrationID,
+		ExternalID:           row.ExternalID,
+		DisplayName:          row.DisplayName,
+		CanPost:              row.CanPost,
+		CanListen:            row.CanListen,
+		IsDefaultPost:        row.IsDefaultPost,
+		ExtractionPrompt:     row.ExtractionPrompt,
+		ProcessHumanMessages: row.ProcessHumanMessages,
+		Enabled:              row.Enabled,
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
+	}
+	if row.Integration.ID != 0 {
+		masked := toIntegrationResponse(&row.Integration)
+		resp.Integration = &masked
+	}
+	return resp
+}
+
+func toChannelResponses(rows []database.Channel) []channelResponse {
+	out := make([]channelResponse, len(rows))
+	for i := range rows {
+		out[i] = toChannelResponse(&rows[i])
+	}
+	return out
+}
+
 // CreateChannelRequest is the request body for POST /api/channels. The
 // integration is selected by UUID so callers do not have to expose internal
 // integer IDs to the UI; ExternalID is the provider-specific channel handle.
@@ -59,7 +111,7 @@ func (h *APIHandler) handleChannels(w http.ResponseWriter, r *http.Request) {
 			api.RespondError(w, integrationErrStatus(err), err.Error())
 			return
 		}
-		api.RespondJSON(w, http.StatusOK, rows)
+		api.RespondJSON(w, http.StatusOK, toChannelResponses(rows))
 
 	case http.MethodPost:
 		var req CreateChannelRequest
@@ -120,7 +172,7 @@ func (h *APIHandler) handleChannels(w http.ResponseWriter, r *http.Request) {
 		// active immediately. Safe to call even when the channel only posts;
 		// the loader filters by can_listen on its own.
 		h.reloadAlertChannels()
-		api.RespondJSON(w, http.StatusCreated, row)
+		api.RespondJSON(w, http.StatusCreated, toChannelResponse(row))
 
 	default:
 		api.RespondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -147,7 +199,7 @@ func (h *APIHandler) handleChannelByUUID(w http.ResponseWriter, r *http.Request)
 			api.RespondError(w, integrationErrStatus(err), err.Error())
 			return
 		}
-		api.RespondJSON(w, http.StatusOK, row)
+		api.RespondJSON(w, http.StatusOK, toChannelResponse(row))
 
 	case http.MethodPut:
 		var req UpdateChannelRequest
@@ -171,7 +223,7 @@ func (h *APIHandler) handleChannelByUUID(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		h.reloadAlertChannels()
-		api.RespondJSON(w, http.StatusOK, row)
+		api.RespondJSON(w, http.StatusOK, toChannelResponse(row))
 
 	case http.MethodDelete:
 		if err := h.channelService.DeleteChannel(uuid); err != nil {

@@ -585,6 +585,65 @@ func TestHandleIntegrationByUUID_Update_PropagatesCredentials(t *testing.T) {
 	}
 }
 
+// TestHandleIntegrations_MasksCredentialsInResponses asserts that secret
+// credential fields (bot_token, signing_secret, app_token) are masked in API
+// responses — preserving the posture of the retired /api/settings/slack
+// endpoint, which never echoed live tokens back to authenticated callers.
+func TestHandleIntegrations_MasksCredentialsInResponses(t *testing.T) {
+	creds := database.JSONB{
+		"bot_token":      "xoxb-LONG-SECRET-1234",
+		"signing_secret": "abcdef0123456789",
+		"app_token":      "xapp-VERY-SECRET-AAAA",
+	}
+	mgr := &mockChannelManager{integrations: []database.Integration{{ID: 1, UUID: "u1", Provider: database.MessagingProviderSlack, Name: "Slack", Credentials: creds, Enabled: true}}}
+	h := newHandlerWithChannelManager(mgr)
+
+	// GET /api/integrations
+	req := httptest.NewRequest(http.MethodGet, "/api/integrations", nil)
+	w := httptest.NewRecorder()
+	h.handleIntegrations(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, raw := range []string{"xoxb-LONG-SECRET-1234", "abcdef0123456789", "xapp-VERY-SECRET-AAAA"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("list response leaked raw secret %q in body: %s", raw, body)
+		}
+	}
+	if !strings.Contains(body, "****1234") || !strings.Contains(body, "****6789") || !strings.Contains(body, "****AAAA") {
+		t.Fatalf("expected masked credentials with last-4 suffixes in body: %s", body)
+	}
+
+	// GET /api/integrations/u1
+	req = httptest.NewRequest(http.MethodGet, "/api/integrations/u1", nil)
+	w = httptest.NewRecorder()
+	h.handleIntegrationByUUID(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get: expected 200, got %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "xoxb-LONG-SECRET-1234") {
+		t.Fatalf("by-uuid response leaked raw secret: %s", w.Body.String())
+	}
+
+	// POST /api/integrations — create response must also be masked
+	postBody, _ := json.Marshal(CreateIntegrationRequest{
+		Provider:    "slack",
+		Name:        "New Slack",
+		Credentials: creds,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/integrations", bytes.NewReader(postBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	h.handleIntegrations(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "xoxb-LONG-SECRET-1234") {
+		t.Fatalf("create response leaked raw secret: %s", w.Body.String())
+	}
+}
+
 // TestHandleIntegrationByUUID_Delete_PropagatesNotFound surfaces a 404 when
 // the service reports the integration is gone.
 func TestHandleIntegrationByUUID_Delete_PropagatesNotFound(t *testing.T) {
