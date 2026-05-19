@@ -91,6 +91,14 @@ func (s *ChannelService) CreateIntegration(provider database.MessagingProvider, 
 	if err := s.db.Create(row).Error; err != nil {
 		return nil, fmt.Errorf("create integration: %w", err)
 	}
+	// GORM v2 omits zero-value bools from INSERT, so the column-level
+	// `default:true` flips a caller-requested Enabled=false back to true.
+	// Force the column when the caller explicitly asked for disabled.
+	if !enabled {
+		if err := s.db.Model(row).Update("enabled", false).Error; err != nil {
+			return nil, fmt.Errorf("apply enabled=false on create: %w", err)
+		}
+	}
 	return row, nil
 }
 
@@ -242,6 +250,7 @@ func (s *ChannelService) CreateChannel(c *database.Channel) (*database.Channel, 
 		return nil, fmt.Errorf("channel marked is_default_post must also have can_post=true")
 	}
 
+	requestedEnabled := c.Enabled
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if c.IsDefaultPost {
 			if err := s.assertNoOtherDefaultPostTx(tx, c.IntegrationID, 0); err != nil {
@@ -250,6 +259,15 @@ func (s *ChannelService) CreateChannel(c *database.Channel) (*database.Channel, 
 		}
 		if err := tx.Create(c).Error; err != nil {
 			return fmt.Errorf("create channel: %w", err)
+		}
+		// GORM v2 omits zero-value bools from INSERT; the column-level
+		// `default:true` would otherwise silently flip a caller-requested
+		// Enabled=false back to true. Force the column when the caller
+		// explicitly asked for disabled.
+		if !requestedEnabled {
+			if err := tx.Model(&database.Channel{}).Where("id = ?", c.ID).Update("enabled", false).Error; err != nil {
+				return fmt.Errorf("apply enabled=false on create: %w", err)
+			}
 		}
 		return tx.Preload("Integration").First(c, c.ID).Error
 	})

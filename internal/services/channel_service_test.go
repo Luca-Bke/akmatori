@@ -92,6 +92,58 @@ func TestChannelService_CreateChannel_DefaultsDisplayNameToExternalID(t *testing
 	}
 }
 
+// TestChannelService_CreateChannel_HonorsEnabledFalse guards against the GORM
+// v2 zero-value-bool INSERT omission. Without the explicit post-create
+// Update, the column-level `default:true` would silently flip a
+// caller-requested Enabled=false back to true on create.
+func TestChannelService_CreateChannel_HonorsEnabledFalse(t *testing.T) {
+	svc, db := setupChannelServiceTest(t)
+	integration := seedSlackIntegration(t, db)
+
+	got, err := svc.CreateChannel(&database.Channel{
+		IntegrationID: integration.ID,
+		ExternalID:    "C-disabled",
+		CanPost:       true,
+		Enabled:       false,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel error = %v", err)
+	}
+	if got.Enabled {
+		t.Errorf("returned Channel.Enabled = true, want false")
+	}
+	// Verify the row actually persisted as disabled, not just the in-memory
+	// struct.
+	var reloaded database.Channel
+	if err := db.First(&reloaded, got.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Enabled {
+		t.Errorf("persisted Channel.Enabled = true, want false")
+	}
+}
+
+// TestChannelService_CreateIntegration_HonorsEnabledFalse mirrors the channel
+// test for the integration row — same GORM zero-value-bool gotcha.
+func TestChannelService_CreateIntegration_HonorsEnabledFalse(t *testing.T) {
+	svc, db := setupChannelServiceTest(t)
+
+	got, err := svc.CreateIntegration(database.MessagingProviderSlack, "Slack Dev", database.JSONB{"bot_token": "x"}, false)
+	if err != nil {
+		t.Fatalf("CreateIntegration error = %v", err)
+	}
+	if got.Enabled {
+		t.Errorf("returned Integration.Enabled = true, want false")
+	}
+	var reloaded database.Integration
+	if err := db.First(&reloaded, got.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Enabled {
+		t.Errorf("persisted Integration.Enabled = true, want false")
+	}
+}
+
 func TestChannelService_CreateChannel_RejectsEmptyExternalID(t *testing.T) {
 	svc, db := setupChannelServiceTest(t)
 	integration := seedSlackIntegration(t, db)

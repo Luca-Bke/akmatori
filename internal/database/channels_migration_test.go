@@ -134,6 +134,49 @@ func TestChannelsMigration_BackfillSkipsUnconfiguredSlackSettings(t *testing.T) 
 	}
 }
 
+// TestChannelsMigration_PlaceholderIntegrationStaysDisabled asserts that when
+// the listener migration has to fabricate a placeholder Integration (because
+// the operator never configured slack_settings but still has slack_channel
+// AlertSourceInstance rows from a prior dev run), the placeholder lands as
+// Enabled=false. Without the explicit post-create Update, the column-level
+// `default:true` would persist the placeholder as Enabled=true despite the
+// struct field saying false — GORM v2 omits zero-value bools from INSERT.
+func TestChannelsMigration_PlaceholderIntegrationStaysDisabled(t *testing.T) {
+	db := setupChannelsMigrationDB(t)
+
+	sourceType := &AlertSourceType{
+		Name:        "slack_channel",
+		DisplayName: "Slack Alert Channel",
+	}
+	if err := db.Create(sourceType).Error; err != nil {
+		t.Fatalf("seed source type: %v", err)
+	}
+	inst := &AlertSourceInstance{
+		UUID:              uuid.New().String(),
+		AlertSourceTypeID: sourceType.ID,
+		Name:              "edge-alerts",
+		Settings: JSONB{
+			"slack_channel_id": "C99999",
+		},
+		Enabled: true,
+	}
+	if err := db.Create(inst).Error; err != nil {
+		t.Fatalf("seed alert source instance: %v", err)
+	}
+
+	if err := migrateSlackChannelAlertSourcesToChannels(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var integration Integration
+	if err := db.Where("provider = ?", MessagingProviderSlack).First(&integration).Error; err != nil {
+		t.Fatalf("expected placeholder integration, got error: %v", err)
+	}
+	if integration.Enabled {
+		t.Errorf("expected placeholder integration to be disabled, got enabled — credentials are empty so an enabled placeholder would falsely pass the listener-enabled gate")
+	}
+}
+
 func TestChannelsMigration_BackfillsSlackChannelAlertSources(t *testing.T) {
 	db := setupChannelsMigrationDB(t)
 

@@ -721,6 +721,16 @@ func (r *CronRunner) CreateJob(name, description, schedule, prompt string, mode 
 	if err := r.db.Create(row).Error; err != nil {
 		return nil, fmt.Errorf("create cron job: %w", err)
 	}
+	// GORM v2 omits zero-value bools from INSERT, so the column-level
+	// `default:true` flips a caller-requested Enabled=false back to true.
+	// Without this guard a "create-disabled" cron job would start firing
+	// immediately — a particularly bad surprise for the create-then-review
+	// workflow.
+	if !enabled {
+		if err := r.db.Model(row).Update("enabled", false).Error; err != nil {
+			return nil, fmt.Errorf("apply enabled=false on create: %w", err)
+		}
+	}
 	if err := r.Reload(row.ID); err != nil {
 		slog.Warn("failed to schedule newly created cron job", "uuid", row.UUID, "err", err)
 	}

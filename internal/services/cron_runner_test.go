@@ -1060,6 +1060,35 @@ func TestCronRunner_CreateJob_RejectsEmptyPrompt(t *testing.T) {
 	}
 }
 
+// TestCronRunner_CreateJob_HonorsEnabledFalse guards against the GORM v2
+// zero-value-bool INSERT omission. A "create-disabled" cron must persist as
+// disabled — otherwise the column-level `default:true` would silently flip
+// the row to enabled and the scheduler would start firing immediately.
+func TestCronRunner_CreateJob_HonorsEnabledFalse(t *testing.T) {
+	runner, db, sched, chMgr, _ := setupCronRunnerTest(t)
+	chUUID := chMgr.channels[0].UUID
+	job, err := runner.CreateJob("disabled-on-create", "", "0 9 * * *", "Summarize", database.CronJobModeOneshot, chUUID, false)
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if job.Enabled {
+		t.Errorf("returned CronJob.Enabled = true, want false")
+	}
+	var reloaded database.CronJob
+	if err := db.First(&reloaded, job.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Enabled {
+		t.Errorf("persisted CronJob.Enabled = true, want false")
+	}
+	// A disabled job must not be registered with the scheduler; otherwise the
+	// runner would start firing it on the next tick despite the operator
+	// having explicitly asked for disabled.
+	if len(sched.jobs) != 0 {
+		t.Errorf("scheduler.jobs = %d, want 0 for disabled-on-create job", len(sched.jobs))
+	}
+}
+
 // TestCronRunner_UpdateJob_RejectsBlankNameAndPrompt covers the
 // patch-validation paths.
 func TestCronRunner_UpdateJob_RejectsBlankNameAndPrompt(t *testing.T) {

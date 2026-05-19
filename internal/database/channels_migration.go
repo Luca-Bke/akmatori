@@ -157,6 +157,15 @@ func migrateSlackChannelAlertSourcesToChannels(db *gorm.DB) error {
 			if err := tx.Create(&integration).Error; err != nil {
 				return fmt.Errorf("create placeholder slack integration: %w", err)
 			}
+			// GORM v2 omits the zero-value Enabled=false from INSERT, so
+			// the column-level `default:true` would otherwise materialize
+			// the placeholder as enabled despite having empty credentials.
+			// Force it disabled so the listener path's enabled check
+			// correctly skips the placeholder until an operator fills in
+			// credentials.
+			if err := tx.Model(&integration).Update("enabled", false).Error; err != nil {
+				return fmt.Errorf("disable placeholder slack integration: %w", err)
+			}
 		} else if err != nil {
 			return fmt.Errorf("lookup slack integration: %w", err)
 		}
