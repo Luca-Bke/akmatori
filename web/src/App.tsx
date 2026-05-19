@@ -15,6 +15,7 @@ import Runbooks from './pages/Runbooks';
 import Settings from './pages/Settings';
 import IntegrationsPage from './pages/IntegrationsPage';
 import ChannelsPage from './pages/ChannelsPage';
+import CronJobsPage from './pages/CronJobsPage';
 
 function App() {
   return (
@@ -37,6 +38,7 @@ function App() {
                       <Route path="/tools" element={<Tools />} />
                       <Route path="/context" element={<ContextFiles />} />
                       <Route path="/runbooks" element={<Runbooks />} />
+                      <Route path="/cron" element={<CronJobsPage />} />
                       <Route path="/settings/integrations" element={<IntegrationsPage />} />
                       <Route path="/settings/channels" element={<ChannelsPage />} />
                       <Route path="/settings/slack" element={<Navigate to="/settings/integrations" replace />} />

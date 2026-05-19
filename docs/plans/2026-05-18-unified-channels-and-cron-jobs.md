@@ -160,11 +160,11 @@ Introduce a first-class Channel concept (under provider Integrations) that trigg
 - Create: `web/src/components/cron/CronJobsManager.tsx`, `web/src/components/cron/CronJobForm.tsx`
 - Modify: router config
 
-- [ ] build `CronJobsManager` list page (name, schedule, channel, mode, enabled, last-run badge)
-- [ ] build `CronJobForm`: name, description, schedule (preset dropdown + "advanced" raw cron input), prompt textarea, mode radio (oneshot/agent), `ChannelPicker`, enabled toggle, parsed next-run preview
-- [ ] add `/cron` route
-- [ ] add vitest tests for the form (schedule validation surfacing, next-run preview, mode toggle) and list page
-- [ ] run `make test-web` — must pass before Task 10
+- [x] build `CronJobsManager` list page (name, schedule, channel, mode, enabled, last-run badge)
+- [x] build `CronJobForm`: name, description, schedule (preset dropdown + "advanced" raw cron input), prompt textarea, mode radio (oneshot/agent), `ChannelPicker`, enabled toggle, parsed next-run preview
+- [x] add `/cron` route
+- [x] add vitest tests for the form (schedule validation surfacing, next-run preview, mode toggle) and list page
+- [x] run `make test-web` — must pass before Task 10
 
 ### Task 10: Cleanup — remove SlackSettings.AlertsChannel fallback
 

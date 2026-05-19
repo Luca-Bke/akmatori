@@ -39,6 +39,9 @@ import type {
   SSHKeyCreateRequest,
   SSHKeyUpdateRequest,
   Runbook,
+  CronJob,
+  CreateCronJobRequest,
+  UpdateCronJobRequest,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -520,6 +523,35 @@ export const alertSourcesApi = {
     const baseUrl = API_BASE_URL || window.location.origin;
     return `${baseUrl}/webhook/alert/${uuid}`;
   },
+};
+
+// Cron Jobs API
+export const cronJobsApi = {
+  list: () => fetchApi<CronJob[]>('/api/cron-jobs'),
+
+  get: (uuid: string) => fetchApi<CronJob>(`/api/cron-jobs/${uuid}`),
+
+  create: (data: CreateCronJobRequest) =>
+    fetchApi<CronJob>('/api/cron-jobs', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (uuid: string, data: UpdateCronJobRequest) =>
+    fetchApi<CronJob>(`/api/cron-jobs/${uuid}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (uuid: string) =>
+    fetchApi<void>(`/api/cron-jobs/${uuid}`, {
+      method: 'DELETE',
+    }),
+
+  run: (uuid: string) =>
+    fetchApi<{ status: string }>(`/api/cron-jobs/${uuid}/run`, {
+      method: 'POST',
+    }),
 };
 
 export { ApiError };

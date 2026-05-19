@@ -8,6 +8,7 @@ import {
   Activity,
   FileText,
   BookOpen,
+  Clock,
   ChevronLeft,
   Menu,
   Sun,
@@ -34,6 +35,7 @@ const navigation = [
   { name: 'Tools', href: '/tools', icon: Wrench },
   { name: 'Context Files', href: '/context', icon: FileText },
   { name: 'Runbooks', href: '/runbooks', icon: BookOpen },
+  { name: 'Cron Jobs', href: '/cron', icon: Clock },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 

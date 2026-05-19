@@ -375,6 +375,51 @@ export interface UpdateAlertSourceRequest {
   notification_channel_uuid?: string | null;
 }
 
+// Cron Jobs
+
+export type CronJobMode = 'oneshot' | 'agent';
+
+export type CronRunStatus = '' | 'ok' | 'error';
+
+export interface CronJob {
+  id: number;
+  uuid: string;
+  name: string;
+  description: string;
+  schedule: string;
+  prompt: string;
+  mode: CronJobMode;
+  channel_id?: number | null;
+  enabled: boolean;
+  last_run_at?: string | null;
+  last_run_status: CronRunStatus;
+  last_run_error: string;
+  next_run_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  channel?: Channel | null;
+}
+
+export interface CreateCronJobRequest {
+  name: string;
+  description?: string;
+  schedule: string;
+  prompt: string;
+  mode?: CronJobMode;
+  channel_uuid?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateCronJobRequest {
+  name?: string;
+  description?: string;
+  schedule?: string;
+  prompt?: string;
+  mode?: CronJobMode;
+  channel_uuid?: string;
+  enabled?: boolean;
+}
+
 // SSH Keys (for SSH tool management)
 export interface SSHKey {
   id: string;
