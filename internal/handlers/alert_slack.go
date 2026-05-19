@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,32 +10,82 @@ import (
 
 	"github.com/akmatori/akmatori/internal/alerts"
 	"github.com/akmatori/akmatori/internal/database"
+	"github.com/akmatori/akmatori/internal/services"
 	"github.com/slack-go/slack"
 )
 
-func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *database.AlertSourceInstance) (string, error) {
+// resolveOutboundSlackChannel picks the outbound destination for an alert.
+//
+// Consults ChannelService.ResolveForAlertSource and returns a Channel row
+// whose Integration is preloaded so the caller can route through
+// ProviderRegistry. Returns (nil, "") when no Channel destination can be
+// resolved — callers then skip Slack posting.
+func (h *AlertHandler) resolveOutboundSlackChannel(asi *database.AlertSourceInstance) (*database.Channel, string) {
+	if h.channelService == nil {
+		return nil, ""
+	}
+	ch, err := h.channelService.ResolveForAlertSource(asi, database.MessagingProviderSlack)
+	if err != nil {
+		if !errors.Is(err, services.ErrChannelNotFound) {
+			slog.Warn("resolve channel for alert source failed", "err", err)
+		}
+		return nil, ""
+	}
+	if ch == nil {
+		return nil, ""
+	}
+	// ResolveForAlertSource honours an explicit AlertSourceInstance.NotificationChannelID
+	// without filtering by provider, so the resolved row could belong to a
+	// non-slack integration (e.g. Telegram). Posting it through the Slack
+	// client would silently misroute the alert. Fall through to the Slack
+	// per-provider default so the alert still surfaces somewhere rather than
+	// being silently dropped.
+	if ch.Integration.Provider != database.MessagingProviderSlack {
+		slog.Warn("alert source points at a non-slack channel; falling back to default Slack channel",
+			"channel_uuid", ch.UUID,
+			"provider", ch.Integration.Provider,
+		)
+		fallback, ferr := h.channelService.ResolveDefault(database.MessagingProviderSlack)
+		if ferr != nil {
+			if !errors.Is(ferr, services.ErrChannelNotFound) {
+				slog.Warn("resolve default slack channel failed", "err", ferr)
+			}
+			return nil, ""
+		}
+		ch = fallback
+	}
+	return ch, h.resolveSlackExternalID(ch.ExternalID)
+}
+
+// resolveSlackExternalID converts a Channel.ExternalID (which may be a Slack
+// channel ID like C012345 or a human name like #alerts) into a concrete
+// channel ID using the cached resolver. Falls back to the input value when
+// the resolver is missing or errors out so the post still has a target to
+// try; downstream Slack errors will be logged on failure.
+func (h *AlertHandler) resolveSlackExternalID(externalID string) string {
+	if externalID == "" {
+		return ""
+	}
+	if h.channelResolver == nil {
+		return externalID
+	}
+	resolved, err := h.channelResolver.ResolveChannel(externalID)
+	if err != nil {
+		slog.Warn("failed to resolve slack channel", "external_id", externalID, "err", err)
+		return externalID
+	}
+	return resolved
+}
+
+func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *database.AlertSourceInstance) (string, string, error) {
 	slackClient := h.slackManager.GetClient()
 	if slackClient == nil {
-		return "", nil
+		return "", "", nil
 	}
 
-	// Get alerts channel from database settings
-	settings, err := database.GetSlackSettings()
-	if err != nil || settings == nil || settings.AlertsChannel == "" {
-		return "", nil
-	}
-	alertsChannel := settings.AlertsChannel
-
-	// Resolve channel ID
-	var channelID string
-	if h.channelResolver != nil {
-		var err error
-		channelID, err = h.channelResolver.ResolveChannel(alertsChannel)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve channel: %w", err)
-		}
-	} else {
-		channelID = alertsChannel
+	channel, channelID := h.resolveOutboundSlackChannel(instance)
+	if channelID == "" {
+		return "", "", nil
 	}
 
 	// Format alert message
@@ -59,13 +111,19 @@ func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *
 		message += fmt.Sprintf("\n:book: *Runbook:* %s", alert.RunbookURL)
 	}
 
-	// Post message
-	_, ts, err := slackClient.PostMessage(
-		channelID,
-		slack.MsgOptionText(message, false),
-	)
+	// Post message via the messaging provider when available; fall back to
+	// the slack client directly when no provider is registered for this
+	// channel's provider name (keeps tests + legacy boot paths working).
+	ts, err := h.postViaProvider(context.Background(), channel, channelID, message)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	if ts == "" {
+		_, t, err := slackClient.PostMessage(channelID, slack.MsgOptionText(message, false))
+		if err != nil {
+			return "", "", err
+		}
+		ts = t
 	}
 
 	// Add reaction
@@ -76,7 +134,36 @@ func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *
 		slog.Warn("failed to add reaction", "err", err)
 	}
 
-	return ts, nil
+	return channelID, ts, nil
+}
+
+// postViaProvider posts text to the destination using the registered messaging
+// provider when one is available. Returns "" without error when no provider is
+// registered for the channel's provider — callers then fall back to direct
+// slack client posting (the legacy code path) so we degrade gracefully when
+// the registry has not been wired yet.
+func (h *AlertHandler) postViaProvider(ctx context.Context, channel *database.Channel, resolvedChannelID, text string) (string, error) {
+	if h.providerRegistry == nil || channel == nil {
+		return "", nil
+	}
+	provider, err := h.providerRegistry.Get(channel.Integration.Provider)
+	if err != nil {
+		// Unknown provider → silently fall back so legacy/test paths keep working.
+		return "", nil
+	}
+	// The provider expects channel.ExternalID to address the destination
+	// directly; substitute the resolved Slack channel ID before delegating
+	// so name→ID resolution stays in one place.
+	out := *channel
+	out.ExternalID = resolvedChannelID
+	posted, err := provider.PostMessage(ctx, &out, text)
+	if err != nil {
+		return "", err
+	}
+	if posted == nil {
+		return "", nil
+	}
+	return posted.MessageID, nil
 }
 
 // postSlackThreadReply posts a message as a thread reply
@@ -104,7 +191,7 @@ func (h *AlertHandler) updateSlackChannelReactions(channelID, messageTS string, 
 	}
 
 	// The hourglass reaction is now removed by the TypingController in
-	// runSlackChannelInvestigation's deferred Stop.
+	// runListenerChannelInvestigation's deferred Stop.
 
 	// Add result reaction
 	reactionName := "white_check_mark"
@@ -119,30 +206,18 @@ func (h *AlertHandler) updateSlackChannelReactions(channelID, messageTS string, 
 	}
 }
 
-// updateSlackWithResult posts results to Slack thread
-func (h *AlertHandler) updateSlackWithResult(threadTS, response string, hasError bool) {
-	if threadTS == "" {
+// updateSlackWithResult posts results to Slack thread. channelID is the
+// resolved Slack channel for the alert's destination — typically the same
+// channel that postAlertToSlack posted to. Empty channelID is treated as a
+// no-op so we don't surface a stray reaction on the wrong thread.
+func (h *AlertHandler) updateSlackWithResult(channelID, threadTS, response string, hasError bool) {
+	if threadTS == "" || channelID == "" {
 		return
 	}
 
 	slackClient := h.slackManager.GetClient()
 	if slackClient == nil {
 		return
-	}
-
-	// Get alerts channel from database settings
-	settings, err := database.GetSlackSettings()
-	if err != nil || settings == nil || settings.AlertsChannel == "" {
-		return
-	}
-	alertsChannel := settings.AlertsChannel
-
-	channelID := alertsChannel
-	if h.channelResolver != nil {
-		resolved, _ := h.channelResolver.ResolveChannel(alertsChannel)
-		if resolved != "" {
-			channelID = resolved
-		}
 	}
 
 	// Add result reaction
@@ -175,7 +250,7 @@ func (h *AlertHandler) isSlackEnabled() bool {
 		return false
 	}
 
-	if !settings.IsActive() || settings.AlertsChannel == "" {
+	if !settings.IsActive() {
 		return false
 	}
 
@@ -236,7 +311,9 @@ func truncateWithFooter(content, footer string, maxBytes int) string {
 }
 
 // truncateForSlack truncates a message to fit within Slack's text limit.
-// Reserves space for a truncation notice.
+// Reserves space for a truncation notice and backtracks the cut to a UTF-8
+// rune boundary so a multi-byte character (emoji, CJK, etc.) is never sliced
+// in half — Slack rejects the message body silently when that happens.
 func truncateForSlack(message string, maxBytes int) string {
 	if len(message) <= maxBytes {
 		return message
@@ -246,9 +323,18 @@ func truncateForSlack(message string, maxBytes int) string {
 	if cutoff < 100 {
 		cutoff = 100
 	}
-	// Avoid cutting in the middle of a UTF-8 character
+	if cutoff > len(message) {
+		cutoff = len(message)
+	}
+	// Walk cutoff back while the first EXCLUDED byte (message[cutoff]) is a
+	// UTF-8 continuation byte (high bits 10xxxxxx). After the loop,
+	// message[cutoff] is either a rune start byte or end-of-string, so
+	// message[:cutoff] is guaranteed valid UTF-8.
+	for cutoff > 0 && cutoff < len(message) && (message[cutoff]&0xC0) == 0x80 {
+		cutoff--
+	}
 	truncated := message[:cutoff]
-	// Find last newline for a cleaner break
+	// Prefer a clean newline break when one is reasonably close.
 	if idx := strings.LastIndex(truncated, "\n"); idx > cutoff/2 {
 		truncated = truncated[:idx]
 	}

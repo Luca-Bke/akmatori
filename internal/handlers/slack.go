@@ -31,12 +31,17 @@ type SlackHandler struct {
 	memoryManager      services.MemoryManager
 	feedbackClassifier *services.FeedbackClassifier
 
-	// Alert channel support
-	alertChannels   map[string]*database.AlertSourceInstance // channel_id -> instance
+	// Listener channel support. Keyed by the provider-side channel ID
+	// (Slack channel ID today). Populated from the channels table where
+	// can_listen=true; the legacy slack_channel AlertSourceInstance path is
+	// deprecated and the in-memory map is sourced exclusively from Channel
+	// rows after Task 6 of the unified-channels plan.
+	alertChannels   map[string]*database.Channel
 	alertChannelsMu sync.RWMutex
 	alertExtractor  *extraction.AlertExtractor
 	alertHandler    *AlertHandler
 	alertService    services.AlertManager
+	channelService  services.ChannelManager
 	botUserID       string // Bot's user ID for self-message filtering
 	teamID          string // Workspace team ID (required for Streaming API)
 
@@ -65,7 +70,7 @@ func NewSlackHandler(
 		agentExecutor:  agentExecutor,
 		agentWSHandler: agentWSHandler,
 		skillService:   skillService,
-		alertChannels:  make(map[string]*database.AlertSourceInstance),
+		alertChannels:  make(map[string]*database.Channel),
 		alertExtractor: extraction.NewAlertExtractor(oneShotCaller),
 	}
 	h.runMentionContinuation = h.handleBotMentionInThread
@@ -92,9 +97,20 @@ func (h *SlackHandler) SetResponseFormatter(f *services.ResponseFormatter) {
 	h.responseFormatter = f
 }
 
-// SetAlertService sets the alert service for loading alert channel configs
+// SetAlertService sets the alert service. Retained for backward compatibility
+// with code that constructs the handler with an alert-service dependency, but
+// no longer consulted by the listener loader after Task 6 of the
+// unified-channels plan (Channels table is the source of truth).
 func (h *SlackHandler) SetAlertService(alertService services.AlertManager) {
 	h.alertService = alertService
+}
+
+// SetChannelService wires the ChannelManager used by LoadListenerChannels to
+// source listener channels from the channels table. Optional — when unset,
+// loading is a no-op and the handler degrades to a Slack handler that only
+// processes DMs (matching the prior alert-service-not-configured behavior).
+func (h *SlackHandler) SetChannelService(c services.ChannelManager) {
+	h.channelService = c
 }
 
 // SetMemoryManager wires the cross-incident memory manager. When set together
@@ -122,60 +138,67 @@ func (h *SlackHandler) SetTeamID(teamID string) {
 	h.teamID = teamID
 }
 
-// LoadAlertChannels loads alert channel configurations from the database
-func (h *SlackHandler) LoadAlertChannels() error {
-	if h.alertService == nil {
-		slog.Info("alert service not configured, skipping alert channel loading")
+// LoadListenerChannels loads listener channel configurations from the channels
+// table. A channel is considered a listener when can_listen=true and both the
+// channel and its parent integration are enabled. The map is keyed by the
+// provider-side external channel id (Slack channel id today).
+//
+// When the ChannelManager is not wired the loader silently returns, matching
+// the pre-Task-6 behavior where missing services skipped listener setup.
+func (h *SlackHandler) LoadListenerChannels() error {
+	if h.channelService == nil {
+		slog.Info("channel service not configured, skipping listener channel loading")
 		return nil
 	}
 
-	instances, err := h.alertService.ListInstances()
+	canListen := true
+	channels, err := h.channelService.ListChannels(services.ListChannelsFilter{CanListen: &canListen})
 	if err != nil {
-		return fmt.Errorf("failed to list alert source instances: %w", err)
+		return fmt.Errorf("failed to list listener channels: %w", err)
 	}
 
 	h.alertChannelsMu.Lock()
 	defer h.alertChannelsMu.Unlock()
 
-	// Clear existing channels
-	h.alertChannels = make(map[string]*database.AlertSourceInstance)
-
-	// Load slack_channel instances
-	for i := range instances {
-		instance := &instances[i]
-		if instance.AlertSourceType.Name != "slack_channel" || !instance.Enabled {
+	// Replace the map rather than mutate so a torn read sees the prior
+	// snapshot, not a half-rebuilt one.
+	next := make(map[string]*database.Channel, len(channels))
+	for i := range channels {
+		ch := &channels[i]
+		if !ch.Enabled || !ch.Integration.Enabled {
 			continue
 		}
-
-		// Extract channel ID from settings
-		channelID, ok := instance.Settings["slack_channel_id"].(string)
-		if !ok || channelID == "" {
-			slog.Warn("Slack channel instance has no channel ID configured", "instance", instance.Name)
+		if ch.ExternalID == "" {
+			slog.Warn("listener channel missing external_id, skipping", "uuid", ch.UUID, "display_name", ch.DisplayName)
 			continue
 		}
-
-		h.alertChannels[channelID] = instance
-		slog.Info("loaded alert channel", "channel", channelID, "instance", instance.Name)
+		next[ch.ExternalID] = ch
+		slog.Info("loaded listener channel", "channel", ch.ExternalID, "display_name", ch.DisplayName, "provider", ch.Integration.Provider)
 	}
+	h.alertChannels = next
 
-	slog.Info("loaded alert channels", "count", len(h.alertChannels))
+	slog.Info("loaded listener channels", "count", len(h.alertChannels))
 	return nil
 }
 
-// ReloadAlertChannels reloads alert channel configurations (called when settings change)
-func (h *SlackHandler) ReloadAlertChannels() {
-	if err := h.LoadAlertChannels(); err != nil {
-		slog.Warn("failed to reload alert channels", "err", err)
+// ReloadListenerChannels reloads listener channel configurations after a
+// Channels CRUD change (called from the API handler's reload hook).
+func (h *SlackHandler) ReloadListenerChannels() {
+	if err := h.LoadListenerChannels(); err != nil {
+		slog.Warn("failed to reload listener channels", "err", err)
 	}
 }
 
-// isAlertChannel checks if a channel is configured as an alert channel
-func (h *SlackHandler) isAlertChannel(channelID string) (*database.AlertSourceInstance, bool) {
+// isAlertChannel reports whether the given Slack channel id is configured as
+// a listener channel and returns the resolved Channel row when so. The legacy
+// name is preserved because it reads naturally at call sites
+// ("if isAlertChannel..."); the meaning is "the channel is a listener".
+func (h *SlackHandler) isAlertChannel(channelID string) (*database.Channel, bool) {
 	h.alertChannelsMu.RLock()
 	defer h.alertChannelsMu.RUnlock()
 
-	instance, ok := h.alertChannels[channelID]
-	return instance, ok
+	ch, ok := h.alertChannels[channelID]
+	return ch, ok
 }
 
 // HandleSocketMode starts the Socket Mode handler
@@ -365,7 +388,7 @@ func (h *SlackHandler) handleMessage(event *slackevents.MessageEvent) {
 
 	// Check if this is a configured alert channel BEFORE filtering bots,
 	// because monitoring integrations post as bots (bot_message subtype)
-	if instance, ok := h.isAlertChannel(event.Channel); ok {
+	if listenerChannel, ok := h.isAlertChannel(event.Channel); ok {
 		slog.Info("alert channel message received",
 			"channel", event.Channel,
 			"user", event.User,
@@ -423,9 +446,9 @@ func (h *SlackHandler) handleMessage(event *slackevents.MessageEvent) {
 
 		// Top-level message: check for human @mention of the bot.
 		if !isBotMessage {
-			// Check if this instance processes human messages as alerts
-			if shouldProcessHuman, _ := instance.Settings["process_human_messages"].(bool); shouldProcessHuman {
-				go h.handleAlertChannelMessage(event, instance)
+			// Check if this channel processes human messages as alerts
+			if listenerChannel.ProcessHumanMessages {
+				go h.handleAlertChannelMessage(event, listenerChannel)
 				return
 			}
 			if h.botUserID != "" && event.SubType == "" && event.User != "" &&
@@ -449,7 +472,7 @@ func (h *SlackHandler) handleMessage(event *slackevents.MessageEvent) {
 		}
 
 		// Top-level bot message — process as alert.
-		go h.handleAlertChannelMessage(event, instance)
+		go h.handleAlertChannelMessage(event, listenerChannel)
 		return
 	}
 

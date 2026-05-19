@@ -23,10 +23,14 @@ func NewAlertService() *AlertService {
 
 // ========== Alert Source Type Operations ==========
 
-// ListSourceTypes returns all alert source types (alias for API)
+// ListSourceTypes returns the alert source types available to operator UI.
+// Deprecated rows are filtered out: they are retained in the database so
+// historical incidents can still resolve their type name, but they must not
+// show up in the create-instance picker. As of Task 6 of the unified-channels
+// plan, slack_channel is the only deprecated source type.
 func (s *AlertService) ListSourceTypes() ([]database.AlertSourceType, error) {
 	var types []database.AlertSourceType
-	if err := s.db.Find(&types).Error; err != nil {
+	if err := s.db.Where("deprecated = ?", false).Find(&types).Error; err != nil {
 		return nil, err
 	}
 	return types, nil
@@ -301,13 +305,12 @@ func (s *AlertService) InitializeDefaultSourceTypes() error {
 				"started_at":      "event_time",
 			},
 		},
-		{
-			Name:                "slack_channel",
-			DisplayName:         "Slack Alert Channel",
-			Description:         "Monitor a Slack channel for alert messages",
-			WebhookSecretHeader: "",               // Not used - alerts come via Socket Mode
-			DefaultMappings:     database.JSONB{}, // AI extraction, not path-based
-		},
+		// slack_channel removed (Task 6 of unified-channels): inbound Slack
+		// listening is now driven by rows in the channels table with
+		// can_listen=true, not by an AlertSourceInstance of this type. The
+		// migration in internal/database/channels_migration.go marks any
+		// pre-existing slack_channel row as deprecated so it is hidden from
+		// the picker without losing historical resolutions.
 	}
 
 	for _, st := range sourceTypes {

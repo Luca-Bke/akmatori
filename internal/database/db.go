@@ -136,9 +136,37 @@ func runMigrations(db *gorm.DB) error {
 		&MCPServerConfig{},
 		&RetentionSettings{},
 		&FormattingSettings{},
+		// Channels & cron (unified channels + cron jobs feature)
+		&Integration{},
+		&Channel{},
+		&CronJob{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// Partial-unique index: at most one Channel.IsDefaultPost=true per
+	// Integration. Combined with the MVP "one Integration per provider"
+	// assumption, this enforces "one default channel per provider" at the DB
+	// level. The service layer adds an additional check across integrations
+	// of the same provider for the case where a deployment configures more
+	// than one Integration per provider.
+	if err := ensureChannelsDefaultPartialIndex(db); err != nil {
+		return fmt.Errorf("failed to ensure channels default partial index: %w", err)
+	}
+
+	// Backfill legacy SlackSettings + slack_channel AlertSourceInstance rows
+	// into the new Integration/Channel rows. Read-old → write-new →
+	// don't-delete-old-until-verified, one transaction per step, idempotent
+	// on re-run.
+	if err := migrateSlackSettingsToIntegrations(db); err != nil {
+		return err
+	}
+	if err := migrateSlackChannelAlertSourcesToChannels(db); err != nil {
+		return err
+	}
+	if err := deprecateSlackChannelAlertSourceType(db); err != nil {
+		return err
 	}
 
 	// Migrate open_ai_enabled → llm_enabled in proxy_settings table.
@@ -545,13 +573,93 @@ func InitializeSystemSkill() error {
 	return nil
 }
 
-// GetSlackSettings retrieves Slack settings from the database
+// GetSlackSettings retrieves Slack settings from the database. It now prefers
+// an enabled Slack Integration row (the post-unified-channels source of truth)
+// and falls back to the legacy slack_settings row only when no usable
+// integration is configured. Callers gating runtime behavior on Slack
+// credentials therefore pick up tokens entered via /api/integrations even when
+// the legacy slack_settings table is empty (fresh installs).
 func GetSlackSettings() (*SlackSettings, error) {
+	if settings, ok, err := loadSlackSettingsFromIntegration(); err != nil {
+		return nil, err
+	} else if ok {
+		return settings, nil
+	}
+
 	var settings SlackSettings
 	if err := DB.First(&settings).Error; err != nil {
 		return nil, err
 	}
 	return &settings, nil
+}
+
+// loadSlackSettingsFromIntegration projects the configured Slack Integration
+// into the legacy SlackSettings shape so existing call sites
+// (slack/manager.go, runtime gates) keep working without a wider refactor.
+//
+// The presence of *any* Slack Integration row — enabled or not, with or
+// without complete credentials — is treated as the marker that the operator
+// has moved to the unified Integrations model. In that case the Integration
+// is authoritative and we MUST NOT fall back to the legacy slack_settings
+// row; otherwise an operator disabling the Integration via /api/integrations
+// would silently keep Slack live on the legacy credentials the migration
+// preserved (see plan Task 10 note on the deferred slack_settings drop).
+//
+// Returns (nil, false, nil) only when no Slack Integration row exists at all,
+// so the caller can fall back to the legacy slack_settings row for
+// fresh/pre-migration installs. Post-migration, that legacy row is
+// neutralized (clearLegacySlackSettingsCredentials) so a DELETE of the
+// Slack Integration cannot leak migrated credentials through the fall-back.
+func loadSlackSettingsFromIntegration() (*SlackSettings, bool, error) {
+	if DB == nil {
+		return nil, false, nil
+	}
+	if !DB.Migrator().HasTable(&Integration{}) {
+		return nil, false, nil
+	}
+	var rows []Integration
+	if err := DB.Where("provider = ?", MessagingProviderSlack).
+		Order("id asc").
+		Find(&rows).Error; err != nil {
+		return nil, false, fmt.Errorf("load slack integrations: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, false, nil
+	}
+	// Prefer the first enabled, fully-configured row so the runtime actually
+	// connects when there is a usable Integration.
+	for _, row := range rows {
+		settings := slackSettingsFromIntegration(&row)
+		if settings.Enabled && settings.IsConfigured() {
+			return settings, true, nil
+		}
+	}
+	// At least one Integration row exists but none are both enabled and
+	// configured. Return the first row's projection so callers see Slack as
+	// off (Enabled=false or IsConfigured=false ⇒ IsActive=false). Crucially,
+	// signal `ok=true` so the caller does NOT fall back to slack_settings.
+	return slackSettingsFromIntegration(&rows[0]), true, nil
+}
+
+// slackSettingsFromIntegration builds a SlackSettings projection from an
+// Integration row so legacy call sites can read tokens entered via the new
+// Integrations UI without changing their type signatures.
+func slackSettingsFromIntegration(row *Integration) *SlackSettings {
+	if row == nil {
+		return &SlackSettings{}
+	}
+	botToken, _ := row.Credentials["bot_token"].(string)
+	signingSecret, _ := row.Credentials["signing_secret"].(string)
+	appToken, _ := row.Credentials["app_token"].(string)
+	return &SlackSettings{
+		ID:            row.ID,
+		BotToken:      botToken,
+		SigningSecret: signingSecret,
+		AppToken:      appToken,
+		Enabled:       row.Enabled,
+		CreatedAt:     row.CreatedAt,
+		UpdatedAt:     row.UpdatedAt,
+	}
 }
 
 // UpdateSlackSettings updates Slack settings in the database

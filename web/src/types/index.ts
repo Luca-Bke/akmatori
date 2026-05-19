@@ -64,26 +64,6 @@ export interface EventSource {
   updated_at: string;
 }
 
-export interface SlackSettings {
-  id: number;
-  bot_token: string;  // Masked for display
-  signing_secret: string;  // Masked for display
-  app_token: string;  // Masked for display
-  alerts_channel: string;
-  enabled: boolean;
-  is_configured: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SlackSettingsUpdate {
-  bot_token?: string;
-  signing_secret?: string;
-  app_token?: string;
-  alerts_channel?: string;
-  enabled?: boolean;
-}
-
 export interface CreateIncidentRequest {
   task: string;
   context?: Record<string, any>;
@@ -251,6 +231,80 @@ export interface ScriptInfo {
   modified_at: string;
 }
 
+// Messaging integrations & channels
+
+export type MessagingProvider = 'slack' | 'telegram';
+
+export interface Integration {
+  id: number;
+  uuid: string;
+  provider: MessagingProvider;
+  name: string;
+  credentials: Record<string, any>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateIntegrationRequest {
+  provider: MessagingProvider;
+  name: string;
+  credentials?: Record<string, any>;
+  enabled?: boolean;
+}
+
+export interface UpdateIntegrationRequest {
+  name?: string;
+  credentials?: Record<string, any>;
+  enabled?: boolean;
+}
+
+export interface Channel {
+  id: number;
+  uuid: string;
+  integration_id: number;
+  external_id: string;
+  display_name: string;
+  can_post: boolean;
+  can_listen: boolean;
+  is_default_post: boolean;
+  extraction_prompt: string;
+  process_human_messages: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  integration?: Integration;
+}
+
+export interface CreateChannelRequest {
+  integration_uuid: string;
+  external_id: string;
+  display_name?: string;
+  can_post: boolean;
+  can_listen: boolean;
+  is_default_post?: boolean;
+  extraction_prompt?: string;
+  process_human_messages?: boolean;
+  enabled?: boolean;
+}
+
+export interface UpdateChannelRequest {
+  external_id?: string;
+  display_name?: string;
+  can_post?: boolean;
+  can_listen?: boolean;
+  is_default_post?: boolean;
+  extraction_prompt?: string;
+  process_human_messages?: boolean;
+  enabled?: boolean;
+}
+
+export interface ListChannelsFilter {
+  integration_uuid?: string;
+  can_post?: boolean;
+  can_listen?: boolean;
+}
+
 // Alert Source Types (for webhook configuration)
 export interface AlertSourceType {
   id: number;
@@ -259,6 +313,7 @@ export interface AlertSourceType {
   description: string;
   default_field_mappings: Record<string, string>;
   webhook_secret_header: string;
+  deprecated?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -272,10 +327,12 @@ export interface AlertSourceInstance {
   webhook_secret: string;
   field_mappings: Record<string, string>;
   settings: Record<string, any>;
+  notification_channel_id?: number | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
   alert_source_type?: AlertSourceType;
+  notification_channel?: Channel | null;
 }
 
 export interface CreateAlertSourceRequest {
@@ -285,6 +342,7 @@ export interface CreateAlertSourceRequest {
   webhook_secret?: string;
   field_mappings?: Record<string, string>;
   settings?: Record<string, any>;
+  notification_channel_uuid?: string | null;
 }
 
 export interface UpdateAlertSourceRequest {
@@ -293,6 +351,52 @@ export interface UpdateAlertSourceRequest {
   webhook_secret?: string;
   field_mappings?: Record<string, string>;
   settings?: Record<string, any>;
+  enabled?: boolean;
+  notification_channel_uuid?: string | null;
+}
+
+// Cron Jobs
+
+export type CronJobMode = 'oneshot' | 'agent';
+
+export type CronRunStatus = '' | 'ok' | 'error';
+
+export interface CronJob {
+  id: number;
+  uuid: string;
+  name: string;
+  description: string;
+  schedule: string;
+  prompt: string;
+  mode: CronJobMode;
+  channel_id?: number | null;
+  enabled: boolean;
+  last_run_at?: string | null;
+  last_run_status: CronRunStatus;
+  last_run_error: string;
+  next_run_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  channel?: Channel | null;
+}
+
+export interface CreateCronJobRequest {
+  name: string;
+  description?: string;
+  schedule: string;
+  prompt: string;
+  mode?: CronJobMode;
+  channel_uuid?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateCronJobRequest {
+  name?: string;
+  description?: string;
+  schedule?: string;
+  prompt?: string;
+  mode?: CronJobMode;
+  channel_uuid?: string;
   enabled?: boolean;
 }
 

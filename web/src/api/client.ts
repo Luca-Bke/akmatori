@@ -3,8 +3,13 @@ import type {
   ToolType,
   ToolInstance,
   Incident,
-  SlackSettings,
-  SlackSettingsUpdate,
+  Integration,
+  CreateIntegrationRequest,
+  UpdateIntegrationRequest,
+  Channel,
+  CreateChannelRequest,
+  UpdateChannelRequest,
+  ListChannelsFilter,
   LLMConfig,
   LLMSettingsListResponse,
   CreateLLMConfigRequest,
@@ -32,6 +37,9 @@ import type {
   SSHKeyCreateRequest,
   SSHKeyUpdateRequest,
   Runbook,
+  CronJob,
+  CreateCronJobRequest,
+  UpdateCronJobRequest,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -221,17 +229,6 @@ export const incidentsApi = {
     fetchApi<CreateIncidentResponse>('/api/incidents', {
       method: 'POST',
       body: JSON.stringify(request),
-    }),
-};
-
-// Slack Settings API
-export const slackSettingsApi = {
-  get: () => fetchApi<SlackSettings>('/api/settings/slack'),
-
-  update: (settings: SlackSettingsUpdate) =>
-    fetchApi<SlackSettings>('/api/settings/slack', {
-      method: 'PUT',
-      body: JSON.stringify(settings),
     }),
 };
 
@@ -426,6 +423,61 @@ export const scriptsApi = {
     }),
 };
 
+// Integrations API
+export const integrationsApi = {
+  list: () => fetchApi<Integration[]>('/api/integrations'),
+
+  get: (uuid: string) => fetchApi<Integration>(`/api/integrations/${uuid}`),
+
+  create: (data: CreateIntegrationRequest) =>
+    fetchApi<Integration>('/api/integrations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (uuid: string, data: UpdateIntegrationRequest) =>
+    fetchApi<Integration>(`/api/integrations/${uuid}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (uuid: string) =>
+    fetchApi<void>(`/api/integrations/${uuid}`, {
+      method: 'DELETE',
+    }),
+};
+
+// Channels API
+export const channelsApi = {
+  list: (filter?: ListChannelsFilter) => {
+    const params = new URLSearchParams();
+    if (filter?.integration_uuid) params.set('integration_uuid', filter.integration_uuid);
+    if (filter?.can_post !== undefined) params.set('can_post', String(filter.can_post));
+    if (filter?.can_listen !== undefined) params.set('can_listen', String(filter.can_listen));
+    const qs = params.toString();
+    return fetchApi<Channel[]>(`/api/channels${qs ? `?${qs}` : ''}`);
+  },
+
+  get: (uuid: string) => fetchApi<Channel>(`/api/channels/${uuid}`),
+
+  create: (data: CreateChannelRequest) =>
+    fetchApi<Channel>('/api/channels', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (uuid: string, data: UpdateChannelRequest) =>
+    fetchApi<Channel>(`/api/channels/${uuid}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (uuid: string) =>
+    fetchApi<void>(`/api/channels/${uuid}`, {
+      method: 'DELETE',
+    }),
+};
+
 // Alert Source Types API
 export const alertSourceTypesApi = {
   list: () => fetchApi<AlertSourceType[]>('/api/alert-source-types'),
@@ -458,6 +510,35 @@ export const alertSourcesApi = {
     const baseUrl = API_BASE_URL || window.location.origin;
     return `${baseUrl}/webhook/alert/${uuid}`;
   },
+};
+
+// Cron Jobs API
+export const cronJobsApi = {
+  list: () => fetchApi<CronJob[]>('/api/cron-jobs'),
+
+  get: (uuid: string) => fetchApi<CronJob>(`/api/cron-jobs/${uuid}`),
+
+  create: (data: CreateCronJobRequest) =>
+    fetchApi<CronJob>('/api/cron-jobs', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (uuid: string, data: UpdateCronJobRequest) =>
+    fetchApi<CronJob>(`/api/cron-jobs/${uuid}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  delete: (uuid: string) =>
+    fetchApi<void>(`/api/cron-jobs/${uuid}`, {
+      method: 'DELETE',
+    }),
+
+  run: (uuid: string) =>
+    fetchApi<{ status: string }>(`/api/cron-jobs/${uuid}/run`, {
+      method: 'POST',
+    }),
 };
 
 export { ApiError };

@@ -479,64 +479,13 @@ func TestCreateIncidentRequest_Validation(t *testing.T) {
 	}
 }
 
-// ========================================
-// Alert Source Request Validation Tests
-// ========================================
-
-func TestAlertSourceRequest_SlackChannelValidation(t *testing.T) {
-	tests := []struct {
-		name        string
-		sourceType  string
-		settings    map[string]interface{}
-		shouldError bool
-	}{
-		{
-			name:        "slack_channel without channel_id",
-			sourceType:  "slack_channel",
-			settings:    map[string]interface{}{},
-			shouldError: true,
-		},
-		{
-			name:        "slack_channel with empty channel_id",
-			sourceType:  "slack_channel",
-			settings:    map[string]interface{}{"slack_channel_id": ""},
-			shouldError: true,
-		},
-		{
-			name:        "slack_channel with whitespace channel_id",
-			sourceType:  "slack_channel",
-			settings:    map[string]interface{}{"slack_channel_id": "   "},
-			shouldError: true,
-		},
-		{
-			name:        "slack_channel with valid channel_id",
-			sourceType:  "slack_channel",
-			settings:    map[string]interface{}{"slack_channel_id": "C12345678"},
-			shouldError: false,
-		},
-		{
-			name:        "alertmanager doesn't need channel_id",
-			sourceType:  "alertmanager",
-			settings:    map[string]interface{}{},
-			shouldError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hasError := false
-			if tt.sourceType == "slack_channel" {
-				channelID, _ := tt.settings["slack_channel_id"].(string)
-				if strings.TrimSpace(channelID) == "" {
-					hasError = true
-				}
-			}
-			if hasError != tt.shouldError {
-				t.Errorf("validation error = %v, want %v", hasError, tt.shouldError)
-			}
-		})
-	}
-}
+// Note: the slack_channel AlertSourceInstance type was removed as a creatable
+// source type in Task 6 of the unified-channels plan. Inbound Slack listening
+// is now configured through rows in the channels table (can_listen=true), not
+// through alert sources. The handler-level rejection of creation against
+// deprecated source types is exercised by api_alert_sources tests against a
+// live DB; this file no longer tests the obsolete in-handler slack_channel_id
+// validation.
 
 // ========================================
 // Benchmarks

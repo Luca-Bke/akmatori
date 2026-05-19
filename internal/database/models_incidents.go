@@ -17,12 +17,21 @@ const (
 	IncidentStatusFailed    IncidentStatus = "failed"
 )
 
+// IncidentSourceKind enumerates the trigger kinds that can spawn an incident.
+const (
+	IncidentSourceKindAlert        = "alert"
+	IncidentSourceKindCron         = "cron"
+	IncidentSourceKindSlackMention = "slack_mention"
+)
+
 // Incident represents a spawned incident manager session
 type Incident struct {
 	ID              uint           `gorm:"primaryKey" json:"id"`
 	UUID            string         `gorm:"uniqueIndex;not null" json:"uuid"` // Unique UUID for this incident
 	Source          string         `gorm:"not null;index" json:"source"`     // e.g., "slack", "zabbix"
 	SourceID        string         `gorm:"index" json:"source_id"`           // e.g., thread_ts, alert_id
+	SourceKind      string         `gorm:"size:32;index" json:"source_kind"` // Trigger kind: "alert" | "cron" | "slack_mention"
+	SourceUUID      string         `gorm:"size:36;index" json:"source_uuid"` // UUID of the triggering entity (alert source instance, cron job, ...)
 	Title           string         `gorm:"type:varchar(255)" json:"title"`   // LLM-generated title summarizing the incident
 	Status          IncidentStatus `gorm:"type:varchar(50);not null;default:'pending'" json:"status"`
 	Context         JSONB          `gorm:"type:jsonb" json:"context"` // Event context (message, alert details, etc.)

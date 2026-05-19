@@ -82,6 +82,131 @@ components:
         incident_uuid: {type: string}
         created_by: {type: string, enum: [agent, operator]}
 
+    Integration:
+      type: object
+      description: |
+        A configured connection to a messaging provider (Slack, Telegram, ...).
+        Credentials are stored as a JSON blob whose shape is provider-specific.
+      properties:
+        id: {type: integer}
+        uuid: {type: string, format: uuid}
+        provider:
+          type: string
+          enum: [slack, telegram]
+        name: {type: string}
+        credentials:
+          type: object
+          additionalProperties: true
+        enabled: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    IntegrationCreateRequest:
+      type: object
+      required: [provider, name]
+      properties:
+        provider:
+          type: string
+          enum: [slack, telegram]
+        name: {type: string}
+        credentials:
+          type: object
+          additionalProperties: true
+        enabled: {type: boolean}
+
+    IntegrationUpdateRequest:
+      type: object
+      description: Provider is immutable on update.
+      properties:
+        name: {type: string}
+        credentials:
+          type: object
+          additionalProperties: true
+        enabled: {type: boolean}
+
+    Channel:
+      type: object
+      description: |
+        A specific addressable destination within an Integration (a Slack
+        channel, a Telegram chat). Capability flags determine which triggers
+        can reference it.
+      properties:
+        id: {type: integer}
+        uuid: {type: string, format: uuid}
+        integration_id: {type: integer}
+        external_id:
+          type: string
+          description: Provider-specific channel handle (e.g. Slack channel ID or name)
+        display_name: {type: string}
+        can_post: {type: boolean}
+        can_listen: {type: boolean}
+        is_default_post:
+          type: boolean
+          description: At most one is_default_post=true per provider is enforced.
+        extraction_prompt:
+          type: string
+          description: Optional per-channel system prompt for inbound extraction
+        process_human_messages: {type: boolean}
+        enabled: {type: boolean}
+        integration: {$ref: '#/components/schemas/Integration'}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    ChannelCreateRequest:
+      type: object
+      required: [integration_uuid, external_id]
+      properties:
+        integration_uuid: {type: string, format: uuid}
+        external_id: {type: string}
+        display_name: {type: string}
+        can_post: {type: boolean}
+        can_listen: {type: boolean}
+        is_default_post: {type: boolean}
+        extraction_prompt: {type: string}
+        process_human_messages: {type: boolean}
+        enabled: {type: boolean}
+
+    ChannelUpdateRequest:
+      type: object
+      description: Partial patch; integration cannot be changed after creation.
+      properties:
+        external_id: {type: string}
+        display_name: {type: string}
+        can_post: {type: boolean}
+        can_listen: {type: boolean}
+        is_default_post: {type: boolean}
+        extraction_prompt: {type: string}
+        process_human_messages: {type: boolean}
+        enabled: {type: boolean}
+
+    CronJob:
+      type: object
+      description: |
+        A scheduled task. Each job runs on its own cron expression, executes
+        either a one-shot LLM call or a full agent investigation, and posts
+        results to a Channel.
+      properties:
+        id: {type: integer}
+        uuid: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string}
+        schedule:
+          type: string
+          description: Standard 5-field cron expression (m h dom mon dow)
+        prompt: {type: string}
+        mode:
+          type: string
+          enum: [oneshot, agent]
+        channel_id: {type: integer, nullable: true}
+        enabled: {type: boolean}
+        last_run_at: {type: string, format: date-time, nullable: true}
+        last_run_status: {type: string, enum: [ok, error, ""]}
+        last_run_error: {type: string}
+        next_run_at: {type: string, format: date-time, nullable: true}
+        channel: {$ref: '#/components/schemas/Channel'}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
     PaginationMeta:
       type: object
       properties:
@@ -180,6 +305,13 @@ components:
           type: string
         source_id:
           type: string
+        source_kind:
+          type: string
+          enum: [alert, cron, slack_mention]
+          description: Trigger kind that spawned this incident.
+        source_uuid:
+          type: string
+          description: UUID of the triggering entity (AlertSourceInstance, CronJob, or originating Slack mention).
         title:
           type: string
         status:
@@ -252,6 +384,9 @@ components:
           type: object
         webhook_secret_header:
           type: string
+        deprecated:
+          type: boolean
+          description: When true, this source type is hidden from new-source pickers. Retained for legacy rows (e.g. the retired slack_channel type).
         created_at:
           type: string
           format: date-time
@@ -279,10 +414,16 @@ components:
           type: object
         settings:
           type: object
+        notification_channel_id:
+          type: integer
+          nullable: true
+          description: Optional FK to a Channel that overrides the per-provider default for outbound posts.
         enabled:
           type: boolean
         alert_source_type:
           $ref: '#/components/schemas/AlertSourceType'
+        notification_channel:
+          $ref: '#/components/schemas/Channel'
         created_at:
           type: string
           format: date-time
@@ -886,35 +1027,34 @@ paths:
   # ===== Settings =====
   /settings/slack:
     get:
-      summary: Get Slack settings
+      summary: Get Slack settings (removed)
+      description: |
+        Removed in the unified-channels rollout. Always returns 410 Gone.
+        Use `/api/integrations` and `/api/channels` to manage Slack
+        credentials and posting/listening destinations.
+      deprecated: true
       operationId: getSlackSettings
       tags: [Settings]
       responses:
-        '200':
-          description: Slack settings (tokens masked)
+        '410':
+          description: Endpoint removed; configure Slack via /api/integrations and /api/channels.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
     put:
-      summary: Update Slack settings
+      summary: Update Slack settings (removed)
+      description: |
+        Removed in the unified-channels rollout. Always returns 410 Gone.
+        Use the Integrations + Channels CRUD APIs.
+      deprecated: true
       operationId: updateSlackSettings
       tags: [Settings]
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                bot_token:
-                  type: string
-                signing_secret:
-                  type: string
-                app_token:
-                  type: string
-                alerts_channel:
-                  type: string
-                enabled:
-                  type: boolean
       responses:
-        '200':
-          description: Updated settings
+        '410':
+          description: Endpoint removed; configure Slack via /api/integrations and /api/channels.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
 
   /settings/llm:
     get:
@@ -1161,6 +1301,339 @@ paths:
                       type: string
 
   # ===== Alert Sources =====
+  # ===== Messaging Integrations + Channels =====
+  /integrations:
+    get:
+      summary: List messaging provider integrations
+      operationId: listIntegrations
+      tags: [Integrations]
+      responses:
+        '200':
+          description: Configured integrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Integration'}
+        '503':
+          description: Channel service is not configured
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+    post:
+      summary: Create a new integration
+      operationId: createIntegration
+      tags: [Integrations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/IntegrationCreateRequest'}
+      responses:
+        '201':
+          description: Integration created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Integration'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Conflict (duplicate name or invariant violation)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  /integrations/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      summary: Get integration by UUID
+      operationId: getIntegration
+      tags: [Integrations]
+      responses:
+        '200':
+          description: Integration details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Integration'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update integration (provider is immutable)
+      operationId: updateIntegration
+      tags: [Integrations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/IntegrationUpdateRequest'}
+      responses:
+        '200':
+          description: Updated integration
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Integration'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete integration (cascades channels)
+      operationId: deleteIntegration
+      tags: [Integrations]
+      responses:
+        '204':
+          description: Integration deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /channels:
+    get:
+      summary: List channels (optionally filtered)
+      operationId: listChannels
+      tags: [Channels]
+      parameters:
+        - name: integration_uuid
+          in: query
+          schema: {type: string, format: uuid}
+          description: Filter to channels belonging to this integration
+        - name: can_post
+          in: query
+          schema: {type: boolean}
+          description: Filter to channels whose can_post flag matches
+        - name: can_listen
+          in: query
+          schema: {type: boolean}
+          description: Filter to channels whose can_listen flag matches
+      responses:
+        '200':
+          description: Channels matching the filter
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Channel'}
+        '503':
+          description: Channel service is not configured
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+    post:
+      summary: Create a new channel
+      operationId: createChannel
+      tags: [Channels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChannelCreateRequest'}
+      responses:
+        '201':
+          description: Channel created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Channel'}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Integration not found
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '409':
+          description: Default-post invariant violated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  /channels/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      summary: Get channel by UUID
+      operationId: getChannel
+      tags: [Channels]
+      responses:
+        '200':
+          description: Channel details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Channel'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update channel
+      operationId: updateChannel
+      tags: [Channels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChannelUpdateRequest'}
+      responses:
+        '200':
+          description: Updated channel
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Channel'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Default-post invariant violated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+    delete:
+      summary: Delete channel
+      operationId: deleteChannel
+      tags: [Channels]
+      responses:
+        '204':
+          description: Channel deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /cron-jobs:
+    get:
+      summary: List scheduled cron jobs
+      operationId: listCronJobs
+      tags: [Cron Jobs]
+      responses:
+        '200':
+          description: Configured cron jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CronJob'
+        '503':
+          description: Cron service not configured
+    post:
+      summary: Create cron job
+      operationId: createCronJob
+      tags: [Cron Jobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, schedule, prompt]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                schedule:
+                  type: string
+                  description: Standard 5-field cron expression (m h dom mon dow)
+                prompt: {type: string}
+                mode:
+                  type: string
+                  enum: [oneshot, agent]
+                  default: oneshot
+                channel_uuid:
+                  type: string
+                  format: uuid
+                  description: Optional channel to post to. Defaults to the workspace default channel.
+                enabled: {type: boolean, default: true}
+      responses:
+        '201':
+          description: Cron job created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CronJob'}
+        '400':
+          description: Validation error (bad schedule, missing channel, ...)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+
+  /cron-jobs/{uuid}:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      summary: Get cron job by UUID
+      operationId: getCronJob
+      tags: [Cron Jobs]
+      responses:
+        '200':
+          description: Cron job details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CronJob'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update cron job
+      operationId: updateCronJob
+      tags: [Cron Jobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                description: {type: string}
+                schedule: {type: string}
+                prompt: {type: string}
+                mode:
+                  type: string
+                  enum: [oneshot, agent]
+                channel_uuid:
+                  type: string
+                  format: uuid
+                enabled: {type: boolean}
+      responses:
+        '200':
+          description: Updated cron job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CronJob'}
+        '400':
+          description: Validation error
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete cron job
+      operationId: deleteCronJob
+      tags: [Cron Jobs]
+      responses:
+        '204':
+          description: Cron job deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /cron-jobs/{uuid}/run:
+    parameters:
+      - name: uuid
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    post:
+      summary: Manually trigger a cron job
+      operationId: runCronJobNow
+      tags: [Cron Jobs]
+      responses:
+        '202':
+          description: Job tick accepted and running in the background. Poll the cron job row's last_run_status/last_run_error for the outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: started}
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /alert-source-types:
     get:
       summary: List alert source types
@@ -1214,6 +1687,11 @@ paths:
                   type: object
                 settings:
                   type: object
+                notification_channel_uuid:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Optional UUID of a Channel to route outbound posts to. When omitted, the alert source falls back to the provider's default channel.
       responses:
         '201':
           description: Alert source created
@@ -1262,6 +1740,11 @@ paths:
                   type: object
                 settings:
                   type: object
+                notification_channel_uuid:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Optional UUID of a Channel to route outbound posts to. Pass an empty string to clear the override.
                 enabled:
                   type: boolean
       responses:

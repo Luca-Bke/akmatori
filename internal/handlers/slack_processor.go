@@ -120,8 +120,9 @@ func (h *SlackHandler) processMessage(channel, threadTS, messageTS, text, user s
 
 		// Spawn incident manager for this event
 		incidentCtx := &services.IncidentContext{
-			Source:   "slack",
-			SourceID: threadID,
+			Source:     "slack",
+			SourceID:   threadID,
+			SourceKind: database.IncidentSourceKindSlackMention,
 			Context: database.JSONB{
 				"channel": channel,
 				"user":    user,
@@ -418,9 +419,12 @@ func (h *SlackHandler) finishSlackMessage(channel, threadID, incidentUUID, user,
 	}
 }
 
-// handleAlertChannelMessage processes a message from a configured alert channel
-func (h *SlackHandler) handleAlertChannelMessage(event *slackevents.MessageEvent, instance *database.AlertSourceInstance) {
-	slog.Info("processing alert channel message", "user", event.User, "channel", event.Channel)
+// handleAlertChannelMessage processes a message from a configured listener
+// channel. As of Task 6 the channel metadata (extraction prompt, listener
+// flags) comes from the channels table — the legacy slack_channel
+// AlertSourceInstance.Settings JSONB path is gone.
+func (h *SlackHandler) handleAlertChannelMessage(event *slackevents.MessageEvent, channel *database.Channel) {
+	slog.Info("processing listener channel message", "user", event.User, "channel", event.Channel)
 
 	// Extract message text (including text from blocks and attachments)
 	messageText := h.extractFullMessageText(event)
@@ -440,18 +444,14 @@ func (h *SlackHandler) handleAlertChannelMessage(event *slackevents.MessageEvent
 	}
 
 	// The hourglass reaction is now placed by the TypingController in the
-	// downstream Slack-channel-alert investigation flow (alert_processor.go's
-	// runSlackChannelInvestigation). The brief alert-extraction phase below
-	// has no dedicated indicator; the bot's "Thinking..." progress message
-	// lands shortly after as activity feedback.
+	// downstream listener-channel investigation flow (alert_processor.go's
+	// runListenerChannelInvestigation). The brief alert-extraction phase
+	// below has no dedicated indicator; the bot's "Thinking..." progress
+	// message lands shortly after as activity feedback.
 
-	// Get custom extraction prompt if configured
-	var customPrompt string
-	if instance.Settings != nil {
-		if prompt, ok := instance.Settings["extraction_prompt"].(string); ok {
-			customPrompt = prompt
-		}
-	}
+	// Channel-scoped extraction prompt; empty falls back to the extractor's
+	// default behavior.
+	customPrompt := channel.ExtractionPrompt
 
 	// Extract alert fields via AI
 	ctx := context.Background()
@@ -485,12 +485,12 @@ func (h *SlackHandler) handleAlertChannelMessage(event *slackevents.MessageEvent
 
 	// Process through AlertHandler if available
 	if h.alertHandler != nil {
-		h.alertHandler.ProcessAlertFromSlackChannel(instance, *normalized, event.Channel, threadTS)
+		h.alertHandler.ProcessAlertFromListenerChannel(channel, *normalized, event.Channel, threadTS)
 	} else {
-		slog.Error("AlertHandler not configured, cannot process Slack channel alert")
+		slog.Error("AlertHandler not configured, cannot process listener channel alert")
 		// No hourglass to remove on this error path — the typing controller
-		// in runSlackChannelInvestigation never started because we never got
-		// there. Just surface the misconfiguration as a warning reaction.
+		// in runListenerChannelInvestigation never started because we never
+		// got there. Just surface the misconfiguration as a warning reaction.
 		if err := h.client.AddReaction("warning", slack.ItemRef{
 			Channel:   event.Channel,
 			Timestamp: event.TimeStamp,

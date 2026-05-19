@@ -185,8 +185,12 @@ func TestAlertService_CreateInstance_MissingSourceType(t *testing.T) {
 
 // --- Default Source Types Tests ---
 
+// TestDefaultAlertSourceTypes is a documentation test that pins the list of
+// alert source types InitializeDefaultSourceTypes registers as ENABLED on a
+// fresh install. slack_channel intentionally absent — Task 6 of the
+// unified-channels plan removed it; inbound Slack listening is now configured
+// through the channels table.
 func TestDefaultAlertSourceTypes(t *testing.T) {
-	// Test that our known alert source types are defined correctly
 	expectedTypes := []struct {
 		name        string
 		displayName string
@@ -197,14 +201,10 @@ func TestDefaultAlertSourceTypes(t *testing.T) {
 		{"grafana", "Grafana Alerting", true},
 		{"datadog", "Datadog", true},
 		{"zabbix", "Zabbix", true},
-		{"slack_channel", "Slack Alert Channel", false},
 	}
 
-	// Verify the expected types are part of our source type definitions
-	// This is a documentation test to ensure consistency
 	for _, et := range expectedTypes {
 		t.Run(et.name, func(t *testing.T) {
-			// Just verify the type info is properly structured
 			if et.name == "" {
 				t.Error("empty name")
 			}
@@ -527,3 +527,47 @@ func TestSlackSettings_IsActive(t *testing.T) {
 		})
 	}
 }
+
+// TestListSourceTypes_FiltersDeprecated verifies the picker-facing list omits
+// rows where Deprecated=true. After Task 6 of the unified-channels plan the
+// slack_channel row is marked deprecated by the migration so the UI no longer
+// offers it as a creatable source.
+func TestListSourceTypes_FiltersDeprecated(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&database.AlertSourceType{}); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+
+	rows := []database.AlertSourceType{
+		{Name: "alertmanager", DisplayName: "Alertmanager"},
+		{Name: "pagerduty", DisplayName: "PagerDuty"},
+		{Name: "slack_channel", DisplayName: "Slack Alert Channel", Deprecated: true},
+	}
+	for i := range rows {
+		if err := db.Create(&rows[i]).Error; err != nil {
+			t.Fatalf("seed %s: %v", rows[i].Name, err)
+		}
+	}
+
+	s := &AlertService{db: db}
+	got, err := s.ListSourceTypes()
+	if err != nil {
+		t.Fatalf("ListSourceTypes: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("ListSourceTypes returned %d rows, want 2 (deprecated must be filtered)", len(got))
+	}
+	for _, st := range got {
+		if st.Name == "slack_channel" {
+			t.Errorf("deprecated slack_channel must not be returned")
+		}
+		if st.Deprecated {
+			t.Errorf("ListSourceTypes returned deprecated row %q", st.Name)
+		}
+	}
+}
+

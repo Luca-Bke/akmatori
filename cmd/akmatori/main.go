@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/akmatori/akmatori/internal/executor"
 	"github.com/akmatori/akmatori/internal/handlers"
 	"github.com/akmatori/akmatori/internal/logging"
+	"github.com/akmatori/akmatori/internal/messaging"
 	"github.com/akmatori/akmatori/internal/middleware"
 	"github.com/akmatori/akmatori/internal/services"
 	"github.com/akmatori/akmatori/internal/setup"
@@ -183,8 +185,13 @@ func main() {
 		slackSettings = &database.SlackSettings{Enabled: false}
 	}
 
-	// Initialize Slack handler (will be used when Slack is enabled)
-	var slackHandler *handlers.SlackHandler
+	// Initialize Slack handler (will be used when Slack is enabled).
+	// Stored in an atomic.Pointer because it is written from the slackManager
+	// event-handler goroutine (on socket-mode connect or credential reload) and
+	// read from HTTP request goroutines via the SetAlertChannelReloader
+	// closure. Without the atomic, the read+write pair is a data race that the
+	// race detector flags and that could surface as a torn pointer in production.
+	var slackHandler atomic.Pointer[handlers.SlackHandler]
 
 	// Initialize Alert handler (needed before Slack handler setup)
 	// Initialize channel resolver (will be set when Slack connects)
@@ -211,11 +218,26 @@ func main() {
 	responseFormatter := services.NewResponseFormatter(agentWSHandler)
 	alertHandler.SetResponseFormatter(responseFormatter)
 
+	// Channel service + messaging provider registry wire outbound posting to
+	// the Integration/Channel rows. The slack provider is registered with the
+	// live manager so it reads the current client at call time (manager swaps
+	// clients on credential reload).
+	channelService := services.NewChannelService()
+	providerRegistry := messaging.NewRegistry()
+	providerRegistry.Register(messaging.NewSlackProvider(slackManager))
+	// Telegram is registered as a stub so the registry distinguishes
+	// "known provider, not yet implemented" (ErrNotImplemented) from
+	// "unknown provider" (ErrProviderNotRegistered). Without this, a
+	// Telegram-configured Channel would silently no-op at post time.
+	providerRegistry.Register(messaging.NewTelegramProvider())
+	alertHandler.SetChannelService(channelService)
+	alertHandler.SetProviderRegistry(providerRegistry)
+
 	// Set up event handler for when Slack connects
 	// Note: We receive the client directly to avoid deadlock (can't call GetClient while holding lock)
 	slackManager.SetEventHandler(func(socketClient *socketmode.Client, client *slack.Client) {
 		// Create handler with current client
-		slackHandler = handlers.NewSlackHandler(
+		handler := handlers.NewSlackHandler(
 			client,
 			agentExecutor,
 			agentWSHandler,
@@ -224,32 +246,41 @@ func main() {
 		)
 
 		// Wire up alert channel support
-		slackHandler.SetAlertHandler(alertHandler)
-		slackHandler.SetAlertService(alertService)
-		slackHandler.SetSlackSummarizer(slackSummarizer)
-		slackHandler.SetResponseFormatter(responseFormatter)
+		handler.SetAlertHandler(alertHandler)
+		handler.SetAlertService(alertService)
+		// ChannelService is the source of truth for listener channels after
+		// Task 6 of the unified-channels plan; LoadListenerChannels reads
+		// from the channels table.
+		handler.SetChannelService(channelService)
+		handler.SetSlackSummarizer(slackSummarizer)
+		handler.SetResponseFormatter(responseFormatter)
 		// Wire LLM-classified Slack feedback capture: thread replies on incident
 		// threads run through the classifier and persist as global feedback memory.
-		slackHandler.SetMemoryManager(memoryService)
-		slackHandler.SetFeedbackClassifier(services.NewFeedbackClassifier(agentWSHandler))
+		handler.SetMemoryManager(memoryService)
+		handler.SetFeedbackClassifier(services.NewFeedbackClassifier(agentWSHandler))
 
 		// Try to get bot user ID and team ID for self-message filtering and Streaming API
 		if authTest, err := client.AuthTest(); err == nil {
-			slackHandler.SetBotUserID(authTest.UserID)
-			slackHandler.SetTeamID(authTest.TeamID)
+			handler.SetBotUserID(authTest.UserID)
+			handler.SetTeamID(authTest.TeamID)
 			alertHandler.SetTeamID(authTest.TeamID)
 			slog.Info("Slack bot user ID", "user_id", authTest.UserID, "team_id", authTest.TeamID)
 		} else {
 			slog.Warn("could not get bot user ID", "err", err)
 		}
 
-		// Load alert channel configurations
-		if err := slackHandler.LoadAlertChannels(); err != nil {
-			slog.Warn("failed to load alert channels", "err", err)
+		// Load listener channel configurations from the channels table.
+		if err := handler.LoadListenerChannels(); err != nil {
+			slog.Warn("failed to load listener channels", "err", err)
 		}
 
-		slackHandler.HandleSocketMode(socketClient)
-		slog.Info("Slack components initialized (with alert channel support)")
+		// Publish the fully-initialised handler atomically so the API
+		// reloader closure observes a complete value (no torn pointer or
+		// partially-wired handler).
+		slackHandler.Store(handler)
+
+		handler.HandleSocketMode(socketClient)
+		slog.Info("Slack components initialized (with listener channel support)")
 	})
 
 	slackEnabled := slackSettings.IsActive()
@@ -275,12 +306,28 @@ func main() {
 	mcpServerService := services.NewMCPServerService()
 	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, agentExecutor, agentWSHandler, slackManager, runbookService, memoryService, httpConnectorService, mcpServerService)
 	apiHandler.SetResponseFormatter(responseFormatter)
+	// Wire the Integrations + Channels CRUD surface. /api/settings/slack is
+	// retired (returns 410 Gone) — operators configure Slack via
+	// /api/integrations and /api/channels.
+	apiHandler.SetChannelManager(channelService)
+	apiHandler.SetProviderRegistry(providerRegistry)
 
-	// Wire alert channel reload: when alert sources are created/updated/deleted via API,
-	// reload the Slack handler's channel mappings so changes take effect immediately.
+	// Cron runner: scheduler + CRUD for /api/cron-jobs. Started below after
+	// HTTP routes are registered so the runner only begins ticking once the
+	// rest of the API surface is in place. agentWSHandler is reused as both
+	// the OneShotLLMCaller (oneshot ticks share the same worker transport as
+	// title generation / response formatting / feedback classification) and
+	// the IncidentRunner (agent-mode ticks spawn investigations through the
+	// same WebSocket as alert/Slack flows).
+	cronRunner := services.NewCronRunner(channelService, providerRegistry, agentWSHandler, skillService, agentWSHandler)
+	apiHandler.SetCronJobManager(cronRunner)
+
+	// Wire listener channel reload: when channels (or, transitionally, alert
+	// sources) are created/updated/deleted via API, reload the Slack handler's
+	// channel mappings so changes take effect immediately.
 	apiHandler.SetAlertChannelReloader(func() {
-		if slackHandler != nil {
-			slackHandler.ReloadAlertChannels()
+		if handler := slackHandler.Load(); handler != nil {
+			handler.ReloadListenerChannels()
 		}
 	})
 
@@ -358,6 +405,13 @@ func main() {
 
 	// Start watching for Slack settings reload requests
 	go slackManager.WatchForReloads(ctx)
+
+	// Start the cron runner so scheduled jobs begin ticking. Start is a no-op
+	// when called twice; cancellation flows through ctx so SIGTERM shuts the
+	// scheduler down cleanly before the HTTP server exits.
+	if err := cronRunner.Start(ctx); err != nil {
+		slog.Warn("failed to start cron runner", "err", err)
+	}
 
 	// Start Slack Socket Mode if enabled
 	if slackEnabled {

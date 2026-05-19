@@ -22,9 +22,9 @@ import (
 
 // TestSlackFlow_EventClassification_Comprehensive tests comprehensive event classification
 func TestSlackFlow_EventClassification_Comprehensive(t *testing.T) {
-	alertChannels := map[string]*database.AlertSourceInstance{
-		"C_ALERTS":     {UUID: "uuid-1", Name: "alerts"},
-		"C_MONITORING": {UUID: "uuid-2", Name: "monitoring"},
+	alertChannels := map[string]*database.Channel{
+		"C_ALERTS":     {UUID: "uuid-1", DisplayName: "alerts"},
+		"C_MONITORING": {UUID: "uuid-2", DisplayName: "monitoring"},
 	}
 
 	tests := []struct {
@@ -384,9 +384,9 @@ func TestSlackFlow_AlertChannelRefresh(t *testing.T) {
 
 	t.Run("add channels safely", func(t *testing.T) {
 		h.alertChannelsMu.Lock()
-		h.alertChannels["C_NEW_ALERTS"] = &database.AlertSourceInstance{
-			UUID: "new-uuid",
-			Name: "new-alerts-channel",
+		h.alertChannels["C_NEW_ALERTS"] = &database.Channel{
+			UUID:        "new-uuid",
+			DisplayName: "new-alerts-channel",
 		}
 		h.alertChannelsMu.Unlock()
 
@@ -699,7 +699,7 @@ func TestSlackProgressStreamer_LiveProgressFromSimulatedInvestigation(t *testing
 // ========================================
 
 func BenchmarkSlackFlow_MessageClassification(b *testing.B) {
-	alertChannels := map[string]*database.AlertSourceInstance{
+	alertChannels := map[string]*database.Channel{
 		"C_ALERTS": {},
 	}
 	h := testSlackHandler("U_BOT", alertChannels)

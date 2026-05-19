@@ -12,6 +12,7 @@ type AlertSourceType struct {
 	Description          string    `gorm:"type:text" json:"description"`
 	DefaultFieldMappings JSONB     `gorm:"type:jsonb" json:"default_field_mappings"` // Default field mappings for this source
 	WebhookSecretHeader  string    `gorm:"size:128" json:"webhook_secret_header"`    // e.g., "X-Alertmanager-Secret"
+	Deprecated           bool      `gorm:"default:false" json:"deprecated"`          // Hidden from UI/pickers; retained for migrated rows
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 
@@ -25,20 +26,22 @@ func (AlertSourceType) TableName() string {
 
 // AlertSourceInstance represents a configured instance of an alert source
 type AlertSourceInstance struct {
-	ID                uint      `gorm:"primaryKey" json:"id"`
-	UUID              string    `gorm:"uniqueIndex;size:36;not null" json:"uuid"` // UUID for webhook URL
-	AlertSourceTypeID uint      `gorm:"not null;index" json:"alert_source_type_id"`
-	Name              string    `gorm:"uniqueIndex;size:128;not null" json:"name"` // User-friendly name
-	Description       string    `gorm:"type:text" json:"description"`
-	WebhookSecret     string    `gorm:"type:text" json:"webhook_secret"`  // Instance-specific secret
-	FieldMappings     JSONB     `gorm:"type:jsonb" json:"field_mappings"` // Override default mappings
-	Settings          JSONB     `gorm:"type:jsonb" json:"settings"`       // Additional instance settings
-	Enabled           bool      `gorm:"default:true" json:"enabled"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                    uint      `gorm:"primaryKey" json:"id"`
+	UUID                  string    `gorm:"uniqueIndex;size:36;not null" json:"uuid"` // UUID for webhook URL
+	AlertSourceTypeID     uint      `gorm:"not null;index" json:"alert_source_type_id"`
+	Name                  string    `gorm:"uniqueIndex;size:128;not null" json:"name"` // User-friendly name
+	Description           string    `gorm:"type:text" json:"description"`
+	WebhookSecret         string    `gorm:"type:text" json:"webhook_secret"`           // Instance-specific secret
+	FieldMappings         JSONB     `gorm:"type:jsonb" json:"field_mappings"`          // Override default mappings
+	Settings              JSONB     `gorm:"type:jsonb" json:"settings"`                // Additional instance settings
+	NotificationChannelID *uint     `gorm:"index" json:"notification_channel_id"`      // Optional FK to channels.id; nil falls back to provider default
+	Enabled               bool      `gorm:"default:true" json:"enabled"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 
 	// Relationships
-	AlertSourceType AlertSourceType `gorm:"foreignKey:AlertSourceTypeID" json:"alert_source_type,omitempty"`
+	AlertSourceType     AlertSourceType `gorm:"foreignKey:AlertSourceTypeID" json:"alert_source_type,omitempty"`
+	NotificationChannel *Channel        `gorm:"foreignKey:NotificationChannelID" json:"notification_channel,omitempty"`
 }
 
 func (AlertSourceInstance) TableName() string {
