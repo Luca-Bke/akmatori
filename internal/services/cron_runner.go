@@ -701,13 +701,14 @@ func capCronMessageBytes(msg string) string {
 	if cutoff < 100 {
 		cutoff = 100
 	}
-	truncated := msg[:cutoff]
-	// Backtrack to the last full rune boundary so we never slice a UTF-8
-	// continuation byte.
-	for cutoff > 0 && (truncated[cutoff-1]&0xC0) == 0x80 {
+	// Walk cutoff back while the first EXCLUDED byte (msg[cutoff]) is a UTF-8
+	// continuation byte (high bits 10xxxxxx). After the loop msg[cutoff] is a
+	// rune start byte (or end-of-string), so msg[:cutoff] is valid UTF-8 and
+	// never ends inside a multi-byte rune.
+	for cutoff > 0 && cutoff < len(msg) && (msg[cutoff]&0xC0) == 0x80 {
 		cutoff--
-		truncated = msg[:cutoff]
 	}
+	truncated := msg[:cutoff]
 	if idx := strings.LastIndex(truncated, "\n"); idx > cutoff/2 {
 		truncated = truncated[:idx]
 	}

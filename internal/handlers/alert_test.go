@@ -127,6 +127,21 @@ func TestTruncateForSlack_BreaksAtNewline(t *testing.T) {
 	}
 }
 
+func TestTruncateForSlack_PreservesUTF8RuneBoundary(t *testing.T) {
+	// Build a long, newline-free, multi-byte UTF-8 message so the cutoff is
+	// guaranteed to land on (or inside) a 3-byte rune. Without rune-boundary
+	// backtracking the slice would contain a half-rune and Slack would reject
+	// the message body silently.
+	msg := strings.Repeat("日", slackMaxTextBytes) // 3 bytes per rune, no newlines
+	result := truncateForSlack(msg, slackMaxTextBytes)
+	if len(result) > slackMaxTextBytes {
+		t.Errorf("result too long: %d", len(result))
+	}
+	if !utf8.ValidString(result) {
+		t.Errorf("truncateForSlack produced invalid UTF-8 at the cutoff")
+	}
+}
+
 func TestNewAlertHandler(t *testing.T) {
 	// Test that NewAlertHandler creates valid handler with nil dependencies
 	h := NewAlertHandler(nil, nil, nil, nil, nil, nil, nil)

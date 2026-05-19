@@ -311,7 +311,9 @@ func truncateWithFooter(content, footer string, maxBytes int) string {
 }
 
 // truncateForSlack truncates a message to fit within Slack's text limit.
-// Reserves space for a truncation notice.
+// Reserves space for a truncation notice and backtracks the cut to a UTF-8
+// rune boundary so a multi-byte character (emoji, CJK, etc.) is never sliced
+// in half — Slack rejects the message body silently when that happens.
 func truncateForSlack(message string, maxBytes int) string {
 	if len(message) <= maxBytes {
 		return message
@@ -321,9 +323,18 @@ func truncateForSlack(message string, maxBytes int) string {
 	if cutoff < 100 {
 		cutoff = 100
 	}
-	// Avoid cutting in the middle of a UTF-8 character
+	if cutoff > len(message) {
+		cutoff = len(message)
+	}
+	// Walk cutoff back while the first EXCLUDED byte (message[cutoff]) is a
+	// UTF-8 continuation byte (high bits 10xxxxxx). After the loop,
+	// message[cutoff] is either a rune start byte or end-of-string, so
+	// message[:cutoff] is guaranteed valid UTF-8.
+	for cutoff > 0 && cutoff < len(message) && (message[cutoff]&0xC0) == 0x80 {
+		cutoff--
+	}
 	truncated := message[:cutoff]
-	// Find last newline for a cleaner break
+	// Prefer a clean newline break when one is reasonably close.
 	if idx := strings.LastIndex(truncated, "\n"); idx > cutoff/2 {
 		truncated = truncated[:idx]
 	}

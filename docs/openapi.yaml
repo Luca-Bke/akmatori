@@ -1623,14 +1623,14 @@ paths:
       operationId: runCronJobNow
       tags: [Cron Jobs]
       responses:
-        '200':
-          description: Job queued for immediate execution
+        '202':
+          description: Job tick accepted and running in the background. Poll the cron job row's last_run_status/last_run_error for the outcome.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  status: {type: string, example: queued}
+                  status: {type: string, example: started}
         '404':
           $ref: '#/components/responses/NotFound'
 
