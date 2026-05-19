@@ -3,8 +3,6 @@ import type {
   ToolType,
   ToolInstance,
   Incident,
-  SlackSettings,
-  SlackSettingsUpdate,
   Integration,
   CreateIntegrationRequest,
   UpdateIntegrationRequest,
@@ -231,17 +229,6 @@ export const incidentsApi = {
     fetchApi<CreateIncidentResponse>('/api/incidents', {
       method: 'POST',
       body: JSON.stringify(request),
-    }),
-};
-
-// Slack Settings API
-export const slackSettingsApi = {
-  get: () => fetchApi<SlackSettings>('/api/settings/slack'),
-
-  update: (settings: SlackSettingsUpdate) =>
-    fetchApi<SlackSettings>('/api/settings/slack', {
-      method: 'PUT',
-      body: JSON.stringify(settings),
     }),
 };
 

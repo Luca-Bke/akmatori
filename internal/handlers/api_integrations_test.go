@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/akmatori/akmatori/internal/database"
@@ -428,31 +429,37 @@ func TestHandleIntegrations_Create_PropagatesValidationError(t *testing.T) {
 	}
 }
 
-// TestHandleSlackSettings_RedirectsWhenChannelManagerWired asserts the legacy
-// settings endpoint redirects to /api/integrations once the new infrastructure
-// is wired. Task 10 of the unified-channels plan removes this entirely.
-func TestHandleSlackSettings_RedirectsWhenChannelManagerWired(t *testing.T) {
-	cases := []struct{ method string }{
-		{http.MethodGet},
-		{http.MethodPut},
-		{http.MethodPost},
-		{http.MethodDelete},
+// TestHandleSlackSettings_ReturnsGoneAfterRetirement asserts the legacy
+// settings endpoint surfaces 410 Gone with a clear pointer to the replacement
+// surface. The endpoint is retained only so clients on the old URL receive a
+// machine-readable signal to migrate; any access (regardless of channel
+// service wiring) must return 410.
+func TestHandleSlackSettings_ReturnsGoneAfterRetirement(t *testing.T) {
+	cases := []struct {
+		name string
+		mgr  services.ChannelManager
+	}{
+		{"with channel manager wired", &mockChannelManager{}},
+		{"without channel manager", nil},
 	}
+	methods := []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete}
 	for _, tc := range cases {
-		t.Run(tc.method, func(t *testing.T) {
-			h := newHandlerWithChannelManager(&mockChannelManager{})
+		for _, m := range methods {
+			t.Run(tc.name+"/"+m, func(t *testing.T) {
+				h := newHandlerWithChannelManager(tc.mgr)
 
-			req := httptest.NewRequest(tc.method, "/api/settings/slack", nil)
-			w := httptest.NewRecorder()
-			h.handleSlackSettings(w, req)
+				req := httptest.NewRequest(m, "/api/settings/slack", nil)
+				w := httptest.NewRecorder()
+				h.handleSlackSettings(w, req)
 
-			if w.Code != http.StatusPermanentRedirect {
-				t.Fatalf("expected 308, got %d", w.Code)
-			}
-			if loc := w.Header().Get("Location"); loc != "/api/integrations" {
-				t.Fatalf("unexpected Location: %q", loc)
-			}
-		})
+				if w.Code != http.StatusGone {
+					t.Fatalf("expected 410, got %d: %s", w.Code, w.Body.String())
+				}
+				if body := w.Body.String(); !strings.Contains(body, "/api/integrations") || !strings.Contains(body, "/api/channels") {
+					t.Errorf("expected response body to point to /api/integrations and /api/channels, got %q", body)
+				}
+			})
+		}
 	}
 }
 

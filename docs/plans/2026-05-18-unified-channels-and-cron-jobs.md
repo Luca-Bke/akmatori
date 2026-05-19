@@ -171,11 +171,11 @@ Introduce a first-class Channel concept (under provider Integrations) that trigg
 **Files:**
 - Modify: `internal/handlers/alert_slack.go`, `internal/handlers/api_settings_slack.go`, `internal/database/models_settings.go`, `internal/services/interfaces.go` (and any remaining `GetSlackSettings().AlertsChannel` callers)
 
-- [ ] remove the legacy read-fallback path added in Task 3; require a Channel row (return a clear error if missing)
-- [ ] remove `/api/settings/slack` redirect (or downgrade to 410 Gone) and delete `SlackSettingsSection.tsx` if still present
-- [ ] note: `slack_settings` table drop is deferred to a follow-up release per /tmp/plan.md
-- [ ] update tests removed/changed by the fallback removal; add a test asserting missing-default-Channel surfaces a clear 4xx
-- [ ] run `make test` — must pass before Task 11
+- [x] remove the legacy read-fallback path added in Task 3; require a Channel row (return a clear error if missing)
+- [x] remove `/api/settings/slack` redirect (or downgrade to 410 Gone) and delete `SlackSettingsSection.tsx` if still present
+- [x] note: `slack_settings` table drop is deferred to a follow-up release per /tmp/plan.md
+- [x] update tests removed/changed by the fallback removal; add a test asserting missing-default-Channel surfaces a clear 4xx
+- [x] run `make test` — must pass before Task 11
 
 ### Task 11: Verify acceptance criteria
 

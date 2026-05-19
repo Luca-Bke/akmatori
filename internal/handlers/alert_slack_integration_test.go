@@ -213,11 +213,12 @@ func TestAlertHandler_IsSlackEnabled_DependsOnSettingsAndClient(t *testing.T) {
 		t.Fatal("isSlackEnabled() = true with no settings row, want false")
 	}
 
+	// AlertsChannel is intentionally left empty: routing now goes through the
+	// channels table, so isSlackEnabled must not depend on the legacy field.
 	settings := &database.SlackSettings{
 		BotToken:      "xoxb-test-token",
 		SigningSecret: "signing-secret",
 		AppToken:      "xapp-test-token",
-		AlertsChannel: "C_ALERTS",
 		Enabled:       true,
 	}
 	if err := database.DB.Create(settings).Error; err != nil {

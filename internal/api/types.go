@@ -86,15 +86,6 @@ type CreateIncidentResponse struct {
 
 // ========== Settings Types ==========
 
-// UpdateSlackSettingsRequest is the request body for PUT /api/settings/slack.
-type UpdateSlackSettingsRequest struct {
-	BotToken      *string `json:"bot_token"`
-	SigningSecret *string `json:"signing_secret"`
-	AppToken      *string `json:"app_token"`
-	AlertsChannel *string `json:"alerts_channel"`
-	Enabled       *bool   `json:"enabled"`
-}
-
 // CreateLLMSettingsRequest is the request body for POST /api/settings/llm.
 type CreateLLMSettingsRequest struct {
 	Provider      string `json:"provider" validate:"required"`

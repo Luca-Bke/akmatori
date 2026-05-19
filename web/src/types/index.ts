@@ -64,26 +64,6 @@ export interface EventSource {
   updated_at: string;
 }
 
-export interface SlackSettings {
-  id: number;
-  bot_token: string;  // Masked for display
-  signing_secret: string;  // Masked for display
-  app_token: string;  // Masked for display
-  alerts_channel: string;
-  enabled: boolean;
-  is_configured: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SlackSettingsUpdate {
-  bot_token?: string;
-  signing_secret?: string;
-  app_token?: string;
-  alerts_channel?: string;
-  enabled?: boolean;
-}
-
 export interface CreateIncidentRequest {
   task: string;
   context?: Record<string, any>;

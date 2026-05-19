@@ -213,11 +213,9 @@ func main() {
 	alertHandler.SetResponseFormatter(responseFormatter)
 
 	// Channel service + messaging provider registry wire outbound posting to
-	// the new Integration/Channel rows. The slack provider is registered with
-	// the live manager so it reads the current client at call time (manager
-	// swaps clients on credential reload). Until operators migrate, alerts
-	// fall back to the legacy SlackSettings.AlertsChannel read inside
-	// alert_slack.go.
+	// the Integration/Channel rows. The slack provider is registered with the
+	// live manager so it reads the current client at call time (manager swaps
+	// clients on credential reload).
 	channelService := services.NewChannelService()
 	providerRegistry := messaging.NewRegistry()
 	providerRegistry.Register(messaging.NewSlackProvider(slackManager))
@@ -292,9 +290,9 @@ func main() {
 	mcpServerService := services.NewMCPServerService()
 	apiHandler := handlers.NewAPIHandler(skillService, toolService, contextService, alertService, agentExecutor, agentWSHandler, slackManager, runbookService, memoryService, httpConnectorService, mcpServerService)
 	apiHandler.SetResponseFormatter(responseFormatter)
-	// Wire the Integrations + Channels CRUD surface (Task 4 of the
-	// unified-channels plan). Once these are wired, /api/settings/slack
-	// returns a 308 redirect to /api/integrations.
+	// Wire the Integrations + Channels CRUD surface. /api/settings/slack is
+	// retired (returns 410 Gone) — operators configure Slack via
+	// /api/integrations and /api/channels.
 	apiHandler.SetChannelManager(channelService)
 	apiHandler.SetProviderRegistry(providerRegistry)
 

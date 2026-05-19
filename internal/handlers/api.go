@@ -119,8 +119,9 @@ func (h *APIHandler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/incidents", h.handleIncidents)
 	mux.HandleFunc("/api/incidents/", h.handleIncidentByID)
 
-	// Slack settings (deprecated: 308 redirect to /api/integrations once
-	// channel infrastructure is wired; falls through to legacy CRUD when not)
+	// Slack settings (removed; returns 410 Gone — use /api/integrations and
+	// /api/channels). Route kept so clients on the old endpoint see a clear
+	// error instead of a generic 404.
 	mux.HandleFunc("/api/settings/slack", h.handleSlackSettings)
 
 	// Messaging integrations (provider configurations) and Channels

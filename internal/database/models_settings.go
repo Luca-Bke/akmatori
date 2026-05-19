@@ -2,13 +2,19 @@ package database
 
 import "time"
 
-// SlackSettings stores Slack integration configuration
+// SlackSettings stores Slack integration configuration.
+//
+// AlertsChannel is retained on the model so the one-time channels migration
+// (see internal/database/channels_migration.go) can read the legacy value when
+// upgrading from a pre-Integration release. No production code path reads
+// AlertsChannel; routing now goes through the channels table. The
+// slack_settings table drop is deferred to a follow-up release.
 type SlackSettings struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	BotToken      string    `gorm:"type:text" json:"bot_token"`
 	SigningSecret string    `gorm:"type:text" json:"signing_secret"`
 	AppToken      string    `gorm:"type:text" json:"app_token"`
-	AlertsChannel string    `gorm:"type:varchar(255)" json:"alerts_channel"`
+	AlertsChannel string    `gorm:"type:varchar(255)" json:"alerts_channel"` // Deprecated: migrated into channels.
 	Enabled       bool      `gorm:"default:false" json:"enabled"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`

@@ -16,44 +16,25 @@ import (
 
 // resolveOutboundSlackChannel picks the outbound destination for an alert.
 //
-// The new path consults ChannelService.ResolveForAlertSource first, returning
-// a Channel row whose Integration is preloaded so the caller can route
-// through ProviderRegistry. When no Channel row exists (no Channel rows
-// configured, or the per-provider default is missing), it falls back to the
-// legacy SlackSettings.AlertsChannel and synthesizes a transient Channel so
-// the rest of the post path can stay uniform.
-//
-// Returns (channel, channelID, isLegacy). channelID is the resolved Slack
-// channel ID (post-name→ID resolution); both return values are empty when
-// no destination can be determined. isLegacy is true when the synthesized
-// channel came from SlackSettings.AlertsChannel — callers log a one-time
-// deprecation warning the first time this happens.
-func (h *AlertHandler) resolveOutboundSlackChannel(asi *database.AlertSourceInstance) (*database.Channel, string, bool) {
-	// New path: Channel/Integration table.
-	if h.channelService != nil {
-		ch, err := h.channelService.ResolveForAlertSource(asi, database.MessagingProviderSlack)
-		if err == nil && ch != nil {
-			return ch, h.resolveSlackExternalID(ch.ExternalID), false
-		}
-		if err != nil && !errors.Is(err, services.ErrChannelNotFound) {
+// Consults ChannelService.ResolveForAlertSource and returns a Channel row
+// whose Integration is preloaded so the caller can route through
+// ProviderRegistry. Returns (nil, "") when no Channel destination can be
+// resolved — callers then skip Slack posting.
+func (h *AlertHandler) resolveOutboundSlackChannel(asi *database.AlertSourceInstance) (*database.Channel, string) {
+	if h.channelService == nil {
+		return nil, ""
+	}
+	ch, err := h.channelService.ResolveForAlertSource(asi, database.MessagingProviderSlack)
+	if err != nil {
+		if !errors.Is(err, services.ErrChannelNotFound) {
 			slog.Warn("resolve channel for alert source failed", "err", err)
 		}
+		return nil, ""
 	}
-
-	// Legacy fallback: SlackSettings.AlertsChannel.
-	settings, sErr := database.GetSlackSettings()
-	if sErr != nil || settings == nil || settings.AlertsChannel == "" {
-		return nil, "", false
+	if ch == nil {
+		return nil, ""
 	}
-	h.legacyFallbackWarnOnce.Do(func() {
-		slog.Warn("no Channel rows configured; using legacy SlackSettings.AlertsChannel — migrate to /api/channels (SlackSettings.AlertsChannel will be removed in a future release)")
-	})
-	synth := &database.Channel{
-		ExternalID:  settings.AlertsChannel,
-		DisplayName: settings.AlertsChannel,
-		Integration: database.Integration{Provider: database.MessagingProviderSlack},
-	}
-	return synth, h.resolveSlackExternalID(settings.AlertsChannel), true
+	return ch, h.resolveSlackExternalID(ch.ExternalID)
 }
 
 // resolveSlackExternalID converts a Channel.ExternalID (which may be a Slack
@@ -82,7 +63,7 @@ func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *
 		return "", "", nil
 	}
 
-	channel, channelID, _ := h.resolveOutboundSlackChannel(instance)
+	channel, channelID := h.resolveOutboundSlackChannel(instance)
 	if channelID == "" {
 		return "", "", nil
 	}
@@ -249,7 +230,7 @@ func (h *AlertHandler) isSlackEnabled() bool {
 		return false
 	}
 
-	if !settings.IsActive() || settings.AlertsChannel == "" {
+	if !settings.IsActive() {
 		return false
 	}
 

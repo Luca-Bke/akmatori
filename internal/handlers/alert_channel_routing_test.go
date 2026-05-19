@@ -94,7 +94,7 @@ func TestAlertHandler_ResolveOutboundSlackChannel_ExplicitChannelWins(t *testing
 	h := NewAlertHandler(nil, nil, nil, nil, nil, nil, nil)
 	h.SetChannelService(services.NewChannelService())
 
-	channel, channelID, legacy := h.resolveOutboundSlackChannel(asi)
+	channel, channelID := h.resolveOutboundSlackChannel(asi)
 	if channel == nil {
 		t.Fatal("expected channel, got nil")
 	}
@@ -103,9 +103,6 @@ func TestAlertHandler_ResolveOutboundSlackChannel_ExplicitChannelWins(t *testing
 	}
 	if channelID != "C_STAGING" {
 		t.Errorf("channelID = %q, want %q", channelID, "C_STAGING")
-	}
-	if legacy {
-		t.Error("isLegacy = true, want false for new-path resolution")
 	}
 }
 
@@ -124,7 +121,7 @@ func TestAlertHandler_ResolveOutboundSlackChannel_FallsBackToDefault(t *testing.
 	h := NewAlertHandler(nil, nil, nil, nil, nil, nil, nil)
 	h.SetChannelService(services.NewChannelService())
 
-	channel, channelID, legacy := h.resolveOutboundSlackChannel(asi)
+	channel, channelID := h.resolveOutboundSlackChannel(asi)
 	if channel == nil {
 		t.Fatal("expected default channel, got nil")
 	}
@@ -134,16 +131,19 @@ func TestAlertHandler_ResolveOutboundSlackChannel_FallsBackToDefault(t *testing.
 	if channelID != "C_DEFAULT" {
 		t.Errorf("channelID = %q, want %q", channelID, "C_DEFAULT")
 	}
-	if legacy {
-		t.Error("isLegacy = true, want false when a default Channel row exists")
-	}
 }
 
-func TestAlertHandler_ResolveOutboundSlackChannel_LegacyFallback(t *testing.T) {
+// TestAlertHandler_ResolveOutboundSlackChannel_NoLegacyFallback asserts that
+// the Task-3 legacy fallback (synthesising a Channel from
+// SlackSettings.AlertsChannel) has been removed. Even with a configured
+// AlertsChannel, resolution must return no destination when no Channel row
+// exists. Without this guarantee, operators who never migrated would silently
+// keep posting via the deprecated singleton — defeating the purpose of the
+// Channels rewrite.
+func TestAlertHandler_ResolveOutboundSlackChannel_NoLegacyFallback(t *testing.T) {
 	db, cleanup := setupChannelRoutingDB(t)
 	defer cleanup()
 
-	// No Channel rows exist — only SlackSettings.AlertsChannel.
 	settings := &database.SlackSettings{
 		AlertsChannel: "C_LEGACY",
 		Enabled:       true,
@@ -160,18 +160,10 @@ func TestAlertHandler_ResolveOutboundSlackChannel_LegacyFallback(t *testing.T) {
 	h := NewAlertHandler(nil, nil, nil, nil, nil, nil, nil)
 	h.SetChannelService(services.NewChannelService())
 
-	channel, channelID, legacy := h.resolveOutboundSlackChannel(asi)
-	if channel == nil {
-		t.Fatal("expected synthesized legacy channel, got nil")
-	}
-	if !legacy {
-		t.Error("isLegacy = false, want true for SlackSettings fallback")
-	}
-	if channelID != "C_LEGACY" {
-		t.Errorf("channelID = %q, want %q", channelID, "C_LEGACY")
-	}
-	if channel.Integration.Provider != database.MessagingProviderSlack {
-		t.Errorf("synthesized channel provider = %q, want %q", channel.Integration.Provider, database.MessagingProviderSlack)
+	channel, channelID := h.resolveOutboundSlackChannel(asi)
+	if channel != nil || channelID != "" {
+		t.Errorf("expected no destination once the legacy fallback is removed, got channel=%v channelID=%q",
+			channel, channelID)
 	}
 }
 
@@ -184,10 +176,10 @@ func TestAlertHandler_ResolveOutboundSlackChannel_NoDestination(t *testing.T) {
 	h := NewAlertHandler(nil, nil, nil, nil, nil, nil, nil)
 	h.SetChannelService(services.NewChannelService())
 
-	channel, channelID, legacy := h.resolveOutboundSlackChannel(asi)
-	if channel != nil || channelID != "" || legacy {
-		t.Errorf("expected nothing for empty DB, got channel=%v channelID=%q legacy=%v",
-			channel, channelID, legacy)
+	channel, channelID := h.resolveOutboundSlackChannel(asi)
+	if channel != nil || channelID != "" {
+		t.Errorf("expected nothing for empty DB, got channel=%v channelID=%q",
+			channel, channelID)
 	}
 }
 

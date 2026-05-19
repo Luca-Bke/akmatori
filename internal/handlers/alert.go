@@ -47,11 +47,6 @@ type AlertHandler struct {
 	channelService    services.ChannelManager
 	providerRegistry  services.ProviderRegistry
 
-	// legacyFallbackWarnOnce gates the "no Channel rows; falling back to
-	// SlackSettings.AlertsChannel" deprecation log so a busy webhook does
-	// not spam the same warning on every alert.
-	legacyFallbackWarnOnce sync.Once
-
 	// Workspace team ID (required for Streaming API)
 	teamID string
 
@@ -105,8 +100,7 @@ func (h *AlertHandler) SetResponseFormatter(f *services.ResponseFormatter) {
 }
 
 // SetChannelService wires the ChannelManager used to resolve outbound channels
-// from alert source instances. When unset, the handler falls back to the
-// legacy SlackSettings.AlertsChannel read path.
+// from alert source instances. When unset, outbound Slack posting is skipped.
 func (h *AlertHandler) SetChannelService(c services.ChannelManager) {
 	h.channelService = c
 }
