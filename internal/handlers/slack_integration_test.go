@@ -75,11 +75,6 @@ func TestSlackHandler_LoadListenerChannels_NoService(t *testing.T) {
 	if err := h.LoadListenerChannels(); err != nil {
 		t.Errorf("LoadListenerChannels with nil channel service should not error: %v", err)
 	}
-
-	// Pre-Task-6 alias must still work.
-	if err := h.LoadAlertChannels(); err != nil {
-		t.Errorf("LoadAlertChannels alias should not error: %v", err)
-	}
 }
 
 // ========================================

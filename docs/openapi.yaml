@@ -305,6 +305,13 @@ components:
           type: string
         source_id:
           type: string
+        source_kind:
+          type: string
+          enum: [alert, cron, slack_mention]
+          description: Trigger kind that spawned this incident.
+        source_uuid:
+          type: string
+          description: UUID of the triggering entity (AlertSourceInstance, CronJob, or originating Slack mention).
         title:
           type: string
         status:
@@ -377,6 +384,9 @@ components:
           type: object
         webhook_secret_header:
           type: string
+        deprecated:
+          type: boolean
+          description: When true, this source type is hidden from new-source pickers. Retained for legacy rows (e.g. the retired slack_channel type).
         created_at:
           type: string
           format: date-time
@@ -404,10 +414,16 @@ components:
           type: object
         settings:
           type: object
+        notification_channel_id:
+          type: integer
+          nullable: true
+          description: Optional FK to a Channel that overrides the per-provider default for outbound posts.
         enabled:
           type: boolean
         alert_source_type:
           $ref: '#/components/schemas/AlertSourceType'
+        notification_channel:
+          $ref: '#/components/schemas/Channel'
         created_at:
           type: string
           format: date-time
@@ -1671,6 +1687,11 @@ paths:
                   type: object
                 settings:
                   type: object
+                notification_channel_uuid:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Optional UUID of a Channel to route outbound posts to. When omitted, the alert source falls back to the provider's default channel.
       responses:
         '201':
           description: Alert source created
@@ -1719,6 +1740,11 @@ paths:
                   type: object
                 settings:
                   type: object
+                notification_channel_uuid:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Optional UUID of a Channel to route outbound posts to. Pass an empty string to clear the override.
                 enabled:
                   type: boolean
       responses:

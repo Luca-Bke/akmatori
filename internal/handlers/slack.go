@@ -181,24 +181,12 @@ func (h *SlackHandler) LoadListenerChannels() error {
 	return nil
 }
 
-// LoadAlertChannels is the pre-Task-6 name kept as a thin alias so existing
-// callers (main.go boot path, tests) keep working while the migration lands.
-// New code should call LoadListenerChannels directly.
-func (h *SlackHandler) LoadAlertChannels() error {
-	return h.LoadListenerChannels()
-}
-
 // ReloadListenerChannels reloads listener channel configurations after a
 // Channels CRUD change (called from the API handler's reload hook).
 func (h *SlackHandler) ReloadListenerChannels() {
 	if err := h.LoadListenerChannels(); err != nil {
 		slog.Warn("failed to reload listener channels", "err", err)
 	}
-}
-
-// ReloadAlertChannels is the pre-Task-6 alias for ReloadListenerChannels.
-func (h *SlackHandler) ReloadAlertChannels() {
-	h.ReloadListenerChannels()
 }
 
 // isAlertChannel reports whether the given Slack channel id is configured as

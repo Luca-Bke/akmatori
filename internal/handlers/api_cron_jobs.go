@@ -110,7 +110,7 @@ func (h *APIHandler) handleCronJobByUUID(w http.ResponseWriter, r *http.Request)
 				api.RespondError(w, cronErrStatus(err), err.Error())
 				return
 			}
-			api.RespondJSON(w, http.StatusOK, map[string]string{"status": "queued"})
+			api.RespondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		default:
 			api.RespondError(w, http.StatusNotFound, "Not found")
 		}

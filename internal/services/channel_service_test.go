@@ -25,6 +25,7 @@ func setupChannelServiceTest(t *testing.T) (*ChannelService, *gorm.DB) {
 		&database.AlertSourceInstance{},
 		&database.Integration{},
 		&database.Channel{},
+		&database.CronJob{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
@@ -367,6 +368,131 @@ func TestChannelService_DeleteIntegration_CascadesChannels(t *testing.T) {
 	db.Model(&database.Channel{}).Where("integration_id = ?", integration.ID).Count(&remaining)
 	if remaining != 0 {
 		t.Errorf("DeleteIntegration left %d channels behind, want 0", remaining)
+	}
+}
+
+// TestChannelService_DeleteIntegration_ClearsTriggerFKs asserts the cleanup
+// transaction nulls AlertSourceInstance.NotificationChannelID and
+// CronJob.ChannelID for any row pointing at a doomed channel, so triggers fall
+// back to the per-provider default rather than carrying a dangling reference.
+func TestChannelService_DeleteIntegration_ClearsTriggerFKs(t *testing.T) {
+	svc, db := setupChannelServiceTest(t)
+	integration := seedSlackIntegration(t, db)
+	channel, err := svc.CreateChannel(&database.Channel{
+		IntegrationID: integration.ID,
+		ExternalID:    "C-x",
+		CanPost:       true,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+
+	srcType := &database.AlertSourceType{Name: "test", DisplayName: "Test"}
+	if err := db.Create(srcType).Error; err != nil {
+		t.Fatalf("seed source type: %v", err)
+	}
+	asi := &database.AlertSourceInstance{
+		UUID:                  uuid.New().String(),
+		AlertSourceTypeID:     srcType.ID,
+		Name:                  "alert-instance",
+		NotificationChannelID: &channel.ID,
+	}
+	if err := db.Create(asi).Error; err != nil {
+		t.Fatalf("seed alert instance: %v", err)
+	}
+	cron := &database.CronJob{
+		UUID:      uuid.New().String(),
+		Name:      "cron-job",
+		Schedule:  "* * * * *",
+		Prompt:    "do thing",
+		Mode:      database.CronJobModeOneshot,
+		ChannelID: &channel.ID,
+	}
+	if err := db.Create(cron).Error; err != nil {
+		t.Fatalf("seed cron: %v", err)
+	}
+
+	if err := svc.DeleteIntegration(integration.UUID); err != nil {
+		t.Fatalf("DeleteIntegration error = %v", err)
+	}
+
+	var reloadedASI database.AlertSourceInstance
+	if err := db.First(&reloadedASI, asi.ID).Error; err != nil {
+		t.Fatalf("reload alert instance: %v", err)
+	}
+	if reloadedASI.NotificationChannelID != nil {
+		t.Errorf("AlertSourceInstance.NotificationChannelID = %v, want nil", *reloadedASI.NotificationChannelID)
+	}
+	var reloadedCron database.CronJob
+	if err := db.First(&reloadedCron, cron.ID).Error; err != nil {
+		t.Fatalf("reload cron: %v", err)
+	}
+	if reloadedCron.ChannelID != nil {
+		t.Errorf("CronJob.ChannelID = %v, want nil", *reloadedCron.ChannelID)
+	}
+}
+
+// TestChannelService_CreateChannel_RejectsDefaultWithoutCanPost asserts the
+// invariant that a default-post channel must also be permitted to post —
+// otherwise the provider would refuse the message at runtime and the operator
+// would never see why.
+func TestChannelService_CreateChannel_RejectsDefaultWithoutCanPost(t *testing.T) {
+	svc, db := setupChannelServiceTest(t)
+	integration := seedSlackIntegration(t, db)
+	_, err := svc.CreateChannel(&database.Channel{
+		IntegrationID: integration.ID,
+		ExternalID:    "C-listen-only",
+		IsDefaultPost: true,
+		CanPost:       false,
+		CanListen:     true,
+		Enabled:       true,
+	})
+	if err == nil {
+		t.Fatal("CreateChannel default-without-can-post should error")
+	}
+}
+
+// TestChannelService_ResolveForAlertSource_DisabledExplicitFallsBack asserts
+// that an explicit notification channel that is no longer usable (disabled
+// channel, disabled integration, or can_post flipped to false) falls back to
+// the per-provider default rather than silently leaking an unusable row.
+func TestChannelService_ResolveForAlertSource_DisabledExplicitFallsBack(t *testing.T) {
+	svc, db := setupChannelServiceTest(t)
+	integration := seedSlackIntegration(t, db)
+	defaultChan, err := svc.CreateChannel(&database.Channel{
+		IntegrationID: integration.ID,
+		ExternalID:    "C-default",
+		CanPost:       true,
+		IsDefaultPost: true,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("seed default: %v", err)
+	}
+	// Build the explicit channel via CreateChannel (enabled) then disable it
+	// via UPDATE — GORM v2 omits zero-value bools from INSERT, so the DB
+	// default for `enabled` would override the struct field on create.
+	explicit, err := svc.CreateChannel(&database.Channel{
+		IntegrationID: integration.ID,
+		ExternalID:    "C-explicit",
+		CanPost:       true,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("seed explicit: %v", err)
+	}
+	if err := db.Model(&database.Channel{}).Where("id = ?", explicit.ID).Update("enabled", false).Error; err != nil {
+		t.Fatalf("disable explicit: %v", err)
+	}
+
+	asi := &database.AlertSourceInstance{NotificationChannelID: &explicit.ID}
+	got, err := svc.ResolveForAlertSource(asi, database.MessagingProviderSlack)
+	if err != nil {
+		t.Fatalf("ResolveForAlertSource(disabled explicit) error = %v", err)
+	}
+	if got.ID != defaultChan.ID {
+		t.Errorf("disabled explicit fell to id %d, want default id %d", got.ID, defaultChan.ID)
 	}
 }
 

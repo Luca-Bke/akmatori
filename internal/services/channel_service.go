@@ -129,14 +129,34 @@ func (s *ChannelService) UpdateIntegration(uuidStr string, name *string, credent
 }
 
 // DeleteIntegration removes an integration. Channels that reference it are
-// cascaded by their FK; callers should still warn the user that their
-// channel rows are about to disappear before invoking this.
+// cascaded; AlertSourceInstance.NotificationChannelID and CronJob.ChannelID
+// references to any of those channels are nulled out in the same transaction
+// so triggers fall back to the per-provider default rather than carrying a
+// dangling FK.
 func (s *ChannelService) DeleteIntegration(uuidStr string) error {
 	row, err := s.GetIntegrationByUUID(uuidStr)
 	if err != nil {
 		return err
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		var channelIDs []uint
+		if err := tx.Model(&database.Channel{}).
+			Where("integration_id = ?", row.ID).
+			Pluck("id", &channelIDs).Error; err != nil {
+			return fmt.Errorf("list channels for integration %d: %w", row.ID, err)
+		}
+		if len(channelIDs) > 0 {
+			if err := tx.Model(&database.AlertSourceInstance{}).
+				Where("notification_channel_id IN ?", channelIDs).
+				Update("notification_channel_id", nil).Error; err != nil {
+				return fmt.Errorf("clear alert source channel refs: %w", err)
+			}
+			if err := tx.Model(&database.CronJob{}).
+				Where("channel_id IN ?", channelIDs).
+				Update("channel_id", nil).Error; err != nil {
+				return fmt.Errorf("clear cron job channel refs: %w", err)
+			}
+		}
 		if err := tx.Where("integration_id = ?", row.ID).Delete(&database.Channel{}).Error; err != nil {
 			return fmt.Errorf("delete channels for integration %d: %w", row.ID, err)
 		}
@@ -218,6 +238,10 @@ func (s *ChannelService) CreateChannel(c *database.Channel) (*database.Channel, 
 		c.UUID = uuid.New().String()
 	}
 
+	if c.IsDefaultPost && !c.CanPost {
+		return nil, fmt.Errorf("channel marked is_default_post must also have can_post=true")
+	}
+
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if c.IsDefaultPost {
 			if err := s.assertNoOtherDefaultPostTx(tx, c.IntegrationID, 0); err != nil {
@@ -290,6 +314,16 @@ func (s *ChannelService) UpdateChannel(uuidStr string, patch ChannelUpdate) (*da
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if patch.IsDefaultPost != nil && *patch.IsDefaultPost {
+			// Determine the effective can_post for the post-update row: the
+			// patched value if supplied, else the existing row value. Reject
+			// is_default_post=true when can_post would end up false.
+			effectiveCanPost := row.CanPost
+			if patch.CanPost != nil {
+				effectiveCanPost = *patch.CanPost
+			}
+			if !effectiveCanPost {
+				return fmt.Errorf("channel marked is_default_post must also have can_post=true")
+			}
 			if err := s.assertNoOtherDefaultPostTx(tx, row.IntegrationID, row.ID); err != nil {
 				return err
 			}
@@ -305,16 +339,31 @@ func (s *ChannelService) UpdateChannel(uuidStr string, patch ChannelUpdate) (*da
 	return row, nil
 }
 
-// DeleteChannel removes a channel by UUID.
+// DeleteChannel removes a channel by UUID. AlertSourceInstance and CronJob
+// rows referencing this channel have their FK nulled in the same transaction
+// so the triggers fall back to the per-provider default at runtime rather
+// than carrying a dangling reference.
 func (s *ChannelService) DeleteChannel(uuidStr string) error {
 	row, err := s.GetChannelByUUID(uuidStr)
 	if err != nil {
 		return err
 	}
-	if err := s.db.Delete(row).Error; err != nil {
-		return fmt.Errorf("delete channel: %w", err)
-	}
-	return nil
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&database.AlertSourceInstance{}).
+			Where("notification_channel_id = ?", row.ID).
+			Update("notification_channel_id", nil).Error; err != nil {
+			return fmt.Errorf("clear alert source channel refs: %w", err)
+		}
+		if err := tx.Model(&database.CronJob{}).
+			Where("channel_id = ?", row.ID).
+			Update("channel_id", nil).Error; err != nil {
+			return fmt.Errorf("clear cron job channel refs: %w", err)
+		}
+		if err := tx.Delete(row).Error; err != nil {
+			return fmt.Errorf("delete channel: %w", err)
+		}
+		return nil
+	})
 }
 
 // ========== Resolution ==========
@@ -322,12 +371,14 @@ func (s *ChannelService) DeleteChannel(uuidStr string) error {
 // ResolveDefault returns the default outbound channel for the given provider,
 // or ErrChannelNotFound when no default is configured. The query joins
 // channels with their integration so callers do not have to chase the FK.
+// Filters on can_post=true so a default flagged on a listener-only channel
+// never leaks through to outbound posting.
 func (s *ChannelService) ResolveDefault(provider database.MessagingProvider) (*database.Channel, error) {
 	var row database.Channel
 	err := s.db.
 		Preload("Integration").
 		Joins("JOIN integrations ON integrations.id = channels.integration_id").
-		Where("channels.is_default_post = ? AND channels.enabled = ? AND integrations.enabled = ? AND integrations.provider = ?", true, true, true, provider).
+		Where("channels.is_default_post = ? AND channels.can_post = ? AND channels.enabled = ? AND integrations.enabled = ? AND integrations.provider = ?", true, true, true, true, provider).
 		First(&row).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -340,20 +391,24 @@ func (s *ChannelService) ResolveDefault(provider database.MessagingProvider) (*d
 
 // ResolveForAlertSource picks the Channel that should receive outbound posts
 // for the given alert source instance. The explicit NotificationChannelID
-// wins; otherwise the per-provider default channel is used. The provider
-// argument selects which default to consult — most callers pass
+// wins (provided the channel and its integration are both enabled and the
+// channel can post); otherwise the per-provider default channel is used. The
+// provider argument selects which default to consult — most callers pass
 // MessagingProviderSlack until the multi-provider UI lands.
 func (s *ChannelService) ResolveForAlertSource(asi *database.AlertSourceInstance, provider database.MessagingProvider) (*database.Channel, error) {
 	if asi != nil && asi.NotificationChannelID != nil {
 		var row database.Channel
 		err := s.db.Preload("Integration").First(&row, *asi.NotificationChannelID).Error
 		if err == nil {
-			return &row, nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			if row.Enabled && row.CanPost && row.Integration.Enabled {
+				return &row, nil
+			}
+			// Explicit channel exists but is unusable for posting; fall back
+			// to the default so the alert still surfaces somewhere.
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("resolve alert source channel: %w", err)
 		}
-		// FK target gone — fall through to the default so the alert still posts.
+		// FK target gone or unusable — fall through to the default.
 	}
 	return s.ResolveDefault(provider)
 }

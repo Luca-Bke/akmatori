@@ -248,7 +248,11 @@ func (r *CronRunner) fire(jobID uint) {
 }
 
 // RunNow fires a manual tick for the supplied UUID. Returns ErrCronJobNotFound
-// when the row is absent so the handler can surface a 404.
+// when the row is absent so the handler can surface a 404. The call runs the
+// tick to completion synchronously — tick results land on the row via
+// recordResult before this returns. For agent-mode jobs the wait can be
+// minutes, so HTTP callers should treat the manual-fire endpoint as a long
+// poll rather than a fire-and-forget queue.
 func (r *CronRunner) RunNow(uuidStr string) error {
 	var job database.CronJob
 	err := r.db.Preload("Channel.Integration").Where("uuid = ?", uuidStr).First(&job).Error

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -353,7 +354,11 @@ func setupCronRunnerTest(t *testing.T) (*CronRunner, *gorm.DB, *fakeScheduler, *
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
+	// Stash and restore the package-level DB so other tests in this package
+	// (which share the global) see the prior handle once we're done.
+	prevDB := database.DB
 	database.DB = db
+	t.Cleanup(func() { database.DB = prevDB })
 
 	integration := database.Integration{
 		UUID:     uuid.New().String(),
@@ -875,21 +880,14 @@ func TestCronRunner_Start_Idempotent(t *testing.T) {
 
 // ===== helpers =====
 
+// contains is a thin assertion helper that fails closed on an empty needle so
+// a future refactor that produces an empty expected string doesn't silently
+// vacuously pass.
 func contains(haystack, needle string) bool {
-	return needle == "" || (haystack != "" && (haystack == needle || indexOf(haystack, needle) >= 0))
-}
-
-func indexOf(haystack, needle string) int {
-	n := len(needle)
-	if n == 0 {
-		return 0
+	if needle == "" {
+		return false
 	}
-	for i := 0; i+n <= len(haystack); i++ {
-		if haystack[i:i+n] == needle {
-			return i
-		}
-	}
-	return -1
+	return strings.Contains(haystack, needle)
 }
 
 func findOnlyJobUUID(t *testing.T, db *gorm.DB) string {
@@ -1247,7 +1245,9 @@ func TestCronRunner_NewCronRunner_ConstructorReturnsRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlite: %v", err)
 	}
+	prevDB := database.DB
 	database.DB = db
+	t.Cleanup(func() { database.DB = prevDB })
 
 	runner := NewCronRunner(
 		&recordingChannelManager{},
