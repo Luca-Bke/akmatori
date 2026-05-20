@@ -12,7 +12,10 @@ import (
 	"github.com/akmatori/akmatori/internal/alerts"
 	"github.com/akmatori/akmatori/internal/alerts/adapters"
 	"github.com/akmatori/akmatori/internal/database"
+	"github.com/akmatori/akmatori/internal/services"
 	"github.com/akmatori/akmatori/internal/testhelpers"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // ========================================
@@ -280,6 +283,94 @@ func TestWebhookSecretValidation_AllAdapters(t *testing.T) {
 // ========================================
 // Alert Handler Registration Integration Tests
 // ========================================
+
+func setupWebhookHandlerIntegrationDB(t *testing.T) (*services.AlertService, func()) {
+	t.Helper()
+
+	prevDB := database.DB
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/webhook-handler.db"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	if err := db.AutoMigrate(&database.AlertSourceType{}, &database.AlertSourceInstance{}); err != nil {
+		t.Fatalf("migrate alert source tables: %v", err)
+	}
+	database.DB = db
+
+	service := services.NewAlertService()
+	if err := service.InitializeDefaultSourceTypes(); err != nil {
+		t.Fatalf("initialize default source types: %v", err)
+	}
+
+	return service, func() { database.DB = prevDB }
+}
+
+func TestWebhookHandler_AlertmanagerEndpointUsesRealServiceAndAdapter(t *testing.T) {
+	service, cleanup := setupWebhookHandlerIntegrationDB(t)
+	defer cleanup()
+
+	instance, err := service.CreateInstance(
+		"alertmanager",
+		"Production Alertmanager",
+		"Primary Prometheus Alertmanager webhook",
+		"webhook-secret",
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create alertmanager instance: %v", err)
+	}
+
+	h := NewAlertHandler(nil, nil, nil, nil, nil, service, nil)
+	h.RegisterAdapter(adapters.NewAlertmanagerAdapter())
+
+	tests := []struct {
+		name           string
+		body           string
+		secret         string
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:           "valid empty alert batch",
+			body:           `{"alerts":[]}`,
+			secret:         "webhook-secret",
+			expectedStatus: http.StatusOK,
+			expectedBody:   "Received 0 alerts",
+		},
+		{
+			name:           "invalid secret rejected before parsing",
+			body:           `{"alerts":[]}`,
+			secret:         "wrong-secret",
+			expectedStatus: http.StatusUnauthorized,
+			expectedBody:   "Unauthorized",
+		},
+		{
+			name:           "valid secret but malformed payload",
+			body:           `{"alerts":[`,
+			secret:         "webhook-secret",
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Invalid payload",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/webhook/alert/"+instance.UUID, strings.NewReader(tt.body))
+			req.Header.Set("X-Alertmanager-Secret", tt.secret)
+			w := httptest.NewRecorder()
+
+			h.HandleWebhook(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Fatalf("status = %d, want %d; body=%q", w.Code, tt.expectedStatus, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tt.expectedBody) {
+				t.Fatalf("body = %q, want substring %q", w.Body.String(), tt.expectedBody)
+			}
+		})
+	}
+}
 
 // TestAlertHandler_AdapterRegistration tests dynamic adapter registration
 func TestAlertHandler_AdapterRegistration(t *testing.T) {

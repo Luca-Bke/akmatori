@@ -108,6 +108,14 @@ func (h *APIHandler) handleAlertSources(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
+		if req.SourceTypeName == "slack_channel" {
+			channelID, _ := req.Settings["slack_channel_id"].(string)
+			if strings.TrimSpace(channelID) == "" {
+				api.RespondError(w, http.StatusBadRequest, "slack_channel_id is required in settings for slack_channel source type")
+				return
+			}
+		}
+
 		// Resolve optional notification_channel_uuid up-front so we can
 		// reject unknown channel UUIDs without creating the alert source.
 		var notifChannelID *uint
