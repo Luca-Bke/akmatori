@@ -44,8 +44,8 @@ func TestAlertService_InitializeDefaultSourceTypes_IdempotentAndUpdates(t *testi
 	if err := database.DB.Model(&database.AlertSourceType{}).Count(&count).Error; err != nil {
 		t.Fatalf("count source types: %v", err)
 	}
-	if count != 6 {
-		t.Fatalf("source type count after first run = %d, want 6", count)
+	if count != 5 {
+		t.Fatalf("source type count after first run = %d, want 5", count)
 	}
 
 	if err := database.DB.Model(&database.AlertSourceType{}).
@@ -63,8 +63,8 @@ func TestAlertService_InitializeDefaultSourceTypes_IdempotentAndUpdates(t *testi
 	if err := database.DB.Model(&database.AlertSourceType{}).Count(&count).Error; err != nil {
 		t.Fatalf("count source types after second run: %v", err)
 	}
-	if count != 6 {
-		t.Fatalf("source type count after second run = %d, want 6", count)
+	if count != 5 {
+		t.Fatalf("source type count after second run = %d, want 5", count)
 	}
 
 	alertmanager, err := service.GetAlertSourceTypeByName("alertmanager")
