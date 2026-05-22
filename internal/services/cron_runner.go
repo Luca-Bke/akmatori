@@ -141,19 +141,21 @@ func (r *CronRunner) Start(parent context.Context) error {
 		r.mu.Unlock()
 		return nil
 	}
-	r.mu.Unlock()
-
-	// Load before flipping `started` so a transient DB error at boot does not
-	// leave the runner in a half-started state where Start is a no-op but the
-	// scheduler never actually ticks.
-	var jobs []database.CronJob
-	if err := r.db.Where("enabled = ?", true).Find(&jobs).Error; err != nil {
-		return fmt.Errorf("load cron jobs: %w", err)
-	}
-
-	r.mu.Lock()
+	// Claim the started slot before releasing the lock so a concurrent caller
+	// that also observed started==false cannot proceed past this point.
 	r.started = true
 	r.mu.Unlock()
+
+	// Load after claiming started. If the DB load fails we reset started so a
+	// subsequent call can retry, rather than leaving the runner in a
+	// half-started state where Start is a no-op but the scheduler never ticks.
+	var jobs []database.CronJob
+	if err := r.db.Where("enabled = ?", true).Find(&jobs).Error; err != nil {
+		r.mu.Lock()
+		r.started = false
+		r.mu.Unlock()
+		return fmt.Errorf("load cron jobs: %w", err)
+	}
 
 	for _, job := range jobs {
 		if err := r.register(job); err != nil {
