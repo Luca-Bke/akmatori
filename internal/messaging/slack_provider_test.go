@@ -105,6 +105,25 @@ func TestSlackProvider_PostThreadReply_RequiresParent(t *testing.T) {
 	}
 }
 
+func TestSlackProvider_PostThreadReply_PassesThreadTSToClient(t *testing.T) {
+	fake := &fakeSlackClient{postTSToReturn: "1700000123.000500"}
+	p := newSlackProviderFromClient(fake)
+
+	got, err := p.PostThreadReply(context.Background(), &database.Channel{ExternalID: "C123"}, "1700000123.000400", "hi")
+	if err != nil {
+		t.Fatalf("PostThreadReply error = %v", err)
+	}
+	if got.MessageID != "1700000123.000500" {
+		t.Errorf("PostThreadReply MessageID = %q, want timestamp returned by slack", got.MessageID)
+	}
+	if fake.postChannelID != "C123" {
+		t.Errorf("PostThreadReply channelID = %q, want C123", fake.postChannelID)
+	}
+	if len(fake.postOptions) != 2 {
+		t.Fatalf("PostThreadReply options len = %d, want 2", len(fake.postOptions))
+	}
+}
+
 func TestSlackProvider_PostThreadReply_PropagatesSlackErr(t *testing.T) {
 	want := errors.New("slack down")
 	fake := &fakeSlackClient{postErr: want}
@@ -138,6 +157,28 @@ func TestSlackProvider_UpdateMessage_RequiresMessageID(t *testing.T) {
 	p := newSlackProviderFromClient(&fakeSlackClient{})
 	if err := p.UpdateMessage(context.Background(), &database.Channel{ExternalID: "C123"}, "", "updated"); err == nil {
 		t.Errorf("UpdateMessage with empty ID error = nil, want error")
+	}
+}
+
+func TestSlackProvider_UpdateMessage_NoClient(t *testing.T) {
+	p := NewSlackProvider(nil)
+	err := p.UpdateMessage(context.Background(), &database.Channel{ExternalID: "C123"}, "1700.0001", "updated")
+	if err == nil {
+		t.Errorf("UpdateMessage with absent client error = nil, want errSlackClientUnavailable")
+	}
+}
+
+func TestSlackProvider_UpdateMessage_PropagatesSlackErr(t *testing.T) {
+	want := errors.New("slack update failed")
+	fake := &fakeSlackClient{updateErr: want}
+	p := newSlackProviderFromClient(fake)
+
+	err := p.UpdateMessage(context.Background(), &database.Channel{ExternalID: "C123"}, "1700.0001", "updated")
+	if err == nil {
+		t.Fatalf("UpdateMessage error = nil, want wrapped slack error")
+	}
+	if !errors.Is(err, want) {
+		t.Errorf("UpdateMessage error = %v, want errors.Is(err, %v) to be true", err, want)
 	}
 }
 
