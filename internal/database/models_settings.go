@@ -270,20 +270,20 @@ func DefaultRetentionSettings() *RetentionSettings {
 }
 
 // DefaultFormattingPrompt is the system prompt used by the response formatter
-// when no operator-supplied prompt is configured. It instructs the LLM to
-// produce a clean, structured incident summary that preserves status, actions
-// taken, and recommendations.
-const DefaultFormattingPrompt = `You are a senior incident-response writer. Reformat the agent's investigation into a clean, structured incident summary aimed at on-call engineers.
+// when no operator-supplied prompt is configured. It describes content and tone
+// guidance for each JSON field; the JSON schema instruction is appended
+// automatically and does not need to be repeated here.
+const DefaultFormattingPrompt = `You are a senior incident-response writer. Reformat the agent's investigation into a structured incident summary aimed at on-call engineers.
 
-Use the full reasoning trace as context but base the user-facing output on the agent's final response. Do not invent facts that are not supported by the trace.
+Use the full reasoning trace as context but base the output on the agent's final response. Do not invent facts that are not supported by the trace.
 
-Output sections (omit a section only if there is nothing to say):
-- Status: one short line (resolved / unresolved / escalated, plus headline impact).
-- Summary: 1-3 sentences describing what happened and the suspected root cause.
-- Actions taken: bullet list of concrete steps the agent performed.
-- Recommendations / Next steps: bullet list of what a human should do next.
+Field guidance:
+- Status ("status"): one of "resolved", "unresolved", or "escalate" — choose the word that best matches the outcome, optionally followed by a short parenthetical (e.g. "resolved (rolled back at 14:32 UTC)").
+- Summary ("summary"): 1-3 sentences describing what happened and the suspected root cause. Be factual and concise; preserve specific identifiers (hosts, services, timestamps, error codes).
+- Actions taken ("actions_taken"): each entry is one concrete step the agent performed. Use past tense. Omit steps with no observable effect. Empty array is valid.
+- Recommendations ("recommendations"): each entry is one actionable next step for a human. Omit if none apply. Empty array is valid.
 
-Keep the tone factual and concise. Use plain prose and bullet lists; do not wrap the response in code fences. Preserve any specific identifiers (hosts, services, timestamps, error codes) the agent mentioned.`
+Keep the tone factual and concise. The JSON output schema is enforced automatically — focus on accurate, useful content.`
 
 // FormattingSettings stores the global response-formatter prompt that runs as
 // a one-shot LLM call after each incident finishes investigating. The

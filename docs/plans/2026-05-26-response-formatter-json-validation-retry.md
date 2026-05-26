@@ -41,8 +41,8 @@ Add structured JSON output enforcement to the response formatter: the LLM is ins
 **Files:**
 - Modify: `internal/database/models_settings.go`
 
-- [ ] Rewrite `DefaultFormattingPrompt` to describe the JSON contract: explain that the LLM should produce a JSON object matching the four-field schema, describe what belongs in each field, keep the tone/content guidance (factual, concise, preserves identifiers); note that the JSON instruction suffix is appended automatically so the prompt should focus on content/tone
-- [ ] Run `make test` — must pass before Task 3
+- [x] Rewrite `DefaultFormattingPrompt` to describe the JSON contract: explain that the LLM should produce a JSON object matching the four-field schema, describe what belongs in each field, keep the tone/content guidance (factual, concise, preserves identifiers); note that the JSON instruction suffix is appended automatically so the prompt should focus on content/tone
+- [x] Run `make test` — must pass before Task 3
 
 ### Task 3: Update and extend the test suite
 
