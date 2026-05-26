@@ -64,7 +64,7 @@ Add structured JSON output enforcement to the response formatter: the LLM is ins
 
 ### Task 4: Verify acceptance criteria
 
-- [ ] Run `make test` (full Go test suite)
-- [ ] Run `make verify` (pre-commit gate)
-- [ ] Confirm retry path exercised: `callCount()==2` in retry tests, `callCount()==1` in happy-path tests
-- [ ] Confirm no existing passthrough test needed modification beyond the happy-path output shape change
+- [x] Run `make test` (full Go test suite)
+- [x] Run `make verify` (pre-commit gate)
+- [x] Confirm retry path exercised: `callCount()==2` in retry tests, `callCount()==1` in happy-path tests
+- [x] Confirm no existing passthrough test needed modification beyond the happy-path output shape change
