@@ -79,6 +79,7 @@ func validateFormatterResult(raw string) (*formatterResult, []string) {
 	if len(errs) > 0 {
 		return nil, errs
 	}
+	r.Status = statusVal
 	return &r, nil
 }
 

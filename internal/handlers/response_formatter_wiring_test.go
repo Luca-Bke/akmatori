@@ -160,7 +160,7 @@ func TestApplyResponseFormatter_AppliedHappyPath(t *testing.T) {
 	})
 
 	caller := &fakeFormatterCaller{respond: func() (string, error) {
-		return `{"status":"resolved","summary":"All clear."}`, nil
+		return `{"status":"resolved","summary":"All clear.","actions_taken":[],"recommendations":[]}`, nil
 	}}
 	formatter := services.NewResponseFormatter(caller)
 
