@@ -14,8 +14,8 @@ import (
 	"github.com/akmatori/akmatori/internal/output"
 )
 
-// responseFormatterTimeout is the upper bound for a single format call when
-// the caller does not provide its own deadline.
+// responseFormatterTimeout is the upper bound for the entire Format() call,
+// including the optional retry, when the caller does not provide its own deadline.
 const responseFormatterTimeout = 30 * time.Second
 
 // responseFormatterMaxInputBytes caps the combined raw response + reasoning
@@ -45,18 +45,19 @@ type formatterResult struct {
 	Recommendations []string `json:"recommendations"`
 }
 
-// validateFormatterResult strips stray code fences, unmarshals the JSON, and
-// validates required fields. Returns the parsed struct and any validation
-// errors; a non-nil struct is guaranteed when the error slice is empty.
+// validateFormatterResult extracts the JSON object from the response, unmarshals
+// it, and validates required fields. Preamble, trailing text, and markdown fences
+// are stripped by scanning for the first '{' and last '}'. Returns the parsed
+// struct and any validation errors; a non-nil struct is guaranteed when the error
+// slice is empty.
 func validateFormatterResult(raw string) (*formatterResult, []string) {
 	s := strings.TrimSpace(raw)
-	if strings.HasPrefix(s, "```") {
-		nl := strings.Index(s, "\n")
-		if nl >= 0 {
-			s = s[nl+1:]
+	// Extract the JSON object by finding the outermost braces so that fences,
+	// preamble, or trailing text the LLM may have added do not cause parse failures.
+	if start := strings.Index(s, "{"); start >= 0 {
+		if end := strings.LastIndex(s, "}"); end > start {
+			s = s[start : end+1]
 		}
-		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
-		s = strings.TrimSpace(s)
 	}
 
 	var r formatterResult

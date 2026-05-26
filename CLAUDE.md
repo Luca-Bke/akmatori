@@ -88,6 +88,9 @@ Rules:
 - skip formatting on explicit error responses
 - preserve raw fallback behavior when worker or LLM formatting fails
 - handler wiring happens via `SetResponseFormatter(...)`
+- the formatter appends `formatterJSONInstruction` to the system prompt and requires the LLM to return a four-key JSON object (`status`, `summary`, `actions_taken`, `recommendations`); `status` must be one of `resolved|unresolved|escalate` exactly; on validation failure one retry is issued with the error messages appended to the user prompt; two consecutive failures fall back to `rawResponse`
+- on success the JSON is rendered to Slack-formatted text via `output.FormatForSlack`; an empty render also falls back to `rawResponse`
+- `DefaultFormattingPrompt` describes field content/tone only — the JSON schema instruction is injected automatically and must not be repeated in the prompt
 
 ### Runbooks and memory search/write
 
@@ -296,7 +299,7 @@ Keep this file aligned with these current realities:
 - runbook and cross-incident memory recall run through pi-mono subagents (`runbook-searcher`, `memory-searcher`); QMD is gone
 - the agent records durable findings via the `memory-writer` subagent; the API re-ingests `akmatori_data/memory/` into Postgres at incident completion
 - fresh Slack skill launches start fresh agent sessions unless the flow explicitly resumes
-- response formatting settings are live and backed by `/api/settings/formatting`
+- response formatting is live (`/api/settings/formatting`); the formatter enforces a four-key JSON contract (`status`, `summary`, `actions_taken`, `recommendations`) with one retry on validation failure, then renders via `output.FormatForSlack` — callers receive Slack-formatted text, not raw LLM output
 - one-shot LLM calls share the worker transport and current provider settings
 - Slack loading banners use real reasoning lines instead of generic placeholder text
 - messaging is now Integrations + Channels; outbound posting routes through `ProviderRegistry`; the legacy `SlackSettings.AlertsChannel` fallback is gone and `/api/settings/slack` returns 410 Gone

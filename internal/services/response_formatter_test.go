@@ -515,11 +515,40 @@ func TestResponseFormatter_RetryOnValidationFailure(t *testing.T) {
 	if !strings.Contains(caller.lastUser, "Return only corrected JSON") {
 		t.Errorf("expected retry user prompt to contain corrective instruction, got %q", caller.lastUser)
 	}
+	if !strings.Contains(caller.lastUser, "raw output") {
+		t.Errorf("expected retry user prompt to contain original raw response, got %q", caller.lastUser)
+	}
 	if !strings.Contains(got, "Resolved") {
 		t.Errorf("expected rendered Slack output after successful retry, got %q", got)
 	}
 	if !strings.Contains(got, "Fixed after retry.") {
 		t.Errorf("expected summary text in rendered output, got %q", got)
+	}
+}
+
+func TestResponseFormatter_FallbackWhenRetryReturnsEmpty(t *testing.T) {
+	setupFormatterTestDB(t)
+	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterLLM(t, defaultLLMForFormatter())
+
+	caller := &fakeOneShotLLMCaller{
+		responses: []func(ctx context.Context) (string, error){
+			func(ctx context.Context) (string, error) {
+				return "not valid json", nil
+			},
+			func(ctx context.Context) (string, error) {
+				return "   ", nil
+			},
+		},
+	}
+
+	f := NewResponseFormatter(caller)
+	got := f.Format(context.Background(), "raw output", "full log")
+	if caller.callCount() != 2 {
+		t.Fatalf("expected 2 LLM calls, got %d", caller.callCount())
+	}
+	if got != "raw output" {
+		t.Errorf("expected raw fallback when retry returns empty, got %q", got)
 	}
 }
 
@@ -646,6 +675,22 @@ func TestValidateFormatterResult(t *testing.T) {
 			raw:      "",
 			wantNil:  true,
 			wantErrs: []string{"invalid JSON"},
+		},
+		{
+			name:     "whitespace-only status",
+			raw:      `{"status":"   ","summary":"ok","actions_taken":[],"recommendations":[]}`,
+			wantNil:  true,
+			wantErrs: []string{`"status" must be a non-empty string`},
+		},
+		{
+			name:     "both required fields empty",
+			raw:      `{"status":"","summary":"","actions_taken":[],"recommendations":[]}`,
+			wantNil:  true,
+			wantErrs: []string{`"status" must be a non-empty string`, `"summary" must be a non-empty string`},
+		},
+		{
+			name: "fenced JSON with trailing text stripped",
+			raw:  "```json\n{\"status\":\"resolved\",\"summary\":\"ok\",\"actions_taken\":[],\"recommendations\":[]}\n```\nSome trailing comment.",
 		},
 	}
 

@@ -278,7 +278,7 @@ const DefaultFormattingPrompt = `You are a senior incident-response writer. Refo
 Use the full reasoning trace as context but base the output on the agent's final response. Do not invent facts that are not supported by the trace.
 
 Field guidance:
-- Status ("status"): one of "resolved", "unresolved", or "escalate" — choose the word that best matches the outcome, optionally followed by a short parenthetical (e.g. "resolved (rolled back at 14:32 UTC)").
+- Status ("status"): one of "resolved", "unresolved", or "escalate" — choose the word that best matches the outcome. Use exactly one of the three values with no additional text.
 - Summary ("summary"): 1-3 sentences describing what happened and the suspected root cause. Be factual and concise; preserve specific identifiers (hosts, services, timestamps, error codes).
 - Actions taken ("actions_taken"): each entry is one concrete step the agent performed. Use past tense. Omit steps with no observable effect. Empty array is valid.
 - Recommendations ("recommendations"): each entry is one actionable next step for a human. Omit if none apply. Empty array is valid.
