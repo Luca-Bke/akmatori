@@ -12,6 +12,14 @@ type AllowlistEntry struct {
 	ToolType    string `json:"tool_type"`
 }
 
+// credentiallessNamespaces lists tool namespaces that carry no per-instance
+// credentials. A type-only AllowlistEntry (InstanceID=0, LogicalName="") acts as
+// a wildcard for all instances only within these namespaces. For every other
+// namespace, callers must authorize a specific instance by ID or logical name.
+var credentiallessNamespaces = map[string]bool{
+	"incidents": true,
+}
+
 // incidentAllowlist stores an allowlist with its expiry time.
 type incidentAllowlist struct {
 	entries   []AllowlistEntry
@@ -108,7 +116,7 @@ func IsAuthorizedFromEntries(entries []AllowlistEntry, toolType string, instance
 
 	if instanceID > 0 && logicalName != "" {
 		for _, e := range entries {
-			if e.ToolType == toolType && ((e.InstanceID == instanceID && e.LogicalName == logicalName) || (e.InstanceID == 0 && e.LogicalName == "")) {
+			if e.ToolType == toolType && ((e.InstanceID == instanceID && e.LogicalName == logicalName) || (e.InstanceID == 0 && e.LogicalName == "" && credentiallessNamespaces[toolType])) {
 				return true
 			}
 		}
@@ -117,7 +125,7 @@ func IsAuthorizedFromEntries(entries []AllowlistEntry, toolType string, instance
 
 	if instanceID > 0 {
 		for _, e := range entries {
-			if e.ToolType == toolType && (e.InstanceID == instanceID || (e.InstanceID == 0 && e.LogicalName == "")) {
+			if e.ToolType == toolType && (e.InstanceID == instanceID || (e.InstanceID == 0 && e.LogicalName == "" && credentiallessNamespaces[toolType])) {
 				return true
 			}
 		}
@@ -126,7 +134,7 @@ func IsAuthorizedFromEntries(entries []AllowlistEntry, toolType string, instance
 
 	if logicalName != "" {
 		for _, e := range entries {
-			if e.ToolType == toolType && (e.LogicalName == logicalName || (e.InstanceID == 0 && e.LogicalName == "")) {
+			if e.ToolType == toolType && (e.LogicalName == logicalName || (e.InstanceID == 0 && e.LogicalName == "" && credentiallessNamespaces[toolType])) {
 				return true
 			}
 		}
@@ -135,10 +143,26 @@ func IsAuthorizedFromEntries(entries []AllowlistEntry, toolType string, instance
 
 	for _, e := range entries {
 		if e.ToolType == toolType {
+			// A type-only entry (InstanceID=0, LogicalName="") is only a valid
+			// wildcard when no instance info is provided AND the namespace is
+			// credentialless. For credentialed tools the server cannot inject a
+			// logical name from a type-only entry, so it would fall back to an
+			// arbitrary enabled instance — not what the allowlist intended.
+			if e.InstanceID == 0 && e.LogicalName == "" && !credentiallessNamespaces[toolType] {
+				continue
+			}
 			return true
 		}
 	}
 	return false
+}
+
+// IsCredentiallessNamespace reports whether toolType is a credentialless namespace.
+// Type-only allowlist entries (InstanceID=0, LogicalName="") are valid wildcards
+// only within these namespaces; callers outside the auth package (e.g., server.go)
+// use this to apply the same scoping to discovery filters.
+func IsCredentiallessNamespace(toolType string) bool {
+	return credentiallessNamespaces[toolType]
 }
 
 // RemoveAllowlist removes the allowlist for an incident.

@@ -1,13 +1,13 @@
 package services
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/akmatori/akmatori/internal/database"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // SSHKeyEntry represents an SSH key without the private key content (for listing)
@@ -194,22 +194,22 @@ func (s *ToolService) EnsureToolTypes() error {
 	if err := s.db.Where("name = ?", "incidents").First(&incidentsType).Error; err != nil {
 		return fmt.Errorf("failed to find incidents tool type: %w", err)
 	}
-	var incidentsInstance database.ToolInstance
-	result := s.db.Where("logical_name = ?", "incidents").First(&incidentsInstance)
-	if result.Error != nil {
-		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("failed to query incidents tool instance: %w", result.Error)
-		}
-		incidentsInstance = database.ToolInstance{
-			ToolTypeID:  incidentsType.ID,
-			Name:        "Incidents",
-			LogicalName: "incidents",
-			Settings:    database.JSONB{},
-			Enabled:     true,
-		}
-		if err := s.db.Create(&incidentsInstance).Error; err != nil {
-			return fmt.Errorf("failed to create incidents tool instance: %w", err)
-		}
+	// Use ON CONFLICT DO NOTHING + re-read to avoid a TOCTOU race: two API processes
+	// starting simultaneously can both find no row and race to insert; one would fail
+	// on the unique (logical_name) constraint with FirstOrCreate. The insert is a
+	// no-op when the row already exists; the subsequent SELECT always reads the winner.
+	incidentsInstance := database.ToolInstance{
+		ToolTypeID:  incidentsType.ID,
+		LogicalName: "incidents",
+		Name:        "Incidents",
+		Settings:    database.JSONB{},
+		Enabled:     true,
+	}
+	if err := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&incidentsInstance).Error; err != nil {
+		return fmt.Errorf("failed to seed incidents tool instance: %w", err)
+	}
+	if err := s.db.Where("logical_name = ?", "incidents").First(&incidentsInstance).Error; err != nil {
+		return fmt.Errorf("failed to read incidents tool instance: %w", err)
 	}
 
 	return nil

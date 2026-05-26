@@ -53,7 +53,7 @@ type listResponse struct {
 // Supported args: from (unix int), to (unix int), status (string), source_kind (string),
 // limit (int, default 50, max 200), offset (int).
 // incidentID is ignored — this tool queries globally.
-func (t *IncidentsTool) List(_ context.Context, _ string, args map[string]interface{}) (interface{}, error) {
+func (t *IncidentsTool) List(ctx context.Context, _ string, args map[string]interface{}) (interface{}, error) {
 	limit := defaultLimit
 	if v, ok := args["limit"]; ok {
 		limit = toInt(v, defaultLimit)
@@ -73,7 +73,7 @@ func (t *IncidentsTool) List(_ context.Context, _ string, args map[string]interf
 		offset = 0
 	}
 
-	q := t.db.Model(&database.Incident{})
+	q := t.db.WithContext(ctx).Model(&database.Incident{})
 
 	if v, ok := args["status"]; ok {
 		if s, ok := v.(string); ok && s != "" {
@@ -157,7 +157,7 @@ type incidentDetail struct {
 // FullLog is truncated to 50,000 bytes if longer.
 // Internal fields (WorkingDir, Context, SlackChannelID, SlackMessageTS) are omitted.
 // incidentID is ignored — this tool queries by the uuid arg.
-func (t *IncidentsTool) Get(_ context.Context, _ string, args map[string]interface{}) (interface{}, error) {
+func (t *IncidentsTool) Get(ctx context.Context, _ string, args map[string]interface{}) (interface{}, error) {
 	uuidVal, ok := args["uuid"]
 	if !ok {
 		return nil, errors.New("uuid is required")
@@ -168,7 +168,7 @@ func (t *IncidentsTool) Get(_ context.Context, _ string, args map[string]interfa
 	}
 
 	var inc database.Incident
-	if err := t.db.Where("uuid = ?", uuidStr).First(&inc).Error; err != nil {
+	if err := t.db.WithContext(ctx).Where("uuid = ?", uuidStr).First(&inc).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.New("incident not found")
 		}

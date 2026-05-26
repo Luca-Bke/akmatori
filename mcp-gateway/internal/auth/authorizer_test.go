@@ -373,6 +373,50 @@ func TestAuthorizer_IncidentsTypeOnlyAllowlist_AuthorizesNamespace(t *testing.T)
 	}
 }
 
+func TestIsAuthorizedFromEntries_TypeOnlyWildcardScopedToCredentialless(t *testing.T) {
+	// A type-only entry (InstanceID=0, LogicalName="") must NOT act as a wildcard
+	// for namespaces that require per-instance credentials (e.g. "ssh").
+	// For credentialed tools, even a no-instance call must be rejected: the server
+	// cannot inject a logical name from a type-only entry, so it would fall back to
+	// an arbitrary enabled instance rather than a specifically authorized one.
+	sshTypeOnly := []AllowlistEntry{
+		{ToolType: "ssh"},
+	}
+
+	// No instance info: must be REJECTED for non-credentialless namespaces — a type-only
+	// entry has no LogicalName, so the server cannot pin to an authorized instance.
+	if IsAuthorizedFromEntries(sshTypeOnly, "ssh", 0, "") {
+		t.Error("type-only ssh entry must not authorize calls with no instance info for non-credentialless namespace")
+	}
+
+	// Specific instanceID: must NOT be bypassed by the type-only entry
+	if IsAuthorizedFromEntries(sshTypeOnly, "ssh", 1, "") {
+		t.Error("type-only ssh entry must not authorize a specific instanceID for non-credentialless namespace")
+	}
+	// Specific logicalName: must NOT be bypassed by the type-only entry
+	if IsAuthorizedFromEntries(sshTypeOnly, "ssh", 0, "prod-ssh") {
+		t.Error("type-only ssh entry must not authorize a specific logicalName for non-credentialless namespace")
+	}
+	// Both instanceID and logicalName: must NOT be bypassed
+	if IsAuthorizedFromEntries(sshTypeOnly, "ssh", 1, "prod-ssh") {
+		t.Error("type-only ssh entry must not authorize instanceID+logicalName for non-credentialless namespace")
+	}
+
+	// Verify incidents (credentialless) still works as wildcard for specific instance info
+	incidentsTypeOnly := []AllowlistEntry{
+		{ToolType: "incidents"},
+	}
+	if !IsAuthorizedFromEntries(incidentsTypeOnly, "incidents", 42, "") {
+		t.Error("type-only incidents entry should still authorize specific instanceID")
+	}
+	if !IsAuthorizedFromEntries(incidentsTypeOnly, "incidents", 0, "incidents") {
+		t.Error("type-only incidents entry should still authorize specific logicalName")
+	}
+	if !IsAuthorizedFromEntries(incidentsTypeOnly, "incidents", 42, "incidents") {
+		t.Error("type-only incidents entry should still authorize instanceID+logicalName")
+	}
+}
+
 func TestAuthorizer_CleanupRemovesExpired(t *testing.T) {
 	a := NewAuthorizer(50 * time.Millisecond)
 	defer a.Stop()

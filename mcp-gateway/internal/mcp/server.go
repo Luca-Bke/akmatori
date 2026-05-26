@@ -631,12 +631,16 @@ func filterToolsByAllowlist(results []ToolListItem, allowlist []auth.AllowlistEn
 		}
 		// Also filter the instance names to only authorized ones
 		if len(item.Instances) > 0 {
-			// Type-only entry (no InstanceID, no LogicalName) authorizes all instances.
+			// Type-only entry (no InstanceID, no LogicalName) authorizes all instances,
+			// but only for credentialless namespaces. For credentialed tools a type-only
+			// entry cannot pinpoint an instance, so it must not expose all instances.
 			typeOnly := false
-			for _, e := range allowlist {
-				if e.ToolType == item.ToolType && e.InstanceID == 0 && e.LogicalName == "" {
-					typeOnly = true
-					break
+			if auth.IsCredentiallessNamespace(item.ToolType) {
+				for _, e := range allowlist {
+					if e.ToolType == item.ToolType && e.InstanceID == 0 && e.LogicalName == "" {
+						typeOnly = true
+						break
+					}
 				}
 			}
 			if !typeOnly {
@@ -665,8 +669,9 @@ func filterInstancesByAllowlist(instances []ToolDetailInstance, toolType string,
 			if e.ToolType != toolType {
 				continue
 			}
-			// Type-only entry (no InstanceID, no LogicalName) authorizes all instances of this type.
-			if e.InstanceID == 0 && e.LogicalName == "" {
+			// Type-only entry (no InstanceID, no LogicalName) authorizes all instances
+			// of this type, but only for credentialless namespaces.
+			if e.InstanceID == 0 && e.LogicalName == "" && auth.IsCredentiallessNamespace(toolType) {
 				filtered = append(filtered, inst)
 				break
 			}
