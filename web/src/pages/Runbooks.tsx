@@ -129,7 +129,7 @@ export default function Runbooks() {
       ) : (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-200 dark:divide-gray-700">
           {runbooks.map((runbook) => (
-            <div key={runbook.id} className="flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-750">
+            <div key={runbook.id} className="flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50">
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">{runbook.title}</h3>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
