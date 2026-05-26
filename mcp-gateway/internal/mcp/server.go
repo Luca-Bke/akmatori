@@ -343,10 +343,13 @@ func (s *Server) handleCallTool(ctx context.Context, req *Request, incidentID st
 							break
 						}
 					}
-				} else if instanceID == 0 && logicalName == "" {
+				} else if instanceID == 0 && logicalName == "" && !auth.IsCredentiallessNamespace(toolType) {
 					// Neither instance ID nor logical name provided — inject the
 					// first authorized instance's logical name to prevent fallback
 					// to an arbitrary enabled instance that may not be in the allowlist.
+					// Skip this for credentialless namespaces (e.g. "incidents"): their
+					// type-only allowlist entry is intentionally without credentials,
+					// and the handler queries the DB directly without instance routing.
 					for _, e := range entries {
 						if e.ToolType == toolType && e.LogicalName != "" {
 							params.Arguments["logical_name"] = e.LogicalName

@@ -1270,6 +1270,44 @@ func TestHandleGetToolDetail_TypeOnlyAllowlist_AuthorizesAllInstances(t *testing
 	}
 }
 
+func TestHandleCallTool_TypeOnlyAllowlist_IncidentsAuthorized(t *testing.T) {
+	s := newTestServer()
+	authorizer := auth.NewAuthorizer(time.Hour)
+	defer authorizer.Stop()
+	s.SetAuthorizer(authorizer)
+
+	var called bool
+	s.RegisterTool(Tool{
+		Name:        "incidents.list",
+		Description: "List incidents",
+		InputSchema: InputSchema{Type: "object"},
+	}, func(_ context.Context, _ string, _ map[string]interface{}) (interface{}, error) {
+		called = true
+		return `{"incidents":[],"returned":0,"limit":50,"offset":0}`, nil
+	})
+
+	// Type-only entry: no InstanceID, no LogicalName — valid wildcard for credentialless namespace.
+	allowlist := []auth.AllowlistEntry{
+		{ToolType: "incidents"},
+	}
+	allowlistJSON, _ := json.Marshal(allowlist)
+
+	resp := sendJSONRPCWithHeaders(t, s, "tools/call",
+		CallToolParams{Name: "incidents.list", Arguments: map[string]interface{}{}},
+		map[string]string{
+			"X-Incident-ID":    "incident-typeonly-call",
+			"X-Tool-Allowlist": string(allowlistJSON),
+		},
+	)
+
+	if resp.Error != nil {
+		t.Fatalf("expected type-only incidents allowlist to authorize call, got error: %s", resp.Error.Message)
+	}
+	if !called {
+		t.Fatal("expected handler to be called")
+	}
+}
+
 // --- tools/list_types tests ---
 
 func TestHandleListToolTypes_ReturnsTypes(t *testing.T) {

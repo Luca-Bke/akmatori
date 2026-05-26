@@ -629,6 +629,15 @@ func TestGenerateToolUsageExample_NewToolTypes(t *testing.T) {
 				"`container` is required for multi-container pods",
 			},
 		},
+		{
+			toolType:    "incidents",
+			logicalName: "incidents",
+			expectMethods: []string{
+				"incidents.list",
+				"incidents.get",
+			},
+			expectRequired: []string{"uuid*"},
+		},
 	}
 
 	for _, tc := range cases {
