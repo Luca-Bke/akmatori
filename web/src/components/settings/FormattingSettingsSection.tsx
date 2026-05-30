@@ -84,7 +84,7 @@ export default function FormattingSettingsSection({ onStatusChange }: Formatting
   };
 
   const handleResetSchema = () => {
-    setOutputSchemaExample('');
+    setOutputSchemaExample(DEFAULT_OUTPUT_SCHEMA_EXAMPLE);
     setSchemaJsonError(null);
   };
 

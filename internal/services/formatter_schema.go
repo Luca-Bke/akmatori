@@ -229,29 +229,6 @@ func checkLaterObjectCompatibility(firstChildren, laterChildren []fieldSpec, arr
 	return nil
 }
 
-// skipUntilArrayClose consumes tokens until the matching ']' is reached,
-// tracking depth for any nested objects or arrays within the elements.
-func skipUntilArrayClose(dec *json.Decoder) error {
-	depth := 0
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return err
-		}
-		if d, ok := tok.(json.Delim); ok {
-			switch d {
-			case '{', '[':
-				depth++
-			case '}', ']':
-				if depth == 0 {
-					return nil
-				}
-				depth--
-			}
-		}
-	}
-}
-
 // buildSchemaInstruction returns the JSON schema instruction to append to the
 // system prompt. It pretty-prints the operator example (preserving key order)
 // and wraps it in the "Return ONLY a single JSON object" directive.

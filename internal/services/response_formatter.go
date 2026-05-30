@@ -78,25 +78,28 @@ func (f *ResponseFormatter) Format(ctx context.Context, rawResponse, fullLog str
 		return rawResponse
 	}
 
-	// The settings UI advertises "leave blank to use the default prompt"; honor
-	// that here by falling back to DefaultFormattingPrompt when the operator
-	// saved an empty/whitespace value. Disabling the formatter entirely is
-	// expressed via Enabled=false, not via a blank prompt.
-	// Also treat the exact legacy default (pre-schema-feature) as blank so
-	// upgraded installs do not mix stale field-specific guidance with a
-	// custom OutputSchemaExample's schema instruction.
-	systemPrompt := strings.TrimSpace(settings.SystemPrompt)
-	if systemPrompt == "" || database.IsLegacyDefaultFormattingPrompt(systemPrompt) {
-		systemPrompt = strings.TrimSpace(database.DefaultFormattingPrompt)
-		if systemPrompt == "" {
-			return rawResponse
-		}
-	}
-
+	// Resolve the schema example first so we know whether a custom schema is
+	// active before deciding whether to replace the legacy prompt.
 	example := strings.TrimSpace(settings.OutputSchemaExample)
 	usingDefaultSchema := example == ""
 	if example == "" {
 		example = defaultSchemaExample
+	}
+
+	// The settings UI advertises "leave blank to use the default prompt"; honor
+	// that here by falling back to DefaultFormattingPrompt when the operator
+	// saved an empty/whitespace value. Disabling the formatter entirely is
+	// expressed via Enabled=false, not via a blank prompt.
+	// Also replace the exact legacy default when a custom schema is in use so
+	// that stale field-specific guidance does not conflict with the injected
+	// schema instruction. When using the built-in default schema, the legacy
+	// prompt's field guidance is still valid and is kept as-is.
+	systemPrompt := strings.TrimSpace(settings.SystemPrompt)
+	if systemPrompt == "" || (!usingDefaultSchema && database.IsLegacyDefaultFormattingPrompt(systemPrompt)) {
+		systemPrompt = strings.TrimSpace(database.DefaultFormattingPrompt)
+		if systemPrompt == "" {
+			return rawResponse
+		}
 	}
 
 	specs, err := inferSchema(example)
