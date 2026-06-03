@@ -93,64 +93,90 @@ func (a *ZabbixAdapter) parseAlert(payload ZabbixPayload, rawFields map[string]i
 	payloadMap["event_status"] = payload.EventStatus
 	payloadMap["runbook_url"] = payload.RunbookURL
 
-	// Map Zabbix priority to severity
-	severity := a.mapPriorityToSeverity(payload.Priority)
+	alertName := alerts.ExtractString(payloadMap, getMapping(mappings, "alert_name"))
+	if alertName == "" {
+		alertName = payload.AlertName
+	}
 
-	// Determine status
-	status := database.AlertStatusFiring
-	if payload.EventStatus == "RESOLVED" || payload.EventStatus == "OK" {
-		status = database.AlertStatusResolved
+	severityText := alerts.ExtractString(payloadMap, getMapping(mappings, "severity"))
+	if severityText == "" {
+		severityText = payload.Priority
+	}
+	severity := alerts.NormalizeSeverity(severityText, alerts.DefaultSeverityMapping)
+
+	statusText := alerts.ExtractString(payloadMap, getMapping(mappings, "status"))
+	if statusText == "" {
+		statusText = payload.EventStatus
+	}
+	status := alerts.NormalizeStatus(statusText)
+
+	summary := alerts.ExtractString(payloadMap, getMapping(mappings, "summary"))
+	if summary == "" {
+		summary = payload.TriggerExpression
+	}
+
+	targetHost := alerts.ExtractString(payloadMap, getMapping(mappings, "target_host"))
+	if targetHost == "" {
+		targetHost = payload.Hardware
+	}
+
+	metricName := alerts.ExtractString(payloadMap, getMapping(mappings, "metric_name"))
+	if metricName == "" {
+		metricName = payload.MetricName
+	}
+
+	metricValue := alerts.ExtractString(payloadMap, getMapping(mappings, "metric_value"))
+	if metricValue == "" {
+		metricValue = payload.MetricValue
+	}
+
+	runbookURL := alerts.ExtractString(payloadMap, getMapping(mappings, "runbook_url"))
+	if runbookURL == "" {
+		runbookURL = payload.RunbookURL
+	}
+
+	sourceAlertID := alerts.ExtractString(payloadMap, getMapping(mappings, "source_alert_id"))
+	if sourceAlertID == "" {
+		sourceAlertID = payload.EventID
 	}
 
 	// Parse event time
 	var startedAt *time.Time
-	if payload.EventTime != "" {
-		if t, err := time.Parse("2006-01-02 15:04:05", payload.EventTime); err == nil {
+	startedAtText := alerts.ExtractString(payloadMap, getMapping(mappings, "started_at"))
+	if startedAtText == "" {
+		startedAtText = payload.EventTime
+	}
+	if startedAtText != "" {
+		if t, err := time.Parse("2006-01-02 15:04:05", startedAtText); err == nil {
 			startedAt = &t
-		} else if t, err := time.Parse(time.RFC3339, payload.EventTime); err == nil {
+		} else if t, err := time.Parse(time.RFC3339, startedAtText); err == nil {
 			startedAt = &t
 		}
 	}
 
 	// Build target labels
 	targetLabels := map[string]string{
-		"hardware":           payload.Hardware,
+		"hardware":           targetHost,
 		"trigger_expression": payload.TriggerExpression,
 		"pending_duration":   payload.PendingDuration,
 	}
 
 	return alerts.NormalizedAlert{
-		AlertName:         payload.AlertName,
+		AlertName:         alertName,
 		Severity:          severity,
 		Status:            status,
-		Summary:           payload.TriggerExpression,
-		Description:       fmt.Sprintf("Metric: %s = %s\nTrigger: %s", payload.MetricName, payload.MetricValue, payload.TriggerExpression),
-		TargetHost:        payload.Hardware,
+		Summary:           summary,
+		Description:       fmt.Sprintf("Metric: %s = %s\nTrigger: %s", metricName, metricValue, summary),
+		TargetHost:        targetHost,
 		TargetService:     "",
 		TargetLabels:      targetLabels,
-		MetricName:        payload.MetricName,
-		MetricValue:       payload.MetricValue,
-		RunbookURL:        payload.RunbookURL,
+		MetricName:        metricName,
+		MetricValue:       metricValue,
+		RunbookURL:        runbookURL,
 		StartedAt:         startedAt,
-		SourceAlertID:     payload.EventID,
-		SourceFingerprint: payload.EventID,
+		SourceAlertID:     sourceAlertID,
+		SourceFingerprint: sourceAlertID,
 		RawPayload:        payloadMap,
-	}
-}
-
-// mapPriorityToSeverity maps Zabbix priority (1-5) to normalized severity
-func (a *ZabbixAdapter) mapPriorityToSeverity(priority string) database.AlertSeverity {
-	switch priority {
-	case "5": // Disaster
-		return database.AlertSeverityCritical
-	case "4": // High
-		return database.AlertSeverityHigh
-	case "3": // Average
-		return database.AlertSeverityWarning
-	case "2", "1": // Warning, Information
-		return database.AlertSeverityInfo
-	default:
-		return database.AlertSeverityWarning
 	}
 }
 

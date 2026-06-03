@@ -351,6 +351,87 @@ func TestZabbixAdapter_ParsePayload_ExtraFieldsPreserved(t *testing.T) {
 	}
 }
 
+func TestZabbixAdapter_ParsePayload_CustomFieldMappings(t *testing.T) {
+	adapter := NewZabbixAdapter()
+	instance := &database.AlertSourceInstance{
+		FieldMappings: database.JSONB{
+			"alert_name":      "custom_name",
+			"severity":        "custom_severity",
+			"status":          "custom_status",
+			"summary":         "custom_summary",
+			"target_host":     "custom_host",
+			"metric_name":     "custom_metric",
+			"metric_value":    "custom_value",
+			"runbook_url":     "custom_runbook",
+			"source_alert_id": "custom_event_id",
+			"started_at":      "custom_started_at",
+		},
+	}
+
+	payload := []byte(`{
+		"event_time": "2024-01-15 10:30:00",
+		"alert_name": "Default Zabbix Name",
+		"priority": "3",
+		"event_status": "PROBLEM",
+		"event_id": "default-event-id",
+		"hardware": "default-host",
+		"metric_name": "default.metric",
+		"metric_value": "10",
+		"trigger_expression": "default.metric>10",
+		"runbook_url": "https://runbooks.example.com/default",
+		"custom_name": "Mapped API Latency",
+		"custom_severity": "critical",
+		"custom_status": "OK",
+		"custom_summary": "p95 latency recovered",
+		"custom_host": "api-01",
+		"custom_metric": "http.latency.p95",
+		"custom_value": "1200",
+		"custom_runbook": "https://runbooks.example.com/api-latency",
+		"custom_event_id": "zbx-custom-42",
+		"custom_started_at": "2024-02-03T04:05:06Z"
+	}`)
+
+	alerts, err := adapter.ParsePayload(payload, instance)
+	if err != nil {
+		t.Fatalf("ParsePayload returned error: %v", err)
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("Expected 1 alert, got %d", len(alerts))
+	}
+
+	alert := alerts[0]
+	if alert.AlertName != "Mapped API Latency" {
+		t.Errorf("Expected mapped AlertName, got %q", alert.AlertName)
+	}
+	if alert.Severity != database.AlertSeverityCritical {
+		t.Errorf("Expected mapped critical severity, got %q", alert.Severity)
+	}
+	if alert.Status != database.AlertStatusResolved {
+		t.Errorf("Expected mapped resolved status, got %q", alert.Status)
+	}
+	if alert.Summary != "p95 latency recovered" {
+		t.Errorf("Expected mapped Summary, got %q", alert.Summary)
+	}
+	if alert.TargetHost != "api-01" {
+		t.Errorf("Expected mapped TargetHost, got %q", alert.TargetHost)
+	}
+	if alert.MetricName != "http.latency.p95" {
+		t.Errorf("Expected mapped MetricName, got %q", alert.MetricName)
+	}
+	if alert.MetricValue != "1200" {
+		t.Errorf("Expected mapped MetricValue, got %q", alert.MetricValue)
+	}
+	if alert.RunbookURL != "https://runbooks.example.com/api-latency" {
+		t.Errorf("Expected mapped RunbookURL, got %q", alert.RunbookURL)
+	}
+	if alert.SourceAlertID != "zbx-custom-42" || alert.SourceFingerprint != "zbx-custom-42" {
+		t.Errorf("Expected mapped source IDs, got id=%q fingerprint=%q", alert.SourceAlertID, alert.SourceFingerprint)
+	}
+	if alert.StartedAt == nil || alert.StartedAt.Format("2006-01-02T15:04:05Z") != "2024-02-03T04:05:06Z" {
+		t.Errorf("Expected mapped StartedAt, got %v", alert.StartedAt)
+	}
+}
+
 func TestZabbixAdapter_ParsePayload_Description(t *testing.T) {
 	adapter := NewZabbixAdapter()
 	instance := &database.AlertSourceInstance{}
