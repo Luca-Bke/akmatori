@@ -93,6 +93,7 @@ Rules:
 - the formatter builds `systemPrompt = operatorPrompt + buildSchemaInstruction(example)`, calls the LLM, unmarshals the response to `map[string]any`, and validates with `validateAgainstSpecs`; on failure the error list is appended to the user prompt and the call is retried once; two consecutive failures fall back to `rawResponse`
 - on success the parsed map is rendered to Slack mrkdwn via `output.RenderForSlack(parsed, specs)` in `internal/output/schema_render.go`; an empty render also falls back to `rawResponse`
 - `DefaultFormattingPrompt` describes field content/tone only — the JSON schema instruction is injected automatically via `buildSchemaInstruction` and must not be repeated in the prompt
+- the web settings form pre-fills editable defaults for the system prompt and output schema with `hydrateField`, then `dehydrateField` persists unchanged defaults as empty strings; this keeps backend built-in fallback constraints authoritative
 - `output.FormatForSlack` is unchanged and used by other callers; do not remove it
 
 ### Runbooks and memory search/write
@@ -217,6 +218,11 @@ Rules:
 - `agent-worker/src/gateway-tools.ts` - tool registration and `gateway_call`
 - `agent-worker/src/tool-output-formatter.ts` - streamed tool formatting
 
+### Frontend
+
+- `web/src/components/settings/FormattingSettingsSection.tsx` - response formatter settings form and validation
+- `web/src/components/settings/formattingSettingsHelpers.ts` - formatter default hydrate/dehydrate helpers; keep constants aligned with Go defaults
+
 ## Code Patterns
 
 ### Prefer interfaces at handler boundaries
@@ -305,6 +311,7 @@ Keep this file aligned with these current realities:
 - the agent records durable findings via the `memory-writer` subagent; the API re-ingests `akmatori_data/memory/` into Postgres at incident completion
 - fresh Slack skill launches start fresh agent sessions unless the flow explicitly resumes
 - response formatting is live (`/api/settings/formatting`); operators paste an example JSON object into `OutputSchemaExample` to control the output shape; schema inference derives field types and order; the formatter validates with one retry then renders via `output.RenderForSlack`; empty `OutputSchemaExample` falls back to the built-in four-key default (`status`/`summary`/`actions_taken`/`recommendations`) so existing installs are unaffected
+- the formatting settings UI now shows editable default prompt/schema text even when the stored values are empty; saving unchanged defaults must continue to send empty strings so upgrades keep using backend defaults
 - one-shot LLM calls share the worker transport and current provider settings
 - Slack loading banners use real reasoning lines instead of generic placeholder text
 - messaging is now Integrations + Channels; outbound posting routes through `ProviderRegistry`; the legacy `SlackSettings.AlertsChannel` fallback is gone and `/api/settings/slack` returns 410 Gone
