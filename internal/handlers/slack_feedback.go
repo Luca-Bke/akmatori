@@ -44,8 +44,9 @@ func (a slackFeedbackAcker) PostThreadText(channel, threadTS, text string) error
 // maybeCaptureSlackFeedback runs the LLM-backed classifier against a single
 // non-mention thread reply on an incident thread. When the classifier is
 // confident the reply is operator feedback, it persists a Memory and
-// acknowledges with a reaction + brief threaded confirmation. Stays silent
-// on negatives so we don't spam non-feedback chatter.
+// acknowledges with the 👍 reaction only — Akmatori must not post text into a
+// thread unless explicitly @mentioned. Stays silent on negatives so we don't
+// spam non-feedback chatter.
 //
 // All branches are intentionally fire-and-forget — Slack's Socket Mode
 // handler thread cannot afford to block on an LLM round-trip.
