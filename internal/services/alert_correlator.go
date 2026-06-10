@@ -206,7 +206,7 @@ func buildCorrelationUserPrompt(alert alerts.NormalizedAlert, candidates []candi
 		sb.WriteString(fmt.Sprintf("  Host: %s\n", truncateForPrompt(sanitizeForPrompt(alert.TargetHost), snippetCap)))
 	}
 	if alert.Summary != "" {
-		sb.WriteString(fmt.Sprintf("  Summary: %s\n", truncateForPrompt(alert.Summary, snippetCap)))
+		sb.WriteString(fmt.Sprintf("  Summary: %s\n", truncateForPrompt(sanitizeForPrompt(alert.Summary), snippetCap)))
 	}
 
 	sb.WriteString("\nCandidate incidents (most recent first):\n")
@@ -218,18 +218,18 @@ func buildCorrelationUserPrompt(alert alerts.NormalizedAlert, candidates []candi
 			title = "(no title yet)"
 		}
 
-		snippet := truncateForPrompt(strings.TrimSpace(cand.Response), snippetCap)
+		snippet := truncateForPrompt(sanitizeForPrompt(strings.TrimSpace(cand.Response)), snippetCap)
 		if snippet == "" {
 			// Fall back to context summary if no response yet.
 			if v, ok := cand.Context["summary"]; ok {
 				if s, ok := v.(string); ok {
-					snippet = truncateForPrompt(s, snippetCap)
+					snippet = truncateForPrompt(sanitizeForPrompt(s), snippetCap)
 				}
 			}
 		}
 
 		sb.WriteString(fmt.Sprintf("\n%d. UUID: %s\n   Status: %s | Age: %s\n   Title: %s\n",
-			i+1, cand.UUID, cand.Status, age, title))
+			i+1, cand.UUID, cand.Status, age, sanitizeForPrompt(title)))
 		if snippet != "" {
 			sb.WriteString(fmt.Sprintf("   Snippet: %s\n", snippet))
 		}

@@ -145,7 +145,11 @@ type UpdateProxySettingsRequest struct {
 
 // UpdateGeneralSettingsRequest is the request body for PUT /api/settings/general.
 type UpdateGeneralSettingsRequest struct {
-	BaseURL *string `json:"base_url"`
+	BaseURL                         *string  `json:"base_url"`
+	AlertCorrelationEnabled         *bool    `json:"alert_correlation_enabled"`
+	AlertCorrelationWindowMinutes   *int     `json:"alert_correlation_window_minutes"`
+	AlertCorrelationThreshold       *float64 `json:"alert_correlation_threshold"`
+	AlertCorrelationMaxCandidates   *int     `json:"alert_correlation_max_candidates"`
 }
 
 // UpdateRetentionSettingsRequest is the request body for PUT /api/settings/retention.

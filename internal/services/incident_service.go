@@ -13,6 +13,7 @@ import (
 	"github.com/akmatori/akmatori/internal/database"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // IncidentContext contains context for spawning an incident manager
@@ -323,7 +324,7 @@ func (s *SkillService) AppendSubagentLog(incidentUUID string, skillName string, 
 func (s *SkillService) AppendCorrelatedAlert(ctx context.Context, sourceUUID string, incidentUUID string, alert alerts.NormalizedAlert, confidence float64, reasoning string, at time.Time) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var incident database.Incident
-		if err := tx.Where("uuid = ?", incidentUUID).First(&incident).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("uuid = ?", incidentUUID).First(&incident).Error; err != nil {
 			return fmt.Errorf("AppendCorrelatedAlert: load incident: %w", err)
 		}
 
