@@ -49,8 +49,8 @@ func (h *APIHandler) handleGeneralSettings(w http.ResponseWriter, r *http.Reques
 			settings.AlertCorrelationWindowMinutes = req.AlertCorrelationWindowMinutes
 		}
 		if req.AlertCorrelationThreshold != nil {
-			if *req.AlertCorrelationThreshold < 0 || *req.AlertCorrelationThreshold > 1 {
-				api.RespondError(w, http.StatusBadRequest, "alert_correlation_threshold must be between 0 and 1")
+			if *req.AlertCorrelationThreshold <= 0 || *req.AlertCorrelationThreshold > 1 {
+				api.RespondError(w, http.StatusBadRequest, "alert_correlation_threshold must be greater than 0 and at most 1")
 				return
 			}
 			settings.AlertCorrelationThreshold = req.AlertCorrelationThreshold

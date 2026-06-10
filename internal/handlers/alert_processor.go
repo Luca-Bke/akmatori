@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,10 +30,13 @@ import (
 const originalAlertTextMaxBytes = 1500
 
 // alertSpawnKey returns a stable singleflight key for deduplicating concurrent
-// alerts with the same origin tuple. SHA-256 is used to produce a fixed-length
-// key that can contain any character without escaping issues.
-func alertSpawnKey(sourceUUID, alertName, targetHost string) string {
-	h := sha256.Sum256([]byte(sourceUUID + "|" + alertName + "|" + targetHost))
+// alerts with the same origin tuple. The tuple is JSON-encoded before hashing
+// to prevent delimiter collisions when fields contain "|". SourceFingerprint
+// distinguishes alert instances that share a name and host but differ in their
+// label set (e.g. two Alertmanager rules on the same host with different jobs).
+func alertSpawnKey(sourceUUID, alertName, targetHost, fingerprint string) string {
+	tuple, _ := json.Marshal([]string{sourceUUID, alertName, targetHost, fingerprint})
+	h := sha256.Sum256(tuple)
 	return hex.EncodeToString(h[:])
 }
 
@@ -84,7 +88,7 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 		Message: fmt.Sprintf("%s - %s: %s", normalized.AlertName, normalized.TargetHost, normalized.Summary),
 	}
 
-	key := alertSpawnKey(instance.UUID, normalized.AlertName, normalized.TargetHost)
+	key := alertSpawnKey(instance.UUID, normalized.AlertName, normalized.TargetHost, normalized.SourceFingerprint)
 	isLeader := false
 
 	v, sfErr, _ := h.spawnGroup.Do(key, func() (interface{}, error) {
@@ -222,7 +226,7 @@ func (h *AlertHandler) ProcessAlertFromListenerChannel(
 		Message: fmt.Sprintf("%s - %s: %s", normalized.AlertName, normalized.TargetHost, normalized.Summary),
 	}
 
-	key := alertSpawnKey(channel.UUID, normalized.AlertName, normalized.TargetHost)
+	key := alertSpawnKey(channel.UUID, normalized.AlertName, normalized.TargetHost, normalized.SourceFingerprint)
 	isLeader := false
 
 	v, sfErr, _ := h.spawnGroup.Do(key, func() (interface{}, error) {

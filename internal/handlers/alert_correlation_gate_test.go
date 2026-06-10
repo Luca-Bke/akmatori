@@ -444,24 +444,47 @@ func TestAlertHandler_SetAlertCorrelator_NilSafe(t *testing.T) {
 // TestAlertSpawnKey verifies the key function produces stable output for
 // known inputs and distinct keys for distinct inputs.
 func TestAlertSpawnKey(t *testing.T) {
-	k1 := alertSpawnKey("src-1", "CPUHigh", "web01")
-	k2 := alertSpawnKey("src-1", "CPUHigh", "web01")
+	k1 := alertSpawnKey("src-1", "CPUHigh", "web01", "fp1")
+	k2 := alertSpawnKey("src-1", "CPUHigh", "web01", "fp1")
 	if k1 != k2 {
 		t.Error("alertSpawnKey must be deterministic")
 	}
 
-	k3 := alertSpawnKey("src-2", "CPUHigh", "web01")
+	k3 := alertSpawnKey("src-2", "CPUHigh", "web01", "fp1")
 	if k1 == k3 {
 		t.Error("different sourceUUID must produce different key")
 	}
 
-	k4 := alertSpawnKey("src-1", "DiskFull", "web01")
+	k4 := alertSpawnKey("src-1", "DiskFull", "web01", "fp1")
 	if k1 == k4 {
 		t.Error("different alertName must produce different key")
 	}
 
-	k5 := alertSpawnKey("src-1", "CPUHigh", "web02")
+	k5 := alertSpawnKey("src-1", "CPUHigh", "web02", "fp1")
 	if k1 == k5 {
 		t.Error("different targetHost must produce different key")
+	}
+
+	// Different fingerprints on same name+host must be distinct keys.
+	k6 := alertSpawnKey("src-1", "CPUHigh", "web01", "fp2")
+	if k1 == k6 {
+		t.Error("different fingerprint must produce different key")
+	}
+
+	// Empty fingerprint is stable and distinct from a non-empty one.
+	k7 := alertSpawnKey("src-1", "CPUHigh", "web01", "")
+	if k7 == k1 {
+		t.Error("empty fingerprint must differ from non-empty fingerprint key")
+	}
+	k8 := alertSpawnKey("src-1", "CPUHigh", "web01", "")
+	if k7 != k8 {
+		t.Error("empty fingerprint must be deterministic")
+	}
+
+	// Delimiter collision: ("A|B","C") must not equal ("A","B|C").
+	kPipe1 := alertSpawnKey("src", "A|B", "C", "")
+	kPipe2 := alertSpawnKey("src", "A", "B|C", "")
+	if kPipe1 == kPipe2 {
+		t.Error("delimiter collision: alertName with '|' must not collide with different (alertName, targetHost) split")
 	}
 }
