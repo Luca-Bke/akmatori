@@ -222,10 +222,11 @@ func (c *AlertCorrelator) fetchCandidates(ctx context.Context, fingerprint strin
 		Model(&database.Incident{}).
 		Select("uuid, title, status, response, context, started_at, alert_fingerprint").
 		Where("source_kind = ? AND started_at >= ? AND status IN ?",
-			database.IncidentSourceKindAlert, windowStart, activeStatuses)
+			database.IncidentSourceKindAlert, windowStart, activeStatuses).
+		Where("NOT EXISTS (SELECT 1 FROM alert_suppression_logs WHERE incident_uuid = uuid)")
 
 	if fingerprint != "" {
-		q = q.Where("alert_fingerprint = ? OR alert_fingerprint = ''", fingerprint)
+		q = q.Where("alert_fingerprint = ? OR alert_fingerprint = '' OR alert_fingerprint IS NULL", fingerprint)
 	}
 
 	err := q.Order("started_at DESC").

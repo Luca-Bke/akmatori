@@ -148,6 +148,7 @@ func setupCorrelatorHandlerDB(t *testing.T) *gorm.DB {
 		&database.Incident{},
 		&database.LLMSettings{},
 		&database.AlertCorrelationLog{},
+		&database.AlertSuppressionLog{},
 		&database.SlackSettings{},
 		&database.GeneralSettings{},
 	)

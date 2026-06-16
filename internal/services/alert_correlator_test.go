@@ -26,6 +26,7 @@ func setupCorrelatorDB(t *testing.T) *gorm.DB {
 		&database.Incident{},
 		&database.LLMSettings{},
 		&database.GeneralSettings{},
+		&database.AlertSuppressionLog{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}

@@ -304,6 +304,9 @@ func (h *AlertHandler) ProcessAlertFromListenerChannel(
 			if suppRecordErr != nil {
 				slog.Error("failed to record suppressed incident, spawning normally", "err", suppRecordErr)
 			} else {
+				if err := h.updateIncidentSlackContext(incidentUUID, slackChannelID, slackMessageTS); err != nil {
+					slog.Warn("failed to update suppressed incident Slack context", "err", err)
+				}
 				h.updateSlackChannelReactions(slackChannelID, slackMessageTS, false)
 				h.postSlackThreadReply(slackChannelID, slackMessageTS,
 					fmt.Sprintf("Alert suppressed (matched signature: %s). No investigation needed.", suppVerdict.SignatureName))
