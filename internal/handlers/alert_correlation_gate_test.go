@@ -90,6 +90,9 @@ func (s *corrGateSkillService) UpdateIncidentComplete(string, database.IncidentS
 func (s *corrGateSkillService) UpdateIncidentLog(string, string) error        { return nil }
 func (s *corrGateSkillService) GetIncident(string) (*database.Incident, error) { return nil, nil }
 func (s *corrGateSkillService) AppendSubagentLog(string, string, string) error { return nil }
+func (s *corrGateSkillService) RecordSuppressedIncident(*services.IncidentContext, string, string, float64) (string, error) {
+	return "", nil
+}
 func (s *corrGateSkillService) CreateSkill(string, string, string, string) (*database.Skill, error) {
 	return nil, nil
 }

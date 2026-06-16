@@ -109,6 +109,25 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 			return verdict.IncidentUUID, nil
 		}
 
+		// Suppression gate: check if this is a known false positive before spawning.
+		suppVerdict, suppErr := h.suppress(context.Background(), normalized)
+		if suppErr != nil {
+			if errors.Is(suppErr, services.ErrWorkerNotConnected) {
+				slog.Debug("alert suppressor worker not connected, spawning new incident")
+			} else {
+				slog.Warn("alert suppressor error, spawning new incident", "err", suppErr)
+			}
+		}
+		if suppVerdict.IsConfident(h.suppressionThreshold()) {
+			slog.Info("alert suppressed as known false positive", "signature", suppVerdict.SignatureName, "confidence", suppVerdict.Confidence)
+			incidentUUID, suppRecordErr := h.skillService.RecordSuppressedIncident(incidentCtx, suppVerdict.SignatureName, suppVerdict.Reasoning, suppVerdict.Confidence)
+			if suppRecordErr != nil {
+				slog.Error("failed to record suppressed incident, spawning normally", "err", suppRecordErr)
+			} else {
+				return incidentUUID, nil
+			}
+		}
+
 		// Spawn incident manager
 		incidentUUID, _, err := h.skillService.SpawnIncidentManager(incidentCtx)
 		if err != nil {
@@ -248,6 +267,28 @@ func (h *AlertHandler) ProcessAlertFromListenerChannel(
 			h.postSlackThreadReply(slackChannelID, slackMessageTS,
 				fmt.Sprintf("Alert merged into existing incident (ID: %s)", verdict.IncidentUUID))
 			return verdict.IncidentUUID, nil
+		}
+
+		// Suppression gate: check if this is a known false positive before spawning.
+		suppVerdict, suppErr := h.suppress(context.Background(), normalized)
+		if suppErr != nil {
+			if errors.Is(suppErr, services.ErrWorkerNotConnected) {
+				slog.Debug("alert suppressor worker not connected, spawning new incident")
+			} else {
+				slog.Warn("alert suppressor error, spawning new incident", "err", suppErr)
+			}
+		}
+		if suppVerdict.IsConfident(h.suppressionThreshold()) {
+			slog.Info("listener channel alert suppressed as known false positive", "signature", suppVerdict.SignatureName, "confidence", suppVerdict.Confidence)
+			incidentUUID, suppRecordErr := h.skillService.RecordSuppressedIncident(incidentCtx, suppVerdict.SignatureName, suppVerdict.Reasoning, suppVerdict.Confidence)
+			if suppRecordErr != nil {
+				slog.Error("failed to record suppressed incident, spawning normally", "err", suppRecordErr)
+			} else {
+				h.updateSlackChannelReactions(slackChannelID, slackMessageTS, false)
+				h.postSlackThreadReply(slackChannelID, slackMessageTS,
+					fmt.Sprintf("Alert suppressed (matched signature: %s). No investigation needed.", suppVerdict.SignatureName))
+				return incidentUUID, nil
+			}
 		}
 
 		// Spawn incident manager

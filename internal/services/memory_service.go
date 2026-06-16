@@ -845,7 +845,7 @@ func (s *MemoryService) upsertByNameNoSync(m *database.Memory) (*database.Memory
 	if err := s.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "scope"}, {Name: "name"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"type", "description", "body", "incident_uuid", "updated_at",
+			"type", "description", "body", "incident_uuid", "suppress", "updated_at",
 		}),
 	}).Create(m).Error; err != nil {
 		return nil, fmt.Errorf("failed to upsert memory: %w", err)
@@ -925,6 +925,7 @@ func parseMemoryFile(data []byte, scope string) (*database.Memory, bool, error) 
 		Body:         body,
 		IncidentUUID: strings.TrimSpace(fm.IncidentUUID),
 		CreatedBy:    strings.TrimSpace(fm.CreatedBy),
+		Suppress:     fm.Suppress,
 	}, false, nil
 }
 
@@ -972,6 +973,10 @@ func stripBodyHeader(body, name, description string) string {
 // asked to remove a memory (Action: delete <slug>). IngestFromDisk uses that
 // marker to delete the corresponding DB row and clean up both the bare
 // `<name>.md` tombstone and the canonical `<id>-<name>.md` snapshot.
+//
+// The Suppress field marks this memory as a known false-positive suppression
+// signature. The alert suppressor queries memories with suppress=true and uses
+// their body as pattern descriptions for the LLM matching call.
 type memoryFrontmatter struct {
 	Name         string `yaml:"name"`
 	Description  string `yaml:"description,omitempty"`
@@ -980,6 +985,7 @@ type memoryFrontmatter struct {
 	IncidentUUID string `yaml:"incident_uuid,omitempty"`
 	CreatedBy    string `yaml:"created_by,omitempty"`
 	Deleted      bool   `yaml:"deleted,omitempty"`
+	Suppress     bool   `yaml:"suppress,omitempty"`
 }
 
 // renderMemoryFile produces the full markdown body for a single memory file.
@@ -995,6 +1001,7 @@ func renderMemoryFile(m database.Memory) string {
 		Scope:        m.Scope,
 		IncidentUUID: m.IncidentUUID,
 		CreatedBy:    m.CreatedBy,
+		Suppress:     m.Suppress,
 	}
 	yamlBytes, err := yaml.Marshal(fm)
 	if err != nil {

@@ -314,6 +314,70 @@ func (s *SkillService) AppendSubagentLog(incidentUUID string, skillName string, 
 	return nil
 }
 
+// RecordSuppressedIncident creates a completed incident record for an alert that
+// matched a known false-positive suppression signature, alongside an
+// AlertSuppressionLog audit row. No agent is spawned; TokensUsed and
+// ExecutionTimeMs are both 0. Returns the new incident UUID.
+func (s *SkillService) RecordSuppressedIncident(incidentCtx *IncidentContext, signatureName, reasoning string, confidence float64) (string, error) {
+	incidentUUID := uuid.New().String()
+	now := time.Now()
+
+	alertName, _ := incidentCtx.Context["alert_name"].(string)
+	targetHost, _ := incidentCtx.Context["target_host"].(string)
+
+	title := "Suppressed"
+	if alertName != "" {
+		title = "Suppressed: " + alertName
+	}
+
+	response := fmt.Sprintf(
+		"Alert suppressed: matched known false-positive signature %q with %.0f%% confidence.\n\nReasoning: %s\n\nThis alert matched a suppression signature and was closed without investigation.",
+		signatureName, confidence*100, reasoning,
+	)
+
+	incident := &database.Incident{
+		UUID:            incidentUUID,
+		Source:          incidentCtx.Source,
+		SourceID:        incidentCtx.SourceID,
+		SourceKind:      incidentCtx.SourceKind,
+		SourceUUID:      incidentCtx.SourceUUID,
+		Title:           title,
+		Status:          database.IncidentStatusCompleted,
+		Context:         incidentCtx.Context,
+		Response:        response,
+		TokensUsed:      0,
+		ExecutionTimeMs: 0,
+		StartedAt:       now,
+		CompletedAt:     &now,
+	}
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(incident).Error; err != nil {
+			return fmt.Errorf("RecordSuppressedIncident: create incident: %w", err)
+		}
+
+		logRow := database.AlertSuppressionLog{
+			SourceUUID:    incidentCtx.SourceUUID,
+			AlertName:     alertName,
+			TargetHost:    targetHost,
+			IncidentUUID:  incidentUUID,
+			SignatureName: signatureName,
+			Confidence:    confidence,
+			Reasoning:     reasoning,
+			CreatedAt:     now,
+		}
+		if err := tx.Create(&logRow).Error; err != nil {
+			return fmt.Errorf("RecordSuppressedIncident: write log: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return incidentUUID, nil
+}
+
 // AppendCorrelatedAlert records that an incoming alert was collapsed into this
 // incident rather than spawning a new investigation. It atomically:
 //  1. Appends an entry to incident.Context["correlated_alerts"]

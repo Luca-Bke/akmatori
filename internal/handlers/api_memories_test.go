@@ -550,6 +550,9 @@ func (r *recordingSkillService) AppendSubagentLog(string, string, string) error 
 func (r *recordingSkillService) AppendCorrelatedAlert(context.Context, string, string, alerts.NormalizedAlert, float64, string, time.Time) error {
 	return nil
 }
+func (r *recordingSkillService) RecordSuppressedIncident(*services.IncidentContext, string, string, float64) (string, error) {
+	return "", nil
+}
 
 // newMemoryAPIHandlerWithSkill wires both a memory mock and a skill
 // regeneration recorder. Used by tests that need to verify skill-scoped

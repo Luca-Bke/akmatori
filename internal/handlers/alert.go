@@ -49,6 +49,7 @@ type AlertHandler struct {
 	channelService    services.ChannelManager
 	providerRegistry  services.ProviderRegistry
 	alertCorrelator   *services.AlertCorrelator
+	alertSuppressor   *services.AlertSuppressor
 
 	// spawnGroup deduplicates concurrent alerts with the same
 	// (sourceUUID, alertName, targetHost) key so only one incident is created.
@@ -126,6 +127,14 @@ func (h *AlertHandler) SetAlertCorrelator(c *services.AlertCorrelator) {
 	h.alertCorrelator = c
 }
 
+// SetAlertSuppressor wires the AlertSuppressor used to decide whether an
+// incoming alert matches a known false-positive signature and should be
+// suppressed without spawning a full investigation. Optional — when nil the
+// handler never suppresses (fail-open).
+func (h *AlertHandler) SetAlertSuppressor(s *services.AlertSuppressor) {
+	h.alertSuppressor = s
+}
+
 // correlate delegates to the wired AlertCorrelator when present; otherwise
 // returns a no-match verdict (fail-open).
 func (h *AlertHandler) correlate(ctx context.Context, sourceUUID string, alert alerts.NormalizedAlert) (services.CorrelationVerdict, error) {
@@ -140,6 +149,24 @@ func (h *AlertHandler) correlate(ctx context.Context, sourceUUID string, alert a
 func (h *AlertHandler) correlationThreshold() float64 {
 	if h.alertCorrelator != nil {
 		return h.alertCorrelator.Threshold()
+	}
+	return 0.7
+}
+
+// suppress delegates to the wired AlertSuppressor when present; otherwise
+// returns a no-match verdict (fail-open).
+func (h *AlertHandler) suppress(ctx context.Context, alert alerts.NormalizedAlert) (services.SuppressionVerdict, error) {
+	if h.alertSuppressor == nil {
+		return services.SuppressionVerdict{}, nil
+	}
+	return h.alertSuppressor.Evaluate(ctx, alert)
+}
+
+// suppressionThreshold returns the configured suppression confidence threshold,
+// or the SuppressionConfigWithDefaults default (0.7) when no suppressor is wired.
+func (h *AlertHandler) suppressionThreshold() float64 {
+	if h.alertSuppressor != nil {
+		return h.alertSuppressor.Threshold()
 	}
 	return 0.7
 }

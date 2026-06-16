@@ -255,6 +255,9 @@ func (f *fakeSkillIncidentManager) AppendSubagentLog(string, string, string) err
 func (f *fakeSkillIncidentManager) AppendCorrelatedAlert(context.Context, string, string, alerts.NormalizedAlert, float64, string, time.Time) error {
 	return nil
 }
+func (f *fakeSkillIncidentManager) RecordSuppressedIncident(*IncidentContext, string, string, float64) (string, error) {
+	return "", nil
+}
 
 func (f *fakeSkillIncidentManager) CreateSkill(string, string, string, string) (*database.Skill, error) {
 	panic("not implemented")

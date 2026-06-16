@@ -256,6 +256,23 @@ func main() {
 	alertHandler.SetAlertCorrelator(alertCorrelator)
 	slog.Info("alert correlator wired", "enabled", correlationCfg.Enabled)
 
+	// Build suppression config from GeneralSettings. Nil fields fall back to
+	// service-layer defaults (threshold 0.7, maxSignatures 50, enabled false).
+	var suppressionCfg services.SuppressionConfig
+	if gs, err := database.GetOrCreateGeneralSettings(); err != nil {
+		slog.Warn("could not load general settings for alert suppressor, using defaults", "err", err)
+	} else {
+		if gs.AlertSuppressionEnabled != nil {
+			suppressionCfg.Enabled = *gs.AlertSuppressionEnabled
+		}
+		if gs.AlertSuppressionThreshold != nil {
+			suppressionCfg.Threshold = *gs.AlertSuppressionThreshold
+		}
+	}
+	alertSuppressor := services.NewAlertSuppressor(agentWSHandler, database.GetDB(), suppressionCfg)
+	alertHandler.SetAlertSuppressor(alertSuppressor)
+	slog.Info("alert suppressor wired", "enabled", suppressionCfg.Enabled)
+
 	// Set up event handler for when Slack connects
 	// Note: We receive the client directly to avoid deadlock (can't call GetClient while holding lock)
 	slackManager.SetEventHandler(func(socketClient *socketmode.Client, client *slack.Client) {

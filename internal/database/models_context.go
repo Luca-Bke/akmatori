@@ -45,6 +45,7 @@ type Memory struct {
 	Body         string    `gorm:"type:text;not null" json:"body"`
 	IncidentUUID string    `gorm:"type:varchar(64);index" json:"incident_uuid,omitempty"`
 	CreatedBy    string    `gorm:"type:varchar(32)" json:"created_by,omitempty"`
+	Suppress     bool      `gorm:"default:false" json:"suppress,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

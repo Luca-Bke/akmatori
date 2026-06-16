@@ -85,6 +85,34 @@ created_by: agent
 <optional longer body — facts, hosts, error strings, recovery steps. ≤8 KiB.>
 ```
 
+**Suppression signatures** — to mark a memory as a known false-positive pattern that the
+alert suppressor should recognise and suppress without investigation, add `suppress: true`
+to the frontmatter. The body should describe the alert rule name and host pattern that
+identifies this false positive so the LLM can match incoming alerts against it.
+
+Example suppression signature:
+
+```
+---
+name: cron-disk-check-false-positive
+description: Disk check alert on cron hosts fires every night due to tmpfs rotation
+type: incident_pattern
+scope: global
+incident_uuid: <uuid>
+created_by: agent
+suppress: true
+---
+
+# cron-disk-check-false-positive
+
+Disk check alert on cron hosts fires every night due to tmpfs rotation
+
+Alert rule: DiskSpaceLow
+Host pattern: cron-*.prod
+This alert fires nightly between 02:00–04:00 UTC when the tmpfs log rotation
+runs. It resolves automatically within 5 minutes. Safe to suppress.
+```
+
 Constraints:
 - `description` is a single line. Flatten any newlines to spaces.
 - Body ≤ 8 KiB. Trim verbose log dumps; keep the durable facts.

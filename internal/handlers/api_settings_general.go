@@ -62,6 +62,16 @@ func (h *APIHandler) handleGeneralSettings(w http.ResponseWriter, r *http.Reques
 			}
 			settings.AlertCorrelationMaxCandidates = req.AlertCorrelationMaxCandidates
 		}
+		if req.AlertSuppressionEnabled != nil {
+			settings.AlertSuppressionEnabled = req.AlertSuppressionEnabled
+		}
+		if req.AlertSuppressionThreshold != nil {
+			if *req.AlertSuppressionThreshold <= 0 || *req.AlertSuppressionThreshold > 1 {
+				api.RespondError(w, http.StatusBadRequest, "alert_suppression_threshold must be greater than 0 and at most 1")
+				return
+			}
+			settings.AlertSuppressionThreshold = req.AlertSuppressionThreshold
+		}
 
 		if err := database.UpdateGeneralSettings(settings); err != nil {
 			api.RespondError(w, http.StatusInternalServerError, "Failed to update general settings")

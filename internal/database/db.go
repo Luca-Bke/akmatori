@@ -155,6 +155,8 @@ func runMigrations(db *gorm.DB) error {
 		&CronJobTool{},
 		// Alert correlation gate
 		&AlertCorrelationLog{},
+		// Alert suppression gate
+		&AlertSuppressionLog{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
@@ -168,6 +170,11 @@ func runMigrations(db *gorm.DB) error {
 	// than one Integration per provider.
 	if err := ensureChannelsDefaultPartialIndex(db); err != nil {
 		return fmt.Errorf("failed to ensure channels default partial index: %w", err)
+	}
+
+	// Composite index on (suppress, scope) for the suppressor's signature query.
+	if err := ensureMemoriesSuppressScopeIndex(db); err != nil {
+		return fmt.Errorf("failed to ensure memories suppress/scope index: %w", err)
 	}
 
 	// Backfill legacy SlackSettings + slack_channel AlertSourceInstance rows
@@ -1224,6 +1231,17 @@ func GetOrCreateFormattingSettings() (*FormattingSettings, error) {
 // UpdateFormattingSettings persists changes to the formatting settings singleton.
 func UpdateFormattingSettings(settings *FormattingSettings) error {
 	return DB.Save(settings).Error
+}
+
+// ensureMemoriesSuppressScopeIndex creates a composite index on (suppress, scope)
+// to speed up the suppressor's query for memories flagged as suppression signatures.
+// Idempotent (uses IF NOT EXISTS); works on both PostgreSQL and SQLite.
+func ensureMemoriesSuppressScopeIndex(db *gorm.DB) error {
+	stmt := "CREATE INDEX IF NOT EXISTS idx_memories_suppress_scope ON memories (suppress, scope)"
+	if err := db.Exec(stmt).Error; err != nil {
+		return fmt.Errorf("create idx_memories_suppress_scope: %w", err)
+	}
+	return nil
 }
 
 // SlugifyLogicalName converts a user-friendly name to a machine-friendly logical name.
