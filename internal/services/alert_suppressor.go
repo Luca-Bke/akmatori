@@ -215,7 +215,7 @@ func buildSuppressionUserPrompt(alert alerts.NormalizedAlert, signatures []signa
 	sb.WriteString("\nKnown false-positive signatures:\n")
 	for i, sig := range signatures {
 		body := truncateForPrompt(sanitizeForPrompt(strings.TrimSpace(sig.Body)), snippetCap)
-		sb.WriteString(fmt.Sprintf("\n%d. Name: %s\n", i+1, sig.Name))
+		sb.WriteString(fmt.Sprintf("\n%d. Name: %s\n", i+1, sanitizeForPrompt(sig.Name)))
 		if body != "" {
 			sb.WriteString(fmt.Sprintf("   Pattern: %s\n", body))
 		}
@@ -254,7 +254,7 @@ func parseSuppressionVerdict(raw string) (SuppressionVerdict, error) {
 const suppressionSystemPrompt = `You decide whether an incoming alert matches a known false-positive pattern that should be suppressed without investigation.
 
 Return STRICT JSON:
-  {"suppressed": bool, "signature_name": "<name or empty>", "confidence": <0..1>, "reasoning": "<≤200 char explanation>"}
+  {"suppressed": true|false, "signature_name": "<name or empty>", "confidence": <0..1>, "reasoning": "<≤200 char explanation>"}
 
 Rules:
 - Set suppressed=true ONLY when the alert clearly matches one of the listed signatures (same rule name AND same host pattern).

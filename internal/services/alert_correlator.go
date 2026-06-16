@@ -223,7 +223,7 @@ func (c *AlertCorrelator) fetchCandidates(ctx context.Context, fingerprint strin
 		Select("uuid, title, status, response, context, started_at, alert_fingerprint").
 		Where("source_kind = ? AND started_at >= ? AND status IN ?",
 			database.IncidentSourceKindAlert, windowStart, activeStatuses).
-		Where("NOT EXISTS (SELECT 1 FROM alert_suppression_logs WHERE incident_uuid = uuid)")
+		Where("NOT EXISTS (SELECT 1 FROM alert_suppression_logs WHERE incident_uuid = incidents.uuid)")
 
 	if fingerprint != "" {
 		q = q.Where("alert_fingerprint = ? OR alert_fingerprint = '' OR alert_fingerprint IS NULL", fingerprint)
@@ -320,7 +320,7 @@ func parseCorrelationVerdict(raw string) (CorrelationVerdict, error) {
 const correlationSystemPrompt = `You decide whether an incoming alert is a RECURRENCE of a recent incident rather than a new event that needs its own investigation.
 
 Return STRICT JSON:
-  {"correlated": bool, "incident_uuid": "<UUID or empty string>", "confidence": <0..1>, "reasoning": "<≤200 char explanation>"}
+  {"correlated": true|false, "incident_uuid": "<UUID or empty string>", "confidence": <0..1>, "reasoning": "<≤200 char explanation>"}
 
 Rules:
 - Set correlated=true ONLY when the alert describes the same failure on the same host/service as one of the listed candidates.
