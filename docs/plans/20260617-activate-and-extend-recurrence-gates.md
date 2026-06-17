@@ -96,13 +96,13 @@ Recurring real-but-blocked incidents recur over days (not 30m), so each currentl
 - Modify: `internal/handlers/api_settings_general.go`
 - Modify: `web/src/components/settings/GeneralSettingsSection.tsx`
 
-- [ ] Add `AlertCorrelationFingerprintWindowMinutes *int` (default 1440) to GeneralSettings; add to AutoMigrate
-- [ ] Add `FingerprintWindow time.Duration` to CorrelationConfig; populate from AlertCorrelationFingerprintWindowMinutes (default 24h when nil)
-- [ ] In fetchCandidates: when incoming fingerprint is non-empty, extend the date filter to `FingerprintWindow` for the fingerprint-filtered sub-query; non-fingerprint candidates keep the standard Window (30m); dedup by UUID when merging both result sets
-- [ ] Add AlertCorrelationFingerprintWindowMinutes to UpdateGeneralSettingsRequest in api/types.go; add default (1440) in GET handler; add validation (min 1, max 10080 = 7d) in PUT handler
-- [ ] Frontend: add "Fingerprint correlation window (minutes)" labeled numeric input in the alert correlation settings row in GeneralSettingsSection.tsx; load and save alongside existing correlation fields
-- [ ] Tests: fingerprint match at 2h correlates with FingerprintWindow=1440; non-fingerprint at 40m does not correlate (30m window); field persists and is returned on GET; nil field returns 1440 default; invalid value returns 400
-- [ ] `make test` + `make test-web`
+- [x] Add `AlertCorrelationFingerprintWindowMinutes *int` (default 1440) to GeneralSettings; add to AutoMigrate
+- [x] Add `FingerprintWindow time.Duration` to CorrelationConfig; populate from AlertCorrelationFingerprintWindowMinutes (default 24h when nil)
+- [x] In fetchCandidates: when incoming fingerprint is non-empty, extend the date filter to `FingerprintWindow` for the fingerprint-filtered sub-query; non-fingerprint candidates keep the standard Window (30m); dedup by UUID when merging both result sets
+- [x] Add AlertCorrelationFingerprintWindowMinutes to UpdateGeneralSettingsRequest in api/types.go; add default (1440) in GET handler; add validation (min 1, max 10080 = 7d) in PUT handler
+- [x] Frontend: add "Fingerprint correlation window (minutes)" labeled numeric input in the alert correlation settings row in GeneralSettingsSection.tsx; load and save alongside existing correlation fields
+- [x] Tests: fingerprint match at 2h correlates with FingerprintWindow=1440; non-fingerprint at 40m does not correlate (30m window); field persists and is returned on GET; nil field returns 1440 default; invalid value returns 400
+- [x] `make test` + `make test-web`
 
 ### Task 5: Recurrence and gate-effectiveness observability
 

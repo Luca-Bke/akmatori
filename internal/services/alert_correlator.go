@@ -20,13 +20,14 @@ const correlationTimeout = 15 * time.Second
 // All fields have documented defaults; zero values fall back to those defaults
 // when the config is constructed via CorrelationConfigWithDefaults.
 //
-// Defaults: Window=30m, MaxCandidates=20, Threshold=0.7, LongWindowDays=7, Enabled=false.
+// Defaults: Window=30m, FingerprintWindow=24h, MaxCandidates=20, Threshold=0.7, LongWindowDays=7, Enabled=false.
 type CorrelationConfig struct {
-	Enabled        bool
-	Window         time.Duration // how far back to search for candidate incidents
-	MaxCandidates  int           // LIMIT on the candidate query
-	Threshold      float64       // minimum confidence to collapse the alert
-	LongWindowDays int           // lookback in days for fingerprint-matching unresolved incidents
+	Enabled            bool
+	Window             time.Duration // how far back to search for non-fingerprint candidate incidents
+	FingerprintWindow  time.Duration // wider lookback for fingerprint-matched candidate incidents
+	MaxCandidates      int           // LIMIT on the candidate query
+	Threshold          float64       // minimum confidence to collapse the alert
+	LongWindowDays     int           // lookback in days for fingerprint-matching unresolved incidents
 }
 
 // CorrelationConfigWithDefaults returns a config with documented defaults
@@ -35,6 +36,9 @@ type CorrelationConfig struct {
 func CorrelationConfigWithDefaults(c CorrelationConfig) CorrelationConfig {
 	if c.Window <= 0 {
 		c.Window = 30 * time.Minute
+	}
+	if c.FingerprintWindow <= 0 {
+		c.FingerprintWindow = 24 * time.Hour // 1440 minutes
 	}
 	if c.MaxCandidates <= 0 {
 		c.MaxCandidates = 20
@@ -100,6 +104,9 @@ func (c *AlertCorrelator) loadConfig() (CorrelationConfig, error) {
 	if gs.AlertCorrelationLongWindowDays != nil && *gs.AlertCorrelationLongWindowDays > 0 {
 		cfg.LongWindowDays = *gs.AlertCorrelationLongWindowDays
 	}
+	if gs.AlertCorrelationFingerprintWindowMinutes != nil && *gs.AlertCorrelationFingerprintWindowMinutes > 0 {
+		cfg.FingerprintWindow = time.Duration(*gs.AlertCorrelationFingerprintWindowMinutes) * time.Minute
+	}
 	return CorrelationConfigWithDefaults(cfg), nil
 }
 
@@ -149,7 +156,7 @@ func (c *AlertCorrelator) Correlate(ctx context.Context, sourceUUID string, aler
 
 	fingerprint := ComputeAlertFingerprint(sourceUUID, alert.AlertName, alert.TargetHost)
 
-	candidates, longWindowUUIDs, err := c.fetchCandidates(ctx, fingerprint, cfg.Window, cfg.LongWindowDays, cfg.MaxCandidates)
+	candidates, longWindowUUIDs, err := c.fetchCandidates(ctx, fingerprint, cfg.Window, cfg.FingerprintWindow, cfg.LongWindowDays, cfg.MaxCandidates)
 	if err != nil {
 		return noMatch, fmt.Errorf("correlate: fetch candidates: %w", err)
 	}
@@ -212,22 +219,25 @@ func (c *AlertCorrelator) Correlate(ctx context.Context, sourceUUID string, aler
 	return verdict, nil
 }
 
-// fetchCandidates queries recent alert-sourced incidents that are still active
-// within the correlation window. Failed incidents are excluded because they are
-// not viable targets for recurrence attachment.
+// fetchCandidates queries recent alert-sourced incidents that are viable targets
+// for recurrence attachment. Failed incidents are always excluded.
 //
-// When fingerprint is non-empty, the query adds a pre-filter that restricts
-// candidates to incidents with the same alert fingerprint (same rule + host)
-// OR incidents whose fingerprint column is empty (legacy rows created before
-// this field was added). This shrinks the LLM candidate set for exact-match
-// recurrences while staying inclusive for older incidents.
+// Three complementary queries are merged and deduplicated:
 //
-// A second query looks for fingerprint-matching incidents with status IN
-// ('running','diagnosed') that started within the long-window (default 7d).
-// These represent known-open blocked incidents. Returned UUIDs that appear
-// exclusively in the long-window set are tracked in longWindowUUIDs so the
-// caller can set IsLongWindowMatch on the verdict.
-func (c *AlertCorrelator) fetchCandidates(ctx context.Context, fingerprint string, window time.Duration, longWindowDays int, maxCandidates int) ([]candidateRow, map[string]struct{}, error) {
+//  1. Standard window (window, typically 30m): incidents with an empty/null
+//     fingerprint (legacy rows) OR all incidents when the incoming fingerprint
+//     is empty.
+//
+//  2. Fingerprint window (fingerprintWindow, default 24h): incidents whose
+//     alert_fingerprint matches the incoming fingerprint exactly, covering the
+//     wider look-back for exact same-rule/same-host recurrences. Only runs
+//     when fingerprint is non-empty.
+//
+//  3. Long-window (longWindowDays, default 7d): fingerprint-matching incidents
+//     with status IN ('running','diagnosed') — known-open blocked incidents.
+//     UUIDs found exclusively here are tracked in longWindowUUIDs so the
+//     caller can set IsLongWindowMatch on the verdict.
+func (c *AlertCorrelator) fetchCandidates(ctx context.Context, fingerprint string, window time.Duration, fingerprintWindow time.Duration, longWindowDays int, maxCandidates int) ([]candidateRow, map[string]struct{}, error) {
 	windowStart := time.Now().Add(-window)
 	activeStatuses := []string{
 		string(database.IncidentStatusPending),
@@ -236,6 +246,9 @@ func (c *AlertCorrelator) fetchCandidates(ctx context.Context, fingerprint strin
 		string(database.IncidentStatusCompleted),
 	}
 
+	// Query 1: standard window.
+	// When we have a fingerprint, restrict to legacy (empty/null) fingerprint rows
+	// so that fingerprint-matching rows are not double-counted with query 2.
 	var rows []candidateRow
 	q := c.db.WithContext(ctx).
 		Model(&database.Incident{}).
@@ -245,51 +258,74 @@ func (c *AlertCorrelator) fetchCandidates(ctx context.Context, fingerprint strin
 		Where("NOT EXISTS (SELECT 1 FROM alert_suppression_logs WHERE incident_uuid = incidents.uuid)")
 
 	if fingerprint != "" {
-		q = q.Where("alert_fingerprint = ? OR alert_fingerprint = '' OR alert_fingerprint IS NULL", fingerprint)
+		q = q.Where("alert_fingerprint = '' OR alert_fingerprint IS NULL")
 	}
 
-	err := q.Order("started_at DESC").
-		Limit(maxCandidates).
-		Scan(&rows).Error
-	if err != nil {
+	if err := q.Order("started_at DESC").Limit(maxCandidates).Scan(&rows).Error; err != nil {
 		return nil, nil, err
 	}
 
-	// Build a set of UUIDs already returned by the standard window query.
-	standardUUIDs := make(map[string]struct{}, len(rows))
+	// Track all UUIDs to dedup subsequent queries.
+	seenUUIDs := make(map[string]struct{}, len(rows))
 	for _, r := range rows {
-		standardUUIDs[r.UUID] = struct{}{}
+		seenUUIDs[r.UUID] = struct{}{}
 	}
 
-	// Second query: fingerprint-matching unresolved incidents from the long window.
-	// Only run when fingerprint is non-empty (no fingerprint → no long-window match).
 	longWindowUUIDs := make(map[string]struct{})
-	if fingerprint != "" && longWindowDays > 0 {
-		longWindowStart := time.Now().Add(-time.Duration(longWindowDays) * 24 * time.Hour)
-		openStatuses := []string{
-			string(database.IncidentStatusRunning),
-			string(database.IncidentStatusDiagnosed),
-		}
 
-		var longRows []candidateRow
-		longErr := c.db.WithContext(ctx).
+	if fingerprint != "" {
+		// Query 2: fingerprint-gated wider window (all active statuses).
+		fpWindowStart := time.Now().Add(-fingerprintWindow)
+		var fpRows []candidateRow
+		fpErr := c.db.WithContext(ctx).
 			Model(&database.Incident{}).
 			Select("uuid, title, status, response, context, started_at, alert_fingerprint").
 			Where("source_kind = ? AND started_at >= ? AND status IN ?",
-				database.IncidentSourceKindAlert, longWindowStart, openStatuses).
+				database.IncidentSourceKindAlert, fpWindowStart, activeStatuses).
 			Where("alert_fingerprint = ?", fingerprint).
 			Where("NOT EXISTS (SELECT 1 FROM alert_suppression_logs WHERE incident_uuid = incidents.uuid)").
 			Order("started_at DESC").
 			Limit(maxCandidates).
-			Scan(&longRows).Error
-		if longErr != nil {
-			// Non-fatal: proceed with standard candidates only.
-			slog.Debug("alert correlator: long-window query failed", "err", longErr)
+			Scan(&fpRows).Error
+		if fpErr != nil {
+			slog.Debug("alert correlator: fingerprint-window query failed", "err", fpErr)
 		} else {
-			for _, r := range longRows {
-				if _, alreadyIn := standardUUIDs[r.UUID]; !alreadyIn {
+			for _, r := range fpRows {
+				if _, already := seenUUIDs[r.UUID]; !already {
 					rows = append(rows, r)
-					longWindowUUIDs[r.UUID] = struct{}{}
+					seenUUIDs[r.UUID] = struct{}{}
+				}
+			}
+		}
+
+		// Query 3: long-window (running/diagnosed only) for known-open blocked incidents.
+		if longWindowDays > 0 {
+			longWindowStart := time.Now().Add(-time.Duration(longWindowDays) * 24 * time.Hour)
+			openStatuses := []string{
+				string(database.IncidentStatusRunning),
+				string(database.IncidentStatusDiagnosed),
+			}
+
+			var longRows []candidateRow
+			longErr := c.db.WithContext(ctx).
+				Model(&database.Incident{}).
+				Select("uuid, title, status, response, context, started_at, alert_fingerprint").
+				Where("source_kind = ? AND started_at >= ? AND status IN ?",
+					database.IncidentSourceKindAlert, longWindowStart, openStatuses).
+				Where("alert_fingerprint = ?", fingerprint).
+				Where("NOT EXISTS (SELECT 1 FROM alert_suppression_logs WHERE incident_uuid = incidents.uuid)").
+				Order("started_at DESC").
+				Limit(maxCandidates).
+				Scan(&longRows).Error
+			if longErr != nil {
+				slog.Debug("alert correlator: long-window query failed", "err", longErr)
+			} else {
+				for _, r := range longRows {
+					if _, already := seenUUIDs[r.UUID]; !already {
+						rows = append(rows, r)
+						longWindowUUIDs[r.UUID] = struct{}{}
+						seenUUIDs[r.UUID] = struct{}{}
+					}
 				}
 			}
 		}

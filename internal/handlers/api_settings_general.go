@@ -31,6 +31,10 @@ func applyGeneralSettingsDefaults(s *database.GeneralSettings) {
 		v := 7
 		s.AlertCorrelationLongWindowDays = &v
 	}
+	if s.AlertCorrelationFingerprintWindowMinutes == nil {
+		v := 1440
+		s.AlertCorrelationFingerprintWindowMinutes = &v
+	}
 	if s.AlertSuppressionEnabled == nil {
 		v := false
 		s.AlertSuppressionEnabled = &v
@@ -106,6 +110,13 @@ func (h *APIHandler) handleGeneralSettings(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			settings.AlertCorrelationLongWindowDays = req.AlertCorrelationLongWindowDays
+		}
+		if req.AlertCorrelationFingerprintWindowMinutes != nil {
+			if *req.AlertCorrelationFingerprintWindowMinutes < 1 || *req.AlertCorrelationFingerprintWindowMinutes > 10080 {
+				api.RespondError(w, http.StatusBadRequest, "alert_correlation_fingerprint_window_minutes must be between 1 and 10080")
+				return
+			}
+			settings.AlertCorrelationFingerprintWindowMinutes = req.AlertCorrelationFingerprintWindowMinutes
 		}
 		if req.AlertSuppressionEnabled != nil {
 			settings.AlertSuppressionEnabled = req.AlertSuppressionEnabled

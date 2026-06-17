@@ -507,7 +507,7 @@ func TestFetchCandidates_LongWindowMatch(t *testing.T) {
 	seedIncidentWithFingerprint(t, db, "long-inc", "Service down for 4d", "running", fp, fourDaysAgo)
 
 	c := NewAlertCorrelator(nil, db)
-	candidates, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 7, 20)
+	candidates, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 24*time.Hour, 7, 20)
 	if err != nil {
 		t.Fatalf("fetchCandidates: %v", err)
 	}
@@ -538,7 +538,7 @@ func TestFetchCandidates_ResolvedExcludedFromLongWindow(t *testing.T) {
 	seedIncidentWithFingerprint(t, db, "resolved-inc", "Old resolved issue", "completed", fp, fourDaysAgo)
 
 	c := NewAlertCorrelator(nil, db)
-	_, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 7, 20)
+	_, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 24*time.Hour, 7, 20)
 	if err != nil {
 		t.Fatalf("fetchCandidates: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestFetchCandidates_EmptyFingerprintNoLongWindow(t *testing.T) {
 
 	c := NewAlertCorrelator(nil, db)
 	// Empty fingerprint — no long-window query should run.
-	_, longWindowUUIDs, err := c.fetchCandidates(context.Background(), "", 30*time.Minute, 7, 20)
+	_, longWindowUUIDs, err := c.fetchCandidates(context.Background(), "", 30*time.Minute, 24*time.Hour, 7, 20)
 	if err != nil {
 		t.Fatalf("fetchCandidates: %v", err)
 	}
@@ -647,5 +647,107 @@ func TestCorrelationConfigWithDefaults_LongWindowDays(t *testing.T) {
 	cfg := CorrelationConfigWithDefaults(CorrelationConfig{})
 	if cfg.LongWindowDays != 7 {
 		t.Errorf("expected default LongWindowDays=7, got %d", cfg.LongWindowDays)
+	}
+}
+
+// TestCorrelationConfigWithDefaults_FingerprintWindowDefault verifies FingerprintWindow
+// defaults to 24h (1440 minutes) when not set.
+func TestCorrelationConfigWithDefaults_FingerprintWindowDefault(t *testing.T) {
+	cfg := CorrelationConfigWithDefaults(CorrelationConfig{})
+	if cfg.FingerprintWindow != 24*time.Hour {
+		t.Errorf("expected default FingerprintWindow=24h, got %v", cfg.FingerprintWindow)
+	}
+}
+
+// TestFetchCandidates_FingerprintWindowMatchAt2h verifies that a fingerprint-matching
+// incident started 2 hours ago (outside the standard 30m window) IS found when
+// FingerprintWindow=1440m (24h).
+func TestFetchCandidates_FingerprintWindowMatchAt2h(t *testing.T) {
+	db := setupCorrelatorDB(t)
+
+	fp := "fp-2hour-test"
+	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+	// running status so it also qualifies for long-window, but 2h is within
+	// the fingerprint window (24h) — should appear via query 2, NOT longWindowUUIDs.
+	seedIncidentWithFingerprint(t, db, "fp-2h-inc", "Service down", "completed", fp, twoHoursAgo)
+
+	c := NewAlertCorrelator(nil, db)
+	candidates, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 24*time.Hour, 7, 20)
+	if err != nil {
+		t.Fatalf("fetchCandidates: %v", err)
+	}
+
+	found := false
+	for _, row := range candidates {
+		if row.UUID == "fp-2h-inc" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected 2h-old fingerprint-matching incident to be found with FingerprintWindow=24h")
+	}
+	// Must NOT be in longWindowUUIDs (it was found via fingerprint query, not long-window).
+	if _, ok := longWindowUUIDs["fp-2h-inc"]; ok {
+		t.Error("2h incident found via fingerprint window must not be in longWindowUUIDs")
+	}
+}
+
+// TestFetchCandidates_NonFingerprintAt40m_NotFound verifies that a legacy (empty
+// fingerprint) incident started 40 minutes ago is NOT found when the standard
+// window is 30 minutes — the fingerprint-gated wider window does not apply to
+// empty-fingerprint rows.
+func TestFetchCandidates_NonFingerprintAt40m_NotFound(t *testing.T) {
+	db := setupCorrelatorDB(t)
+
+	// Seed a 40m-old incident with no fingerprint (legacy row).
+	fortyMinutesAgo := time.Now().Add(-40 * time.Minute)
+	seedIncident(t, db, "legacy-40m", "Legacy alert", "running", fortyMinutesAgo)
+
+	// Use a non-empty fingerprint for the incoming alert.
+	incomingFP := "some-incoming-fingerprint"
+	c := NewAlertCorrelator(nil, db)
+	candidates, _, err := c.fetchCandidates(context.Background(), incomingFP, 30*time.Minute, 24*time.Hour, 7, 20)
+	if err != nil {
+		t.Fatalf("fetchCandidates: %v", err)
+	}
+
+	for _, row := range candidates {
+		if row.UUID == "legacy-40m" {
+			t.Error("legacy 40m incident must not be found: standard window is 30m and it has no matching fingerprint")
+		}
+	}
+}
+
+// TestFetchCandidates_FingerprintWindowShorterThanLongWindow verifies that an
+// incident started 2 days ago (within 7d long-window but outside 24h fingerprint
+// window default) is found only via the long-window query and appears in
+// longWindowUUIDs.
+func TestFetchCandidates_FingerprintWindowShorterThanLongWindow(t *testing.T) {
+	db := setupCorrelatorDB(t)
+
+	fp := "fp-2day"
+	twoDaysAgo := time.Now().Add(-2 * 24 * time.Hour)
+	seedIncidentWithFingerprint(t, db, "2day-running", "Ongoing issue", "running", fp, twoDaysAgo)
+
+	c := NewAlertCorrelator(nil, db)
+	// FingerprintWindow=1h (shorter than 2 days), LongWindowDays=7.
+	candidates, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 1*time.Hour, 7, 20)
+	if err != nil {
+		t.Fatalf("fetchCandidates: %v", err)
+	}
+
+	found := false
+	for _, row := range candidates {
+		if row.UUID == "2day-running" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected 2-day running incident to be found via long-window query")
+	}
+	if _, ok := longWindowUUIDs["2day-running"]; !ok {
+		t.Error("2-day running incident should be in longWindowUUIDs (found only via long-window)")
 	}
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -72,5 +73,89 @@ func TestHandleGeneralSettings_GET_NonNilDefaults(t *testing.T) {
 	}
 	if v, _ := body["alert_suppression_threshold"].(float64); v != 0.7 {
 		t.Errorf("expected alert_suppression_threshold=0.7, got %v", v)
+	}
+	if v, _ := body["alert_correlation_fingerprint_window_minutes"].(float64); v != 1440 {
+		t.Errorf("expected alert_correlation_fingerprint_window_minutes=1440 by default, got %v", v)
+	}
+}
+
+// TestHandleGeneralSettings_FingerprintWindowMinutes_PersistAndGet verifies that
+// setting alert_correlation_fingerprint_window_minutes via PUT is persisted and
+// returned correctly on the subsequent GET.
+func TestHandleGeneralSettings_FingerprintWindowMinutes_PersistAndGet(t *testing.T) {
+	testhelpers.NewGlobalSQLiteDB(t,
+		&database.GeneralSettings{},
+	)
+
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	// PUT with a custom fingerprint window.
+	body := `{"alert_correlation_fingerprint_window_minutes": 720}`
+	putReq := httptest.NewRequest(http.MethodPut, "/api/settings/general", bytes.NewBufferString(body))
+	putReq.Header.Set("Content-Type", "application/json")
+	putRec := httptest.NewRecorder()
+	h.handleGeneralSettings(putRec, putReq)
+
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT expected 200, got %d: %s", putRec.Code, putRec.Body.String())
+	}
+
+	var putBody map[string]interface{}
+	if err := json.NewDecoder(putRec.Body).Decode(&putBody); err != nil {
+		t.Fatalf("decode PUT response: %v", err)
+	}
+	if v, _ := putBody["alert_correlation_fingerprint_window_minutes"].(float64); v != 720 {
+		t.Errorf("PUT response: expected alert_correlation_fingerprint_window_minutes=720, got %v", v)
+	}
+
+	// GET to confirm the value was persisted.
+	getReq := httptest.NewRequest(http.MethodGet, "/api/settings/general", nil)
+	getRec := httptest.NewRecorder()
+	h.handleGeneralSettings(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET expected 200, got %d", getRec.Code)
+	}
+	var getBody map[string]interface{}
+	if err := json.NewDecoder(getRec.Body).Decode(&getBody); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	if v, _ := getBody["alert_correlation_fingerprint_window_minutes"].(float64); v != 720 {
+		t.Errorf("GET response: expected alert_correlation_fingerprint_window_minutes=720, got %v", v)
+	}
+}
+
+// TestHandleGeneralSettings_FingerprintWindowMinutes_InvalidValue verifies that
+// values outside [1, 10080] are rejected with HTTP 400.
+func TestHandleGeneralSettings_FingerprintWindowMinutes_InvalidValue(t *testing.T) {
+	cases := []struct {
+		name  string
+		value int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+		{"too large", 10081},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testhelpers.NewGlobalSQLiteDB(t,
+				&database.GeneralSettings{},
+			)
+
+			h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			body, _ := json.Marshal(map[string]interface{}{
+				"alert_correlation_fingerprint_window_minutes": tc.value,
+			})
+			req := httptest.NewRequest(http.MethodPut, "/api/settings/general", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.handleGeneralSettings(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("value=%d: expected 400, got %d: %s", tc.value, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
