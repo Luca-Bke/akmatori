@@ -113,6 +113,7 @@ type MemoryManager interface {
 	ListAllScopes() ([]string, error)
 	CountByIncidentUUID(incidentUUID string, createdBy string) (int64, error)
 	SyncMemoryFiles() error
+	SetSuppress(id uint, suppress bool) error
 }
 
 // ContextManager defines the interface for context file management.

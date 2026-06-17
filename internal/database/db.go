@@ -628,7 +628,24 @@ Escalate to human operators when:
 - Security incidents are detected
 - Data loss or corruption is suspected
 - The problem persists after attempted remediation
-- You lack the necessary skills or access to resolve the issue`
+- You lack the necessary skills or access to resolve the issue
+
+## Recording durable findings and suppression signatures
+
+Before closing the investigation, call the memory-writer subagent to record durable facts:
+
+   subagent({"agent": "memory-writer", "task": "Scope: <scope>\nIncident UUID: <uuid>\n\n<reasoning and facts to record>"})
+
+When your verdict is **false positive / self-healing / safe to suppress**, the
+memory-writer task MUST instruct the subagent to set suppress:true in the
+frontmatter. Include the exact alert rule name and host pattern so the
+suppressor can match future occurrences. Example task body:
+
+   "Scope: global\nIncident UUID: <uuid>\n\nThis alert is a known false positive.\nAlert rule: DiskSpaceLow\nHost pattern: cron-*.prod\nSafe to suppress — tmpfs rotation fires nightly and resolves in <5 min."
+
+The memory-writer will set suppress: true automatically when the body contains
+"false positive", "self-healing", or "safe to suppress" combined with Alert rule
+and Host pattern lines. When in doubt, state the verdict explicitly in the task.`
 
 // DefaultCronAgentPrompt is the root prompt for the cron-agent system skill.
 // It mirrors the incident-manager bootstrap but is scoped to scheduled,

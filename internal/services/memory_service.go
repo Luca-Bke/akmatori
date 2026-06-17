@@ -155,6 +155,23 @@ func (s *MemoryService) DeleteMemory(id uint) error {
 	return nil
 }
 
+// SetSuppress flips the suppress flag on a single memory row and re-syncs
+// files so the on-disk MEMORY.md manifest reflects the change immediately.
+// Used by PATCH /api/memories/{id}/suppress.
+func (s *MemoryService) SetSuppress(id uint, suppress bool) error {
+	result := s.db.Model(&database.Memory{}).Where("id = ?", id).Update("suppress", suppress)
+	if result.Error != nil {
+		return fmt.Errorf("failed to update suppress flag: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return errMemoryNotFound
+	}
+	if err := s.SyncMemoryFiles(); err != nil {
+		return fmt.Errorf("suppress updated but file sync failed: %w", err)
+	}
+	return nil
+}
+
 // GetMemory retrieves a single memory by ID.
 func (s *MemoryService) GetMemory(id uint) (*database.Memory, error) {
 	var m database.Memory

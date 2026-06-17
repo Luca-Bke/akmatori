@@ -57,13 +57,13 @@ The fast-path is starved by the authoring bug: memory-writer never emits suppres
 - Modify: `internal/services/memory_service.go`
 - Create: `web/src/components/settings/SuppressionSignaturesSection.tsx`
 
-- [ ] Update memory-writer.md: when investigation verdict is "false positive / self-healing / safe to suppress", MUST write `suppress: true` in frontmatter plus explicit `Alert rule: <name>` and `Host pattern: <glob>` lines in the body
-- [ ] Update DefaultIncidentManagerPrompt in incident_service.go: when closing with an FP/self-healing verdict, explicitly instruct the memory-writer task to include `suppress: true`, the alert rule name, and the host pattern
-- [ ] Add `PATCH /api/memories/{id}/suppress` endpoint in api_memories.go with body `{"suppress": bool}`; route to new MemoryManager.SetSuppress; trigger SKILL.md regeneration
-- [ ] Add `SetSuppress(id uint, suppress bool) error` to MemoryManager interface in interfaces.go; implement in memory_service.go as a targeted single-field DB update that then calls regenerateSkillForMemoryScope
-- [ ] Web: SuppressionSignaturesSection.tsx — list active suppress=true memories (by scope), list benign-verdict memories without suppress=true as "candidate signatures", both rows have a flag/unflag toggle calling PATCH /api/memories/{id}/suppress
-- [ ] Tests: prompt string with FP verdict contains "suppress: true" expectation (unit test on the DefaultIncidentManagerPrompt text); PATCH /api/memories/{id}/suppress flips suppress column and triggers regen (handler test); suppressor end-to-end: seed a suppress=true memory, call Evaluate(), confirm suppression match returns correct signature_name
-- [ ] `make test` + `make test-web`
+- [x] Update memory-writer.md: when investigation verdict is "false positive / self-healing / safe to suppress", MUST write `suppress: true` in frontmatter plus explicit `Alert rule: <name>` and `Host pattern: <glob>` lines in the body
+- [x] Update DefaultIncidentManagerPrompt in incident_service.go: when closing with an FP/self-healing verdict, explicitly instruct the memory-writer task to include `suppress: true`, the alert rule name, and the host pattern
+- [x] Add `PATCH /api/memories/{id}/suppress` endpoint in api_memories.go with body `{"suppress": bool}`; route to new MemoryManager.SetSuppress; trigger SKILL.md regeneration
+- [x] Add `SetSuppress(id uint, suppress bool) error` to MemoryManager interface in interfaces.go; implement in memory_service.go as a targeted single-field DB update that then calls regenerateSkillForMemoryScope
+- [x] Web: SuppressionSignaturesSection.tsx — list active suppress=true memories (by scope), list benign-verdict memories without suppress=true as "candidate signatures", both rows have a flag/unflag toggle calling PATCH /api/memories/{id}/suppress
+- [x] Tests: prompt string with FP verdict contains "suppress: true" expectation (unit test on the DefaultIncidentManagerPrompt text); PATCH /api/memories/{id}/suppress flips suppress column and triggers regen (handler test); suppressor end-to-end: seed a suppress=true memory, call Evaluate(), confirm suppression match returns correct signature_name
+- [x] `make test` + `make test-web`
 
 ### Task 3: Long-window correlation for recurring blocked incidents + cheap recurrence update
 

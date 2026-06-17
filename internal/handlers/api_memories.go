@@ -85,7 +85,8 @@ func (h *APIHandler) handleMemories(w http.ResponseWriter, r *http.Request) {
 
 // handleMemoryByID dispatches GET/PUT/DELETE on /api/memories/{id} and the
 // nested /api/memories/scopes endpoint (handled inline so the route table
-// doesn't fight Go's ServeMux precedence rules).
+// doesn't fight Go's ServeMux precedence rules). It also handles
+// PATCH /api/memories/{id}/suppress.
 func (h *APIHandler) handleMemoryByID(w http.ResponseWriter, r *http.Request) {
 	if h.memoryService == nil {
 		api.RespondError(w, http.StatusInternalServerError, "memory service not available")
@@ -94,6 +95,12 @@ func (h *APIHandler) handleMemoryByID(w http.ResponseWriter, r *http.Request) {
 	tail := strings.TrimPrefix(r.URL.Path, "/api/memories/")
 	if tail == "scopes" {
 		h.handleMemoryScopes(w, r)
+		return
+	}
+
+	// PATCH /api/memories/{id}/suppress
+	if strings.HasSuffix(tail, "/suppress") {
+		h.handleMemorySuppress(w, r, strings.TrimSuffix(tail, "/suppress"))
 		return
 	}
 
@@ -161,6 +168,50 @@ func (h *APIHandler) handleMemoryByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		api.RespondError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// SuppressRequest is the body for PATCH /api/memories/{id}/suppress.
+type SuppressRequest struct {
+	Suppress bool `json:"suppress"`
+}
+
+// handleMemorySuppress handles PATCH /api/memories/{id}/suppress.
+// It flips the suppress flag on the memory row and triggers SKILL.md
+// regeneration for the affected scope so the manifest updates immediately.
+func (h *APIHandler) handleMemorySuppress(w http.ResponseWriter, r *http.Request, rawID string) {
+	if r.Method != http.MethodPatch {
+		api.RespondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	id, err := strconv.ParseUint(rawID, 10, 32)
+	if err != nil {
+		api.RespondError(w, http.StatusBadRequest, "invalid memory ID")
+		return
+	}
+	var req SuppressRequest
+	if err := api.DecodeJSON(r, &req); err != nil {
+		api.RespondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Capture scope before the update so we can regenerate the right SKILL.md.
+	// Return 404 now if the memory doesn't exist — no need to call SetSuppress.
+	existing, err := h.memoryService.GetMemory(uint(id))
+	if err != nil {
+		api.RespondError(w, http.StatusNotFound, "memory not found")
+		return
+	}
+	if err := h.memoryService.SetSuppress(uint(id), req.Suppress); err != nil {
+		respondMemoryWriteError(w, err)
+		return
+	}
+	h.regenerateSkillForMemoryScope(existing.Scope)
+	// Return the updated memory so the UI can refresh without a second GET.
+	updated, err := h.memoryService.GetMemory(uint(id))
+	if err != nil {
+		api.RespondError(w, http.StatusNotFound, "memory not found after update")
+		return
+	}
+	api.RespondJSON(w, http.StatusOK, updated)
 }
 
 // handleMemoryScopes returns the distinct scope strings present in the table.

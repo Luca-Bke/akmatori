@@ -170,6 +170,21 @@ export interface ContextFile {
   updated_at: string;
 }
 
+// Cross-incident memory
+export interface Memory {
+  id: number;
+  scope: string;
+  type: string;
+  name: string;
+  description: string;
+  body: string;
+  incident_uuid?: string;
+  created_by?: string;
+  suppress?: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // Runbooks
 export interface Runbook {
   id: number;

@@ -37,6 +37,7 @@ import type {
   SSHKeyCreateRequest,
   SSHKeyUpdateRequest,
   Runbook,
+  Memory,
   CronJob,
   CreateCronJobRequest,
   UpdateCronJobRequest,
@@ -577,6 +578,25 @@ export const cronJobsApi = {
   run: (uuid: string) =>
     fetchApi<{ status: string }>(`/api/cron-jobs/${uuid}/run`, {
       method: 'POST',
+    }),
+};
+
+// Memories API
+export const memoriesApi = {
+  list: (params?: { scope?: string; type?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.scope) qs.set('scope', params.scope);
+    if (params?.type) qs.set('type', params.type);
+    const query = qs.toString();
+    return fetchApi<Memory[]>(`/api/memories${query ? '?' + query : ''}`);
+  },
+
+  get: (id: number) => fetchApi<Memory>(`/api/memories/${id}`),
+
+  setSuppress: (id: number, suppress: boolean) =>
+    fetchApi<Memory>(`/api/memories/${id}/suppress`, {
+      method: 'PATCH',
+      body: JSON.stringify({ suppress }),
     }),
 };
 

@@ -202,3 +202,26 @@ func TestDefaultIncidentManagerPrompt_SingleMemorySearcherInvocation(t *testing.
 		t.Errorf("expected exactly 1 subagent({\"agent\": \"memory-searcher\"...}) example in prompt, got %d", got)
 	}
 }
+
+// TestDefaultIncidentManagerPrompt_FPVerdictSuppressGuidance verifies that the
+// incident-manager prompt instructs the agent to set suppress:true in the
+// memory-writer task when the verdict is a false positive or self-healing.
+func TestDefaultIncidentManagerPrompt_FPVerdictSuppressGuidance(t *testing.T) {
+	tests := []struct {
+		name     string
+		contains string
+	}{
+		{"suppress true instruction", "suppress:true"},
+		{"false positive trigger", "false positive"},
+		{"self-healing trigger", "self-healing"},
+		{"safe to suppress trigger", "safe to suppress"},
+		{"memory-writer agent referenced", `"agent": "memory-writer"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.Contains(DefaultIncidentManagerPrompt, tt.contains) {
+				t.Errorf("DefaultIncidentManagerPrompt should contain %q for suppress guidance", tt.contains)
+			}
+		})
+	}
+}
