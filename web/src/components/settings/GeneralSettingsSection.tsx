@@ -246,10 +246,10 @@ export default function GeneralSettingsSection({ onStatusChange }: GeneralSettin
           <label htmlFor="suppression-enabled" className="text-sm text-gray-700 dark:text-gray-300">
             Enable alert suppression gate
           </label>
-          {!suppressionEnabled && recurrenceStats && recurrenceStats.redundancy_rate_24h > 0.2 && (
+          {!suppressionEnabled && recurrenceStats && recurrenceStats.candidate_signatures.length > 0 && (
             <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 font-medium">
               <AlertTriangle className="w-3.5 h-3.5" />
-              {Math.round(recurrenceStats.redundancy_rate_24h * 100)}% redundancy in last 24h
+              {recurrenceStats.candidate_signatures.length} candidate signature{recurrenceStats.candidate_signatures.length !== 1 ? 's' : ''} available
             </span>
           )}
         </div>

@@ -340,23 +340,38 @@ func TestHandleRecurrenceStats_CandidateSignatures(t *testing.T) {
 }
 
 // TestHandleRecurrenceStats_RedundancyRate verifies the redundancy rate
-// calculation: sum(correlated_count) / count(alert incidents) in the last 24h.
+// calculation: corrHits24h / (corrHits24h + totalAlertInc24h).
+// The rate is always in [0,1] and represents the fraction of incoming alerts
+// that were deduplicated rather than spawning new incidents.
 func TestHandleRecurrenceStats_RedundancyRate(t *testing.T) {
 	setupRecurrenceStatsDB(t)
 
 	now := time.Now()
 
-	// 5 alert incidents in last 24h; 3 of them have correlated_count > 0.
+	// 3 alert incidents spawned (totalAlertInc24h = 3).
 	incidents := []database.Incident{
-		{UUID: "r1", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", CorrelatedCount: 4, StartedAt: now.Add(-1 * time.Hour)},
-		{UUID: "r2", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", CorrelatedCount: 2, StartedAt: now.Add(-2 * time.Hour)},
-		{UUID: "r3", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", CorrelatedCount: 0, StartedAt: now.Add(-3 * time.Hour)},
-		{UUID: "r4", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", CorrelatedCount: 0, StartedAt: now.Add(-4 * time.Hour)},
-		{UUID: "r5", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", CorrelatedCount: 0, StartedAt: now.Add(-5 * time.Hour)},
+		{UUID: "r1", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", StartedAt: now.Add(-1 * time.Hour)},
+		{UUID: "r2", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", StartedAt: now.Add(-2 * time.Hour)},
+		{UUID: "r3", Source: "t", SourceKind: database.IncidentSourceKindAlert, Status: "completed", StartedAt: now.Add(-3 * time.Hour)},
 	}
 	for _, inc := range incidents {
 		if err := database.DB.Create(&inc).Error; err != nil {
 			t.Fatalf("seed incident %s: %v", inc.UUID, err)
+		}
+	}
+
+	// 6 alerts correlated into existing incidents (corrHits24h = 6).
+	for i := 1; i <= 6; i++ {
+		log := database.AlertCorrelationLog{
+			SourceUUID:          "src-r",
+			AlertName:           "cpu-high",
+			TargetHost:          "h1",
+			MatchedIncidentUUID: "r1",
+			Confidence:          0.9,
+			CreatedAt:           now.Add(-time.Duration(i) * time.Hour),
+		}
+		if err := database.DB.Create(&log).Error; err != nil {
+			t.Fatalf("seed correlation log %d: %v", i, err)
 		}
 	}
 
@@ -374,14 +389,18 @@ func TestHandleRecurrenceStats_RedundancyRate(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	// sum(correlated_count)=6, count=5 → rate=1.2 (can exceed 1 since correlated_count
-	// tracks events collapsed into an incident, not a per-incident flag)
-	want := 6.0 / 5.0
+	// corrHits=6, totalAlertInc=3, total=9 → rate = 6/9 ≈ 0.6667
+	want := 6.0 / 9.0
 	if resp.RedundancyRate24h != want {
 		t.Errorf("redundancy_rate_24h: want %f, got %f", want, resp.RedundancyRate24h)
 	}
 
-	// Warning condition: rate > 0.2 means badge should show.
+	// Rate must be in [0, 1].
+	if resp.RedundancyRate24h > 1.0 {
+		t.Errorf("redundancy_rate_24h %f exceeds 1.0", resp.RedundancyRate24h)
+	}
+
+	// Warning condition: rate > 0.2 means the correlation gate badge should show.
 	if resp.RedundancyRate24h <= 0.2 {
 		t.Errorf("redundancy_rate_24h %f should be > 0.2 to trigger warning badge", resp.RedundancyRate24h)
 	}

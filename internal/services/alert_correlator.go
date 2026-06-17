@@ -331,6 +331,12 @@ func (c *AlertCorrelator) fetchCandidates(ctx context.Context, fingerprint strin
 		}
 	}
 
+	// Apply a global cap so that combined results from all three sub-queries never
+	// exceed maxCandidates regardless of individual per-query limits.
+	if len(rows) > maxCandidates {
+		rows = rows[:maxCandidates]
+	}
+
 	return rows, longWindowUUIDs, nil
 }
 

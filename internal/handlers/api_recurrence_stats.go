@@ -135,25 +135,12 @@ func (h *APIHandler) handleRecurrenceStats(w http.ResponseWriter, r *http.Reques
 		Suppression7d:  GateRate{Hits: suppHits7d, Total: totalAlertInc7d},
 	}
 
-	// Redundancy rate: fraction of correlated_count events vs total incidents in
-	// the last 24h. Matches the badge threshold check in GeneralSettingsSection.
-	type redundancyResult struct {
-		SumCorrelated int64
-		TotalCount    int64
-	}
-	var redResult redundancyResult
-	if err := database.DB.Raw(`
-		SELECT COALESCE(SUM(correlated_count), 0) AS sum_correlated, COUNT(*) AS total_count
-		FROM incidents
-		WHERE started_at >= ? AND source_kind = ?
-	`, ago24h, database.IncidentSourceKindAlert).Scan(&redResult).Error; err != nil {
-		api.RespondError(w, http.StatusInternalServerError, "failed to query redundancy stats")
-		return
-	}
-
+	// Redundancy rate: fraction of total alert arrivals in the last 24h that were
+	// correlated (deduplicated) rather than spawning a new incident.
+	// total24h = corrHits24h + totalAlertInc24h is already computed above.
 	var redundancyRate float64
-	if redResult.TotalCount > 0 {
-		redundancyRate = float64(redResult.SumCorrelated) / float64(redResult.TotalCount)
+	if total24h > 0 {
+		redundancyRate = float64(corrHits24h) / float64(total24h)
 	}
 
 	// Candidate suppression signatures: incident_pattern and feedback memories

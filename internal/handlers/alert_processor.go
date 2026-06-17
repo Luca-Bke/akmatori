@@ -44,9 +44,13 @@ func alertSpawnKey(sourceUUID, alertName, targetHost, fingerprint string) string
 // ProcessAlertFromListenerChannel. The suppressed flag tells followers whether
 // the leader took the suppression path so they can skip recordRecurrence (which
 // would otherwise attach bogus audit rows to a closed suppressed incident).
+// The longWindow flag tells followers whether the leader already handled the
+// alert via the long-window recurrence path (runRecurrenceUpdate), so they skip
+// a redundant recordRecurrence call that would create duplicate audit log rows.
 type alertSpawnResult struct {
 	incidentUUID string
 	suppressed   bool
+	longWindow   bool
 }
 
 func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, normalized alerts.NormalizedAlert) {
@@ -124,7 +128,7 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 					slog.Warn("long-window recurrence update failed, spawning new incident", "err", err, "incident_uuid", verdict.IncidentUUID)
 					// Fall through to suppression gate and full spawn.
 				} else {
-					return alertSpawnResult{incidentUUID: verdict.IncidentUUID}, nil
+					return alertSpawnResult{incidentUUID: verdict.IncidentUUID, longWindow: true}, nil
 				}
 			} else {
 				h.recordRecurrence(context.Background(), instance.UUID, verdict.IncidentUUID, normalized, verdict)
@@ -186,10 +190,12 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 
 	if !isLeader {
 		// Follower: the leader decided which incident owns this alert burst.
-		// Skip recordRecurrence when the leader suppressed the alert — there
-		// is no active investigation to attach burst duplicates to.
+		// Skip recordRecurrence when the leader suppressed the alert (no active
+		// investigation to attach burst duplicates to) or when the leader already
+		// handled the alert via the long-window recurrence path (runRecurrenceUpdate
+		// already wrote the AppendCorrelatedAlert row).
 		result, _ := v.(alertSpawnResult)
-		if !result.suppressed {
+		if !result.suppressed && !result.longWindow {
 			h.recordRecurrence(context.Background(), instance.UUID, result.incidentUUID, normalized, services.CorrelationVerdict{
 				Correlated:   true,
 				IncidentUUID: result.incidentUUID,
@@ -301,7 +307,7 @@ func (h *AlertHandler) ProcessAlertFromListenerChannel(
 					h.updateSlackChannelReactions(slackChannelID, slackMessageTS, false)
 					h.postSlackThreadReply(slackChannelID, slackMessageTS,
 						fmt.Sprintf("Alert merged into existing blocked incident (ID: %s)", verdict.IncidentUUID))
-					return alertSpawnResult{incidentUUID: verdict.IncidentUUID}, nil
+					return alertSpawnResult{incidentUUID: verdict.IncidentUUID, longWindow: true}, nil
 				}
 			} else {
 				h.recordRecurrence(context.Background(), channel.UUID, verdict.IncidentUUID, normalized, verdict)
@@ -371,10 +377,12 @@ func (h *AlertHandler) ProcessAlertFromListenerChannel(
 
 	if !isLeader {
 		// Follower: the leader decided which incident owns this alert burst.
-		// Skip recordRecurrence when the leader suppressed the alert — there
-		// is no active investigation to attach burst duplicates to.
+		// Skip recordRecurrence when the leader suppressed the alert (no active
+		// investigation to attach burst duplicates to) or when the leader already
+		// handled the alert via the long-window recurrence path (runRecurrenceUpdate
+		// already wrote the AppendCorrelatedAlert row).
 		result, _ := v.(alertSpawnResult)
-		if !result.suppressed {
+		if !result.suppressed && !result.longWindow {
 			h.recordRecurrence(context.Background(), channel.UUID, result.incidentUUID, normalized, services.CorrelationVerdict{
 				Correlated:   true,
 				IncidentUUID: result.incidentUUID,
