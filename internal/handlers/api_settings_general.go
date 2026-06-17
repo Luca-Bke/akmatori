@@ -7,6 +7,11 @@ import (
 	"github.com/akmatori/akmatori/internal/database"
 )
 
+const (
+	defaultFingerprintWindowMinutes = 1440
+	defaultLongWindowDays           = 7
+)
+
 // applyGeneralSettingsDefaults fills nil alert config pointers with effective
 // code defaults so the GET response never contains null. It modifies the struct
 // in-place; callers must not persist the result back to the DB.
@@ -28,11 +33,11 @@ func applyGeneralSettingsDefaults(s *database.GeneralSettings) {
 		s.AlertCorrelationMaxCandidates = &v
 	}
 	if s.AlertCorrelationLongWindowDays == nil {
-		v := 7
+		v := defaultLongWindowDays
 		s.AlertCorrelationLongWindowDays = &v
 	}
 	if s.AlertCorrelationFingerprintWindowMinutes == nil {
-		v := 1440
+		v := defaultFingerprintWindowMinutes
 		s.AlertCorrelationFingerprintWindowMinutes = &v
 	}
 	if s.AlertSuppressionEnabled == nil {
@@ -133,11 +138,11 @@ func (h *APIHandler) handleGeneralSettings(w http.ResponseWriter, r *http.Reques
 		// the dedup logic in fetchCandidates absorbs all long-window candidates into query 2
 		// and IsLongWindowMatch is never set, silently killing the cheap recurrence path.
 		{
-			fpMins := 1440
+			fpMins := defaultFingerprintWindowMinutes
 			if settings.AlertCorrelationFingerprintWindowMinutes != nil {
 				fpMins = *settings.AlertCorrelationFingerprintWindowMinutes
 			}
-			lwDays := 7
+			lwDays := defaultLongWindowDays
 			if settings.AlertCorrelationLongWindowDays != nil {
 				lwDays = *settings.AlertCorrelationLongWindowDays
 			}
