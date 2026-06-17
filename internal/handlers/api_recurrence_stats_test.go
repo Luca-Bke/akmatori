@@ -252,8 +252,6 @@ func TestHandleRecurrenceStats_CandidateSignatures(t *testing.T) {
 
 	now := time.Now()
 
-	suppTrue := true
-
 	// suppress=true memory — must NOT appear in candidates.
 	m1 := database.Memory{
 		Scope:       "global",
@@ -304,8 +302,6 @@ func TestHandleRecurrenceStats_CandidateSignatures(t *testing.T) {
 		Suppress:    false,
 		CreatedAt:   now.Add(-1 * time.Hour),
 	}
-	_ = suppTrue
-
 	for i, m := range []*database.Memory{&m1, &m2, &m3, &m4, &m5} {
 		if err := database.DB.Create(m).Error; err != nil {
 			t.Fatalf("seed memory %d: %v", i, err)

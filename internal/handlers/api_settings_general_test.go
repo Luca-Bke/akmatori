@@ -43,6 +43,8 @@ func TestHandleGeneralSettings_GET_NonNilDefaults(t *testing.T) {
 		"alert_correlation_window_minutes",
 		"alert_correlation_threshold",
 		"alert_correlation_max_candidates",
+		"alert_correlation_long_window_days",
+		"alert_correlation_fingerprint_window_minutes",
 		"alert_suppression_enabled",
 		"alert_suppression_threshold",
 	}
@@ -76,6 +78,44 @@ func TestHandleGeneralSettings_GET_NonNilDefaults(t *testing.T) {
 	}
 	if v, _ := body["alert_correlation_fingerprint_window_minutes"].(float64); v != 1440 {
 		t.Errorf("expected alert_correlation_fingerprint_window_minutes=1440 by default, got %v", v)
+	}
+	if v, _ := body["alert_correlation_long_window_days"].(float64); v != 7 {
+		t.Errorf("expected alert_correlation_long_window_days=7 by default, got %v", v)
+	}
+}
+
+// TestHandleGeneralSettings_LongWindowDays_InvalidValue verifies that values
+// outside [1, 90] are rejected with HTTP 400.
+func TestHandleGeneralSettings_LongWindowDays_InvalidValue(t *testing.T) {
+	cases := []struct {
+		name  string
+		value int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+		{"too large", 91},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			testhelpers.NewGlobalSQLiteDB(t,
+				&database.GeneralSettings{},
+			)
+
+			h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+			body, _ := json.Marshal(map[string]interface{}{
+				"alert_correlation_long_window_days": tc.value,
+			})
+			req := httptest.NewRequest(http.MethodPut, "/api/settings/general", bytes.NewBuffer(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.handleGeneralSettings(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("value=%d: expected 400, got %d: %s", tc.value, rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

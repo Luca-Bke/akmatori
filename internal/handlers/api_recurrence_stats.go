@@ -61,7 +61,7 @@ func (h *APIHandler) handleRecurrenceStats(w http.ResponseWriter, r *http.Reques
 		RecurrenceCount int64
 	}
 	var fpRows []fpRow
-	database.DB.Raw(`
+	if err := database.DB.Raw(`
 		SELECT acl.alert_name, acl.target_host, i.alert_fingerprint AS fingerprint,
 		       COUNT(acl.id) AS recurrence_count
 		FROM alert_correlation_logs acl
@@ -71,7 +71,10 @@ func (h *APIHandler) handleRecurrenceStats(w http.ResponseWriter, r *http.Reques
 		GROUP BY acl.alert_name, acl.target_host, i.alert_fingerprint
 		ORDER BY recurrence_count DESC
 		LIMIT 10
-	`, ago7d).Scan(&fpRows)
+	`, ago7d).Scan(&fpRows).Error; err != nil {
+		api.RespondError(w, http.StatusInternalServerError, "failed to query fingerprint groups")
+		return
+	}
 
 	const tokensPerAvoidedRun = 412000
 	fingerprintGroups := make([]FingerprintGroup, 0, len(fpRows))
@@ -87,20 +90,38 @@ func (h *APIHandler) handleRecurrenceStats(w http.ResponseWriter, r *http.Reques
 
 	// Gate hit counts.
 	var corrHits24h, corrHits7d, suppHits24h, suppHits7d int64
-	database.DB.Model(&database.AlertCorrelationLog{}).Where("created_at >= ?", ago24h).Count(&corrHits24h)
-	database.DB.Model(&database.AlertCorrelationLog{}).Where("created_at >= ?", ago7d).Count(&corrHits7d)
-	database.DB.Model(&database.AlertSuppressionLog{}).Where("created_at >= ?", ago24h).Count(&suppHits24h)
-	database.DB.Model(&database.AlertSuppressionLog{}).Where("created_at >= ?", ago7d).Count(&suppHits7d)
+	for _, q := range []struct {
+		dest  *int64
+		model interface{}
+		where string
+		arg   interface{}
+	}{
+		{&corrHits24h, &database.AlertCorrelationLog{}, "created_at >= ?", ago24h},
+		{&corrHits7d, &database.AlertCorrelationLog{}, "created_at >= ?", ago7d},
+		{&suppHits24h, &database.AlertSuppressionLog{}, "created_at >= ?", ago24h},
+		{&suppHits7d, &database.AlertSuppressionLog{}, "created_at >= ?", ago7d},
+	} {
+		if err := database.DB.Model(q.model).Where(q.where, q.arg).Count(q.dest).Error; err != nil {
+			api.RespondError(w, http.StatusInternalServerError, "failed to query gate counts")
+			return
+		}
+	}
 
 	// Total alert-triggered incidents in each window.
 	// This includes suppressed incidents (they create an Incident row too).
 	var totalAlertInc24h, totalAlertInc7d int64
-	database.DB.Model(&database.Incident{}).
+	if err := database.DB.Model(&database.Incident{}).
 		Where("started_at >= ? AND source_kind = ?", ago24h, database.IncidentSourceKindAlert).
-		Count(&totalAlertInc24h)
-	database.DB.Model(&database.Incident{}).
+		Count(&totalAlertInc24h).Error; err != nil {
+		api.RespondError(w, http.StatusInternalServerError, "failed to query incident counts")
+		return
+	}
+	if err := database.DB.Model(&database.Incident{}).
 		Where("started_at >= ? AND source_kind = ?", ago7d, database.IncidentSourceKindAlert).
-		Count(&totalAlertInc7d)
+		Count(&totalAlertInc7d).Error; err != nil {
+		api.RespondError(w, http.StatusInternalServerError, "failed to query incident counts")
+		return
+	}
 
 	// Total alert arrivals = correlated events + spawned (or suppressed) incidents.
 	// Correlated alerts never create an Incident row, so there is no double-count.
@@ -121,11 +142,14 @@ func (h *APIHandler) handleRecurrenceStats(w http.ResponseWriter, r *http.Reques
 		TotalCount    int64
 	}
 	var redResult redundancyResult
-	database.DB.Raw(`
+	if err := database.DB.Raw(`
 		SELECT COALESCE(SUM(correlated_count), 0) AS sum_correlated, COUNT(*) AS total_count
 		FROM incidents
 		WHERE started_at >= ? AND source_kind = ?
-	`, ago24h, database.IncidentSourceKindAlert).Scan(&redResult)
+	`, ago24h, database.IncidentSourceKindAlert).Scan(&redResult).Error; err != nil {
+		api.RespondError(w, http.StatusInternalServerError, "failed to query redundancy stats")
+		return
+	}
 
 	var redundancyRate float64
 	if redResult.TotalCount > 0 {
@@ -135,12 +159,15 @@ func (h *APIHandler) handleRecurrenceStats(w http.ResponseWriter, r *http.Reques
 	// Candidate suppression signatures: incident_pattern and feedback memories
 	// that are not yet flagged, created in the last 7 days.
 	var candidates []database.Memory
-	database.DB.Where(
+	if err := database.DB.Where(
 		"type IN ? AND suppress = ? AND created_at >= ?",
 		[]string{services.MemoryTypeIncidentPattern, services.MemoryTypeFeedback},
 		false,
 		ago7d,
-	).Order("created_at DESC").Find(&candidates)
+	).Order("created_at DESC").Find(&candidates).Error; err != nil {
+		api.RespondError(w, http.StatusInternalServerError, "failed to query candidate signatures")
+		return
+	}
 
 	if candidates == nil {
 		candidates = []database.Memory{}

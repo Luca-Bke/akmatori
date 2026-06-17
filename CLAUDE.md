@@ -150,7 +150,8 @@ Rules:
 - both `processAlert` and `ProcessAlertFromListenerChannel` wrap the evaluate-and-spawn block in `h.spawnGroup.Do(key, ...)`; singleflight followers use the `isLeader` flag pattern; followers skip `recordRecurrence` when the leader chose suppression (via `alertSpawnResult.suppressed`)
 - `AppendCorrelatedAlert` atomically appends to `incident.Context["correlated_alerts"]`, increments `correlated_count`, and writes an `AlertCorrelationLog` row — all in one transaction
 - `ErrWorkerNotConnected` is fail-open (alert spawns normally)
-- candidate query filters: `source_kind='alert'`, `started_at >= now()-window`, `status IN (pending,running,diagnosed,completed)` — failed incidents are never targets
+- `fetchCandidates` runs three sub-queries: (1) standard window; (2) fingerprint window (`AlertCorrelationFingerprintWindowMinutes`, default 1440, valid 1–10080); (3) long-window (`AlertCorrelationLongWindowDays`, default 7, valid 1–90) — running/diagnosed only; UUIDs exclusive to query 3 set `IsLongWindowMatch=true`
+- `IsLongWindowMatch=true` → `runRecurrenceUpdate` (2-sentence delta via one-shot LLM) instead of spawning; falls through to spawn on error; `alertHandler.SetOneShotCaller(agentWSHandler)` wired in `main.go`
 - hallucination guard: any UUID not in the fetched candidate set forces `Correlated=false`
 - alert fingerprint: `ComputeAlertFingerprint(sourceUUID, lower(alertName), lower(targetHost))` stored as `alert_fingerprint` (32-char sha256) on each `Incident`; pre-filters candidates; defined in `internal/services/alert_fingerprint.go`
 - one-shot LLM path; defined in `internal/services/alert_correlator.go`
@@ -167,6 +168,7 @@ Rules:
 - `ErrWorkerNotConnected` is fail-open (alert spawns normally)
 - `RecordSuppressedIncident` atomically creates a completed `Incident` (TokensUsed=0, `AlertFingerprint` set) + `AlertSuppressionLog` audit row
 - manifest capped at `manifestMaxEntriesPerScope` (150) non-suppress entries per scope; suppress entries always appear; a `<!-- truncated: N more entries not shown -->` comment is added when the cap fires
+- operators can manually flag/unflag signatures via `PATCH /api/memories/{id}/suppress` (`{"suppress": bool}`); handler calls `SetSuppress` then regenerates SKILL.md for the affected scope
 
 ### Alert sources and webhook adapters
 
@@ -256,6 +258,8 @@ Rules:
 
 - `web/src/components/settings/FormattingSettingsSection.tsx` - response formatter settings form and validation
 - `web/src/components/settings/formattingSettingsHelpers.ts` - formatter default hydrate/dehydrate helpers; keep constants aligned with Go defaults
+- `web/src/components/settings/SuppressionSignaturesSection.tsx` - active suppress signatures + unflagged candidates; flag/unflag via `PATCH /api/memories/{id}/suppress`
+- `web/src/components/settings/RecurrenceStatsPanel.tsx` - fingerprint groups, gate hit-rates (24h/7d), candidate signatures with "Mark as signature" action
 
 ## Code Patterns
 
@@ -347,15 +351,14 @@ Keep this file aligned with these current realities:
 - runbook and cross-incident memory recall run through pi-mono subagents (`runbook-searcher`, `memory-searcher`); QMD is gone
 - the agent records durable findings via the `memory-writer` subagent; the API re-ingests `akmatori_data/memory/` into Postgres at incident completion
 - fresh Slack skill launches start fresh agent sessions unless the flow explicitly resumes
-- response formatting is live (`/api/settings/formatting`); operators paste an example JSON object into `OutputSchemaExample` to control the output shape; schema inference derives field types and order; the formatter validates with one retry then renders via `output.RenderForSlack`; empty `OutputSchemaExample` falls back to the built-in four-key default (`status`/`summary`/`actions_taken`/`recommendations`) so existing installs are unaffected
-- the formatting settings UI now shows editable default prompt/schema text even when the stored values are empty; saving unchanged defaults must continue to send empty strings so upgrades keep using backend defaults
-- one-shot LLM calls share the worker transport and current provider settings
-- Slack loading banners use real reasoning lines instead of generic placeholder text
-- messaging is now Integrations + Channels; outbound posting routes through `ProviderRegistry`; the legacy `SlackSettings.AlertsChannel` fallback is gone and `/api/settings/slack` returns 410 Gone
-- cron jobs (`/api/cron-jobs`) always run as full agent investigations under the `cron-agent` system skill with a per-cron tool allowlist; system crons (e.g. seeded `memory-curator`) cannot be deleted; `CronRunner` boots from `cmd/akmatori/main.go`
-- alert-source webhooks use adapter-specific secret validation before parsing; explicit notification channels must resolve to `can_post=true` Channels
-- the built-in `incidents` tool (`incidents.list`, `incidents.get`) is seeded at boot by `EnsureToolTypes()` with a credential-less instance and queries the gateway DB directly; no operator setup required
-- alert correlation gate (`services.AlertCorrelator`) and suppression gate (`services.AlertSuppressor`) run before each incident spawn in both `processAlert` and `ProcessAlertFromListenerChannel`; both are flag-gated via `GeneralSettings` (default false); both read config live on every call — no restart needed; singleflight followers skip `recordRecurrence` when the leader chose suppression (via `alertSpawnResult.suppressed`)
+- response formatting is live (`/api/settings/formatting`); empty `OutputSchemaExample` falls back to the built-in four-key default; saving unchanged defaults must send empty strings so upgrades keep using backend defaults
+- messaging is now Integrations + Channels; `/api/settings/slack` returns 410 Gone
+- cron jobs always run as full agent investigations under `cron-agent`; system crons cannot be deleted; `CronRunner` boots from `cmd/akmatori/main.go`
+- alert-source webhooks use adapter-specific secret validation; explicit notification channels must resolve to `can_post=true` Channels
+- the built-in `incidents` tool is seeded at boot with a credential-less instance; no operator setup required
+- alert correlation and suppression gates are flag-gated via `GeneralSettings` (default false); read config live; see Alert correlation gate section for `fetchCandidates` three-query logic and `runRecurrenceUpdate` long-window path
+- `GET /api/stats/recurrence` returns fingerprint groups, gate hit-rates, candidate signatures, `redundancy_rate_24h`; shown in `RecurrenceStatsPanel` and gate-enable badges
+- when verdict is false-positive/self-healing, memory-writer sets `suppress: true`; operators can also flag via `PATCH /api/memories/{id}/suppress`
 
 ## When Editing This File
 

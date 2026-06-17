@@ -24,6 +24,7 @@ export default function GeneralSettingsSection({ onStatusChange }: GeneralSettin
   const [correlationThreshold, setCorrelationThreshold] = useState(0.7);
   const [correlationMaxCandidates, setCorrelationMaxCandidates] = useState(20);
   const [correlationFingerprintWindowMinutes, setCorrelationFingerprintWindowMinutes] = useState(1440);
+  const [correlationLongWindowDays, setCorrelationLongWindowDays] = useState(7);
 
   // Alert suppression fields
   const [suppressionEnabled, setSuppressionEnabled] = useState(false);
@@ -57,6 +58,7 @@ export default function GeneralSettingsSection({ onStatusChange }: GeneralSettin
       setCorrelationThreshold(data.alert_correlation_threshold);
       setCorrelationMaxCandidates(data.alert_correlation_max_candidates);
       setCorrelationFingerprintWindowMinutes(data.alert_correlation_fingerprint_window_minutes);
+      setCorrelationLongWindowDays(data.alert_correlation_long_window_days);
       setSuppressionEnabled(data.alert_suppression_enabled);
       setSuppressionThreshold(data.alert_suppression_threshold);
       setGeneralError(null);
@@ -82,6 +84,7 @@ export default function GeneralSettingsSection({ onStatusChange }: GeneralSettin
         alert_correlation_threshold: correlationThreshold,
         alert_correlation_max_candidates: correlationMaxCandidates,
         alert_correlation_fingerprint_window_minutes: correlationFingerprintWindowMinutes,
+        alert_correlation_long_window_days: correlationLongWindowDays,
         alert_suppression_enabled: suppressionEnabled,
         alert_suppression_threshold: suppressionThreshold,
       });
@@ -149,7 +152,7 @@ export default function GeneralSettingsSection({ onStatusChange }: GeneralSettin
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
               Window (minutes)
@@ -174,6 +177,20 @@ export default function GeneralSettingsSection({ onStatusChange }: GeneralSettin
               max={10080}
               value={correlationFingerprintWindowMinutes}
               onChange={(e) => setCorrelationFingerprintWindowMinutes(Number(e.target.value))}
+              disabled={!correlationEnabled}
+              className="input-field text-sm disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              Long-window (days)
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={90}
+              value={correlationLongWindowDays}
+              onChange={(e) => setCorrelationLongWindowDays(Number(e.target.value))}
               disabled={!correlationEnabled}
               className="input-field text-sm disabled:opacity-50"
             />
