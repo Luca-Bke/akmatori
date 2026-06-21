@@ -1353,6 +1353,14 @@ func migrateBackfillAlerts(db *gorm.DB) error {
 			).Error; err != nil {
 				slog.Warn("migrateBackfillAlerts: set monitor_until", "incident_uuid", inc.UUID, "err", err)
 			}
+			// The investigation is already done — mark the backfilled alert as
+			// resolved so it does not appear as a live firing alert in the UI.
+			if err := db.Exec(
+				"UPDATE alerts SET status = 'resolved', resolved_at = ? WHERE incident_uuid = ? AND status = 'firing'",
+				inc.CompletedAt, inc.UUID,
+			).Error; err != nil {
+				slog.Warn("migrateBackfillAlerts: resolve alert row", "incident_uuid", inc.UUID, "err", err)
+			}
 		}
 	}
 

@@ -235,10 +235,13 @@ func buildCorrelationUserPrompt(alert alerts.NormalizedAlert, candidates []candi
 	return sb.String()
 }
 
-// sanitizeForPrompt strips newlines from a field sourced from external input so
-// it cannot be used to inject additional prompt lines.
+// sanitizeForPrompt strips newlines (including Unicode equivalents) from a
+// field sourced from external input so it cannot inject additional prompt lines.
 func sanitizeForPrompt(s string) string {
-	return strings.NewReplacer("\n", " ", "\r", " ").Replace(s)
+	return strings.NewReplacer(
+		"\n", " ", "\r", " ", "\v", " ", "\f", " ",
+		" ", " ", " ", " ",
+	).Replace(s)
 }
 
 // parseCorrelationVerdict cleans LLM output and decodes it into a CorrelationVerdict.

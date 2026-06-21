@@ -71,7 +71,7 @@ func (s *SkillService) LinkAlertToIncident(ctx context.Context, incidentUUID str
 			FiredAt:           firedAt,
 			RawPayload:        alert.RawPayload,
 		}
-		if err := tx.Create(&row).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 			return fmt.Errorf("LinkAlertToIncident: insert alert: %w", err)
 		}
 

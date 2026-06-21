@@ -847,7 +847,9 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 				}
 
 				// Stream condensed progress to Slack (delta only, not full log).
-				progressStreamer.AppendStatus(outputLog)
+				if progressStreamer != nil {
+					progressStreamer.AppendStatus(outputLog)
+				}
 			},
 			OnCompleted: func(sid, output string, tokensUsed int, executionTimeMs int64) {
 				sessionID = sid
@@ -893,7 +895,9 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 		<-done
 
 		// Flush any buffered progress lines so the last status is not lost.
-		progressStreamer.Flush()
+		if progressStreamer != nil {
+			progressStreamer.Flush()
+		}
 
 		// Replacement run owns finalization — exit silently before touching
 		// the DB or channel reactions; the replacement posts its own final
