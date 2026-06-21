@@ -173,10 +173,9 @@ func TestRunRecurrenceUpdate_SuccessPath(t *testing.T) {
 	setupLWDB(t)
 
 	inc := &database.Incident{
-		UUID:           "blocked-4d",
-		Title:          "Service down for 4 days",
-		Status:         "running",
-		CorrelatedCount: 2,
+		UUID:   "blocked-4d",
+		Title:  "Service down for 4 days",
+		Status: "running",
 	}
 	svc := newLongWindowSkillService("new-spawn-uuid")
 	svc.addIncident(inc)

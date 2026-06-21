@@ -422,7 +422,6 @@ func (s *SkillService) AppendCorrelatedAlert(ctx context.Context, sourceUUID str
 			Where("uuid = ?", incidentUUID).
 			Updates(map[string]interface{}{
 				"context":          incident.Context,
-				"correlated_count": gorm.Expr("correlated_count + 1"),
 			}).Error; err != nil {
 			return fmt.Errorf("AppendCorrelatedAlert: update incident: %w", err)
 		}

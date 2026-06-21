@@ -600,8 +600,9 @@ func TestAppendCorrelatedAlert_IncrementsCorrelatedCount(t *testing.T) {
 	if err := db.Where("uuid = ?", incidentUUID).First(&incident).Error; err != nil {
 		t.Fatalf("load incident: %v", err)
 	}
-	if incident.CorrelatedCount != 3 {
-		t.Errorf("CorrelatedCount = %d, want 3", incident.CorrelatedCount)
+	// CorrelatedCount field removed; verify correlated_alerts context key instead
+	if incident.Context["correlated_alerts"] == nil {
+		t.Error("correlated_alerts context key not set after 3 AppendCorrelatedAlert calls")
 	}
 }
 

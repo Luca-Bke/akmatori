@@ -153,10 +153,8 @@ func runMigrations(db *gorm.DB) error {
 		&Channel{},
 		&CronJob{},
 		&CronJobTool{},
-		// Alert correlation gate
-		&AlertCorrelationLog{},
-		// Alert suppression gate
-		&AlertSuppressionLog{},
+		// Alerts (first-class alert rows attached to incidents)
+		&Alert{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
@@ -172,9 +170,9 @@ func runMigrations(db *gorm.DB) error {
 		return fmt.Errorf("failed to ensure channels default partial index: %w", err)
 	}
 
-	// Composite index on (suppress, scope) for the suppressor's signature query.
-	if err := ensureMemoriesSuppressScopeIndex(db); err != nil {
-		return fmt.Errorf("failed to ensure memories suppress/scope index: %w", err)
+	// Composite indexes on the alerts table.
+	if err := ensureAlertsIndexes(db); err != nil {
+		return fmt.Errorf("failed to ensure alerts indexes: %w", err)
 	}
 
 	// Composite index on (scope, type) for scope-scoped type-filtered queries.
@@ -210,6 +208,11 @@ func runMigrations(db *gorm.DB) error {
 	// (anthropic/claude-sonnet-4.6), so unmigrated rows would fail at runtime
 	// once an operator added an API key to the seeded OpenRouter row.
 	if err := migrateOpenRouterDashFormModels(db); err != nil {
+		return err
+	}
+
+	// Backfill alert rows for pre-existing alert-sourced incidents.
+	if err := migrateBackfillAlerts(db); err != nil {
 		return err
 	}
 
@@ -1253,6 +1256,113 @@ func GetOrCreateFormattingSettings() (*FormattingSettings, error) {
 // UpdateFormattingSettings persists changes to the formatting settings singleton.
 func UpdateFormattingSettings(settings *FormattingSettings) error {
 	return DB.Save(settings).Error
+}
+
+// ensureAlertsIndexes creates the composite and partial-unique indexes on the
+// alerts table. All statements use IF NOT EXISTS and are idempotent.
+func ensureAlertsIndexes(db *gorm.DB) error {
+	stmts := []struct {
+		name string
+		sql  string
+	}{
+		{
+			"idx_alerts_incident_status",
+			"CREATE INDEX IF NOT EXISTS idx_alerts_incident_status ON alerts (incident_uuid, status)",
+		},
+		{
+			"idx_alerts_source_sfp_status",
+			"CREATE INDEX IF NOT EXISTS idx_alerts_source_sfp_status ON alerts (source_uuid, source_fingerprint, status)",
+		},
+		{
+			"idx_alerts_source_fp_status_fired",
+			"CREATE INDEX IF NOT EXISTS idx_alerts_source_fp_status_fired ON alerts (source_uuid, fingerprint, status, fired_at)",
+		},
+		{
+			"uniq_firing_alert",
+			"CREATE UNIQUE INDEX IF NOT EXISTS uniq_firing_alert ON alerts (source_uuid, source_fingerprint) WHERE status = 'firing' AND source_fingerprint <> ''",
+		},
+	}
+	for _, s := range stmts {
+		if err := db.Exec(s.sql).Error; err != nil {
+			return fmt.Errorf("create %s: %w", s.name, err)
+		}
+	}
+	return nil
+}
+
+// migrateBackfillAlerts inserts one alerts row for each pre-existing
+// alert-sourced incident that does not yet have a matching alerts row.
+// Incidents recorded in alert_suppression_logs (if the table still exists) are
+// skipped. For already-completed or failed incidents the function also sets
+// monitor_until and flips status to "monitor". Idempotent.
+func migrateBackfillAlerts(db *gorm.DB) error {
+	if !db.Migrator().HasTable("alerts") {
+		return nil
+	}
+
+	q := `
+		SELECT uuid, source_uuid, status, started_at, completed_at, created_at, updated_at, context
+		FROM incidents
+		WHERE source_kind = 'alert'
+		  AND NOT EXISTS (SELECT 1 FROM alerts WHERE alerts.incident_uuid = incidents.uuid)`
+	if db.Migrator().HasTable("alert_suppression_logs") {
+		q += `
+		  AND uuid NOT IN (
+		    SELECT incident_uuid FROM alert_suppression_logs
+		    WHERE incident_uuid IS NOT NULL AND incident_uuid <> ''
+		  )`
+	}
+
+	var incidents []Incident
+	if err := db.Raw(q).Scan(&incidents).Error; err != nil {
+		return fmt.Errorf("migrateBackfillAlerts: query: %w", err)
+	}
+	if len(incidents) == 0 {
+		return nil
+	}
+
+	for _, inc := range incidents {
+		fingerprint, _ := inc.Context["alert_fingerprint"].(string)
+		sourceFingerprint, _ := inc.Context["source_fingerprint"].(string)
+		alertName, _ := inc.Context["alert_name"].(string)
+		targetHost, _ := inc.Context["target_host"].(string)
+		var rawPayload JSONB
+		if rp, ok := inc.Context["raw_payload"].(map[string]interface{}); ok {
+			rawPayload = JSONB(rp)
+		}
+
+		alert := Alert{
+			UUID:              uuid.New().String(),
+			IncidentUUID:      inc.UUID,
+			Status:            AlertStatusFiring,
+			Fingerprint:       fingerprint,
+			SourceUUID:        inc.SourceUUID,
+			SourceFingerprint: sourceFingerprint,
+			AlertName:         alertName,
+			TargetHost:        targetHost,
+			FiredAt:           inc.StartedAt,
+			RawPayload:        rawPayload,
+			CreatedAt:         inc.CreatedAt,
+			UpdatedAt:         inc.UpdatedAt,
+		}
+		if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error; err != nil {
+			slog.Warn("migrateBackfillAlerts: insert alert row", "incident_uuid", inc.UUID, "err", err)
+			continue
+		}
+
+		if (inc.Status == IncidentStatusCompleted || inc.Status == IncidentStatusFailed) && inc.CompletedAt != nil {
+			monitorUntil := inc.CompletedAt.Add(60 * time.Minute)
+			if err := db.Exec(
+				"UPDATE incidents SET monitor_until = ?, status = ? WHERE uuid = ? AND status IN ('completed','failed')",
+				monitorUntil, string(IncidentStatusMonitor), inc.UUID,
+			).Error; err != nil {
+				slog.Warn("migrateBackfillAlerts: set monitor_until", "incident_uuid", inc.UUID, "err", err)
+			}
+		}
+	}
+
+	slog.Info("migrateBackfillAlerts: backfilled alert rows", "count", len(incidents))
+	return nil
 }
 
 // ensureMemoriesSuppressScopeIndex creates a composite index on (suppress, scope)

@@ -2,6 +2,28 @@ package database
 
 import "time"
 
+// Alert represents a normalized alert attached to an incident.
+// Each firing alert creates one row; when the alert resolves, ResolvedAt is set.
+type Alert struct {
+	UUID              string      `gorm:"primaryKey;size:36;not null" json:"uuid"`
+	IncidentUUID      string      `gorm:"size:36;not null;index" json:"incident_uuid"`
+	Status            AlertStatus `gorm:"size:16;not null;default:'firing'" json:"status"`
+	Fingerprint       string      `gorm:"size:32;index" json:"fingerprint"`
+	SourceUUID        string      `gorm:"size:36;index" json:"source_uuid"`
+	SourceFingerprint string      `gorm:"size:255" json:"source_fingerprint"`
+	AlertName         string      `gorm:"size:255" json:"alert_name"`
+	TargetHost        string      `gorm:"size:255" json:"target_host"`
+	FiredAt           time.Time   `json:"fired_at"`
+	ResolvedAt        *time.Time  `json:"resolved_at,omitempty"`
+	RawPayload        JSONB       `gorm:"type:jsonb" json:"raw_payload"`
+	CreatedAt         time.Time   `json:"created_at"`
+	UpdatedAt         time.Time   `json:"updated_at"`
+}
+
+func (Alert) TableName() string {
+	return "alerts"
+}
+
 // ========== Alert Source Models ==========
 
 // AlertSourceType represents a type of alert source (e.g., Alertmanager, PagerDuty)

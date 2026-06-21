@@ -41,31 +41,31 @@ removed.
 - Modify: `internal/database/models_incidents.go`
 - Modify: `internal/database/db.go`
 
-- [ ] Create `models_alerts.go` with `Alert` struct (UUID, IncidentUUID, Status, Fingerprint,
+- [x] Create `models_alerts.go` with `Alert` struct (UUID, IncidentUUID, Status, Fingerprint,
       SourceUUID, SourceFingerprint, AlertName, TargetHost, FiredAt, ResolvedAt, RawPayload,
       CreatedAt, UpdatedAt), `AlertStatus` string type with constants `AlertStatusFiring = "firing"`
       and `AlertStatusResolved = "resolved"`, and `TableName() string` returning `"alerts"`
-- [ ] Add `IncidentStatusMonitor IncidentStatus = "monitor"` to the incident status constants in
+- [x] Add `IncidentStatusMonitor IncidentStatus = "monitor"` to the incident status constants in
       `models_incidents.go`
-- [ ] Add `MonitorUntil *time.Time` and `ResolvedAt *time.Time` to Incident struct; remove
+- [x] Add `MonitorUntil *time.Time` and `ResolvedAt *time.Time` to Incident struct; remove
       `CorrelatedCount int` field
-- [ ] Add `&Alert{}` to the `AutoMigrate` call in `db.go`; remove `&AlertCorrelationLog{}` and
+- [x] Add `&Alert{}` to the `AutoMigrate` call in `db.go`; remove `&AlertCorrelationLog{}` and
       `&AlertSuppressionLog{}` from the list (keep physical tables — non-destructive)
-- [ ] Remove the `ensureMemoriesSuppressScopeIndex(db)` call from `runMigrations` in `db.go`
-- [ ] Add post-migrate raw SQL in `db.go`: composite indexes on `(incident_uuid, status)`,
+- [x] Remove the `ensureMemoriesSuppressScopeIndex(db)` call from `runMigrations` in `db.go`
+- [x] Add post-migrate raw SQL in `db.go`: composite indexes on `(incident_uuid, status)`,
       `(source_uuid, source_fingerprint, status)`, `(source_uuid, fingerprint, status, fired_at)`
       on the `alerts` table (all `IF NOT EXISTS`)
-- [ ] Add post-migrate raw SQL: `CREATE UNIQUE INDEX IF NOT EXISTS uniq_firing_alert ON alerts
+- [x] Add post-migrate raw SQL: `CREATE UNIQUE INDEX IF NOT EXISTS uniq_firing_alert ON alerts
       (source_uuid, source_fingerprint) WHERE status='firing' AND source_fingerprint <> ''`
-- [ ] Add `migrateBackfillAlerts(db)` function: for each `source_kind='alert'` incident that has
+- [x] Add `migrateBackfillAlerts(db)` function: for each `source_kind='alert'` incident that has
       no rows in `alerts` yet, insert one `alerts` row extracting `fingerprint`, `source_uuid`,
       `source_fingerprint`, `alert_name`, `target_host`, `fired_at=started_at`, `raw_payload` from
       Context JSONB; skip incidents whose UUID appears in `alert_suppression_logs`; for
       already-completed/failed incidents also set
       `monitor_until = completed_at + 60 * interval '1 minute'` on the incident row; idempotent
       via `INSERT ... ON CONFLICT DO NOTHING`
-- [ ] Write tests: `Alert` model constants, `IncidentStatusMonitor` constant exists
-- [ ] Run `make test` — must pass before task 2
+- [x] Write tests: `Alert` model constants, `IncidentStatusMonitor` constant exists
+- [x] Run `make test` — must pass before task 2
 
 ### Task 2: Settings simplification
 

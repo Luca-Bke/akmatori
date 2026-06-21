@@ -226,17 +226,14 @@ func (h *AlertHandler) runRecurrenceUpdate(ctx context.Context, sourceUUID, inci
 		return fmt.Errorf("could not build LLM worker settings")
 	}
 
-	recurrenceN := incident.CorrelatedCount + 1
-
 	const recurrenceSystemPrompt = `You are an incident timeline writer. Given a recurring alert for a known open incident, write exactly 2 sentences describing what this recurrence means. Be factual and concise. Output plain text only, no JSON.`
 
 	userPrompt := fmt.Sprintf(
-		"Incident: %s\nStatus: %s\nAlert: %s (host: %s)\nThis is recurrence #%d of this alert. Previous correlation reasoning: %s\n\nWrite 2 sentences as a delta update for the incident timeline.",
+		"Incident: %s\nStatus: %s\nAlert: %s (host: %s)\nPrevious correlation reasoning: %s\n\nWrite 2 sentences as a delta update for the incident timeline.",
 		sanitizeRecurrenceField(incident.Title),
 		sanitizeRecurrenceField(string(incident.Status)),
 		sanitizeRecurrenceField(alert.AlertName),
 		sanitizeRecurrenceField(alert.TargetHost),
-		recurrenceN,
 		sanitizeRecurrenceField(verdict.Reasoning),
 	)
 
@@ -258,21 +255,13 @@ func (h *AlertHandler) runRecurrenceUpdate(ctx context.Context, sourceUUID, inci
 		return fmt.Errorf("append correlated alert: %w", err)
 	}
 
-	// Re-read the incident to get the atomically-incremented CorrelatedCount so
-	// concurrent recurrences post correct sequence numbers in their Slack messages.
-	if updated, err := h.skillService.GetIncident(incidentUUID); err == nil {
-		recurrenceN = updated.CorrelatedCount
-	} else {
-		slog.Warn("recurrence update: re-read incident failed, using estimated count", "incident_uuid", incidentUUID, "err", err)
-	}
-
 	// Post a short Slack thread reply to the incident's source thread, if known.
 	if incident.SlackChannelID != "" && incident.SlackMessageTS != "" {
-		msg := fmt.Sprintf("Recurring alert #%d: %s", recurrenceN, truncateForSlack(reasoning, 300))
+		msg := fmt.Sprintf("Recurring alert: %s", truncateForSlack(reasoning, 300))
 		h.postSlackThreadReply(incident.SlackChannelID, incident.SlackMessageTS, msg)
 	}
 
-	slog.Info("long-window recurrence update applied", "incident_uuid", incidentUUID, "recurrence", recurrenceN)
+	slog.Info("long-window recurrence update applied", "incident_uuid", incidentUUID)
 	return nil
 }
 

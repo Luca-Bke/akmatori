@@ -15,6 +15,7 @@ const (
 	IncidentStatusDiagnosed IncidentStatus = "diagnosed"
 	IncidentStatusCompleted IncidentStatus = "completed"
 	IncidentStatusFailed    IncidentStatus = "failed"
+	IncidentStatusMonitor   IncidentStatus = "monitor"
 )
 
 // IncidentSourceKind enumerates the trigger kinds that can spawn an incident.
@@ -43,15 +44,14 @@ type Incident struct {
 	ExecutionTimeMs int64          `json:"execution_time_ms"`         // Execution time in milliseconds
 	StartedAt       time.Time      `json:"started_at"`
 	CompletedAt     *time.Time     `json:"completed_at,omitempty"`
+	ResolvedAt      *time.Time     `json:"resolved_at,omitempty"`
+	MonitorUntil    *time.Time     `json:"monitor_until,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 
 	// Slack context fields (for thread replies to source messages)
 	SlackChannelID string `gorm:"column:slack_channel_id" json:"slack_channel_id"` // Slack channel ID where alert originated
 	SlackMessageTS string `gorm:"column:slack_message_ts" json:"slack_message_ts"` // Slack message timestamp for thread replies
-
-	// Correlation fields — populated when incoming alerts are deduped into this incident
-	CorrelatedCount int `gorm:"default:0" json:"correlated_count"` // number of subsequent alerts collapsed into this incident
 
 	// AlertFingerprint is a stable 32-char hex digest derived from
 	// sha256(json([sourceUUID, lower(alertName), lower(targetHost)])). It is
