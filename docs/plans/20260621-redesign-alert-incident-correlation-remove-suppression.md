@@ -199,25 +199,25 @@ removed.
 - Modify: `internal/database/db.go`
 - Modify: `internal/handlers/api_memories_test.go`
 
-- [ ] Delete the four backend files and four test files listed above
-- [ ] Remove `GET /api/stats/recurrence` route registration from `api.go`
-- [ ] Remove `PATCH /api/memories/{id}/suppress` route and `handleMemorySuppress` handler from
+- [x] Delete the four backend files and four test files listed above
+- [x] Remove `GET /api/stats/recurrence` route registration from `api.go`
+- [x] Remove `PATCH /api/memories/{id}/suppress` route and `handleMemorySuppress` handler from
       `api_memories.go`
-- [ ] Remove `SetSuppress(id uint, suppress bool) error` from `MemoryService` interface in
+- [x] Remove `SetSuppress(id uint, suppress bool) error` from `MemoryService` interface in
       `interfaces.go`
-- [ ] Remove `SetSuppress` method implementation from `memory_service.go`
-- [ ] Remove `Suppress bool` field from `Memory` struct in `models_context.go`
-- [ ] Simplify `limitManifestEntries` in `memory_service.go`: remove the suppress-always-show
+- [x] Remove `SetSuppress` method implementation from `memory_service.go`
+- [x] Remove `Suppress bool` field from `Memory` struct in `models_context.go`
+- [x] Simplify `limitManifestEntries` in `memory_service.go`: remove the suppress-always-show
       branch; cap all entries uniformly by `UpdatedAt` (most recent first, up to
       `manifestMaxEntriesPerScope`)
-- [ ] Remove `ensureMemoriesSuppressScopeIndex` function definition from `db.go` (call was
+- [x] Remove `ensureMemoriesSuppressScopeIndex` function definition from `db.go` (call was
       removed in Task 1)
-- [ ] Remove `TestSyncMemoryFiles_SuppressEntryAlwaysInManifest` from
+- [x] Remove `TestSyncMemoryFiles_SuppressEntryAlwaysInManifest` from
       `memory_service_sync_test.go`
-- [ ] Remove `TestMemoryService_SetSuppress_*` tests from `memory_service_test.go`
-- [ ] Remove all `SetSuppress` tests and `mockMemoryService.SetSuppress` method from
+- [x] Remove `TestMemoryService_SetSuppress_*` tests from `memory_service_test.go`
+- [x] Remove all `SetSuppress` tests and `mockMemoryService.SetSuppress` method from
       `api_memories_test.go`
-- [ ] Run `make test` — must pass before task 7
+- [x] Run `make test` — must pass before task 7
 
 ### Task 7: Frontend cleanup
 

@@ -155,25 +155,6 @@ func (s *MemoryService) DeleteMemory(id uint) error {
 	return nil
 }
 
-// SetSuppress flips the suppress flag on a single memory row and re-syncs
-// files so the on-disk MEMORY.md manifest reflects the change immediately.
-// Used by PATCH /api/memories/{id}/suppress.
-func (s *MemoryService) SetSuppress(id uint, suppress bool) error {
-	result := s.db.Model(&database.Memory{}).Where("id = ?", id).Update("suppress", suppress)
-	if result.Error != nil {
-		return fmt.Errorf("failed to update suppress flag: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return errMemoryNotFound
-	}
-	if err := s.SyncMemoryFiles(); err != nil {
-		// Sync is best-effort: the DB update already succeeded and the sync
-		// will be retried on the next memory write operation.
-		slog.Warn("suppress flag updated but file sync failed", "id", id, "err", err)
-	}
-	return nil
-}
-
 // GetMemory retrieves a single memory by ID.
 func (s *MemoryService) GetMemory(id uint) (*database.Memory, error) {
 	var m database.Memory
@@ -339,11 +320,10 @@ const (
 	manifestMaxBytes = 25 * 1024
 	manifestFile     = "MEMORY.md"
 
-	// manifestMaxEntriesPerScope caps the number of non-suppress entries written
-	// to a scope's MEMORY.md manifest. Suppress-flagged entries (suppression
-	// signatures) are always included regardless of this limit. Among non-suppress
-	// entries, the most-recently-updated ones fill the available slots; older
-	// entries are excluded from the manifest but their files remain on disk.
+	// manifestMaxEntriesPerScope caps the total entries written to a scope's
+	// MEMORY.md manifest. The most-recently-updated ones fill up to this many
+	// slots; older entries are excluded from the manifest but their files remain
+	// on disk.
 	manifestMaxEntriesPerScope = 150
 
 	// maxMemoryFileBytes caps the per-file size IngestFromDisk will read.
@@ -875,7 +855,7 @@ func (s *MemoryService) upsertByNameNoSync(m *database.Memory) (*database.Memory
 	if err := s.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "scope"}, {Name: "name"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"type", "description", "body", "incident_uuid", "suppress", "updated_at",
+			"type", "description", "body", "incident_uuid", "updated_at",
 		}),
 	}).Create(m).Error; err != nil {
 		return nil, fmt.Errorf("failed to upsert memory: %w", err)
@@ -955,7 +935,6 @@ func parseMemoryFile(data []byte, scope string) (*database.Memory, bool, error) 
 		Body:         body,
 		IncidentUUID: strings.TrimSpace(fm.IncidentUUID),
 		CreatedBy:    strings.TrimSpace(fm.CreatedBy),
-		Suppress:     fm.Suppress,
 	}, false, nil
 }
 
@@ -1003,10 +982,6 @@ func stripBodyHeader(body, name, description string) string {
 // asked to remove a memory (Action: delete <slug>). IngestFromDisk uses that
 // marker to delete the corresponding DB row and clean up both the bare
 // `<name>.md` tombstone and the canonical `<id>-<name>.md` snapshot.
-//
-// The Suppress field marks this memory as a known false-positive suppression
-// signature. The alert suppressor queries memories with suppress=true and uses
-// their body as pattern descriptions for the LLM matching call.
 type memoryFrontmatter struct {
 	Name         string `yaml:"name"`
 	Description  string `yaml:"description,omitempty"`
@@ -1015,7 +990,6 @@ type memoryFrontmatter struct {
 	IncidentUUID string `yaml:"incident_uuid,omitempty"`
 	CreatedBy    string `yaml:"created_by,omitempty"`
 	Deleted      bool   `yaml:"deleted,omitempty"`
-	Suppress     bool   `yaml:"suppress,omitempty"`
 }
 
 // renderMemoryFile produces the full markdown body for a single memory file.
@@ -1031,7 +1005,6 @@ func renderMemoryFile(m database.Memory) string {
 		Scope:        m.Scope,
 		IncidentUUID: m.IncidentUUID,
 		CreatedBy:    m.CreatedBy,
-		Suppress:     m.Suppress,
 	}
 	yamlBytes, err := yaml.Marshal(fm)
 	if err != nil {
@@ -1056,44 +1029,21 @@ func renderMemoryFile(m database.Memory) string {
 	return b.String()
 }
 
-// limitManifestEntries caps the entry list for a scope's manifest. Suppress-
-// flagged entries always appear regardless of age (they are suppression
-// signatures that the searcher must always see). Among non-suppress entries,
-// the most-recently-updated ones fill up to max slots; any beyond that are
+// limitManifestEntries caps the entry list for a scope's manifest. The
+// most-recently-updated entries fill up to max slots; any beyond that are
 // excluded and counted in the returned truncatedCount. Files for excluded
 // entries remain on disk — only the manifest is trimmed.
 func limitManifestEntries(entries []database.Memory, max int) (limited []database.Memory, truncated int) {
 	if len(entries) <= max {
 		return entries, 0
 	}
-	var suppress, rest []database.Memory
-	for _, m := range entries {
-		if m.Suppress {
-			suppress = append(suppress, m)
-		} else {
-			rest = append(rest, m)
-		}
-	}
-	// Sort non-suppress entries by most-recently-updated so the cap retains the
-	// freshest facts. The caller (SyncMemoryFiles) fetches by created_at desc;
-	// updated_at is more accurate for "recently changed" here.
-	sort.Slice(rest, func(i, j int) bool {
-		return rest[i].UpdatedAt.After(rest[j].UpdatedAt)
+	// Sort by most-recently-updated so the cap retains the freshest facts.
+	sorted := make([]database.Memory, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].UpdatedAt.After(sorted[j].UpdatedAt)
 	})
-	available := max - len(suppress)
-	if available < 0 {
-		available = 0
-	}
-	if len(rest) > available {
-		truncated = len(rest) - available
-		rest = rest[:available]
-	}
-	limited = append(suppress, rest...)
-	// Sort the combined result by updated_at desc for consistent manifest display.
-	sort.Slice(limited, func(i, j int) bool {
-		return limited[i].UpdatedAt.After(limited[j].UpdatedAt)
-	})
-	return limited, truncated
+	return sorted[:max], len(sorted) - max
 }
 
 // renderManifest builds the per-scope MEMORY.md table. Hard-capped at

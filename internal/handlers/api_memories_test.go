@@ -220,19 +220,6 @@ func (m *mockMemoryService) SyncMemoryFiles() error {
 	return nil
 }
 
-func (m *mockMemoryService) SetSuppress(id uint, suppress bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i := range m.memories {
-		if m.memories[i].ID == id {
-			m.memories[i].Suppress = suppress
-			m.syncCalls++
-			return nil
-		}
-	}
-	return fmt.Errorf("memory not found: %w", errFakeNotFound)
-}
-
 // errFakeNotFound is a sentinel that wraps services' own not-found semantics
 // so respondMemoryWriteError routes mock errors to 404 in tests where we
 // purposely set updateErr/deleteErr.
@@ -659,118 +646,6 @@ func TestHandleMemoryByID_Delete_RegeneratesPriorSkillScope(t *testing.T) {
 	}
 	if len(skill.regenerated) != 1 || skill.regenerated[0] != "redis-skill" {
 		t.Errorf("expected delete to regen redis-skill, got %v", skill.regenerated)
-	}
-}
-
-func TestHandleMemorySuppress_FlipsSuppressFlag(t *testing.T) {
-	mem := newMockMemoryService()
-	h := newMemoryAPIHandler(mem)
-
-	created, err := mem.CreateMemory(&database.Memory{
-		Scope: services.MemoryScopeGlobal, Type: services.MemoryTypeIncidentPattern,
-		Name: "nightly-disk-fp", Description: "Nightly disk false positive", Body: "body",
-	})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	// Suppress=false initially.
-	if created.Suppress {
-		t.Fatal("expected suppress=false on create")
-	}
-
-	// PATCH to set suppress=true.
-	w := doJSON(t, h, http.MethodPatch,
-		fmt.Sprintf("/api/memories/%d/suppress", created.ID),
-		SuppressRequest{Suppress: true})
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
-	}
-
-	var got database.Memory
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if !got.Suppress {
-		t.Errorf("expected suppress=true in response, got false")
-	}
-
-	// Verify the in-memory store was updated.
-	fetched, _ := mem.GetMemory(created.ID)
-	if !fetched.Suppress {
-		t.Errorf("expected suppress=true in store after PATCH")
-	}
-}
-
-func TestHandleMemorySuppress_UnflagWorks(t *testing.T) {
-	mem := newMockMemoryService()
-	h := newMemoryAPIHandler(mem)
-
-	created, _ := mem.CreateMemory(&database.Memory{
-		Scope: services.MemoryScopeGlobal, Type: services.MemoryTypeIncidentPattern,
-		Name: "known-pattern", Description: "desc", Body: "body",
-	})
-	// Seed as suppressed.
-	mem.SetSuppress(created.ID, true)
-
-	// PATCH to unset.
-	w := doJSON(t, h, http.MethodPatch,
-		fmt.Sprintf("/api/memories/%d/suppress", created.ID),
-		SuppressRequest{Suppress: false})
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
-	}
-
-	fetched, _ := mem.GetMemory(created.ID)
-	if fetched.Suppress {
-		t.Errorf("expected suppress=false after unflag")
-	}
-}
-
-func TestHandleMemorySuppress_NotFound(t *testing.T) {
-	mem := newMockMemoryService()
-	h := newMemoryAPIHandler(mem)
-
-	w := doJSON(t, h, http.MethodPatch, "/api/memories/999/suppress", SuppressRequest{Suppress: true})
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected 404 for unknown ID, got %d", w.Code)
-	}
-}
-
-func TestHandleMemorySuppress_WrongMethod(t *testing.T) {
-	mem := newMockMemoryService()
-	h := newMemoryAPIHandler(mem)
-
-	created, _ := mem.CreateMemory(&database.Memory{
-		Scope: services.MemoryScopeGlobal, Type: services.MemoryTypeIncidentPattern,
-		Name: "pattern", Description: "d", Body: "b",
-	})
-
-	w := doJSON(t, h, http.MethodPut, fmt.Sprintf("/api/memories/%d/suppress", created.ID), nil)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405 for wrong method, got %d", w.Code)
-	}
-}
-
-func TestHandleMemorySuppress_SkillScopeRegeneratesSkillMd(t *testing.T) {
-	mem := newMockMemoryService()
-	skill := &recordingSkillService{}
-	h := newMemoryAPIHandlerWithSkill(mem, skill)
-
-	created, _ := mem.CreateMemory(&database.Memory{
-		Scope: "my-skill", Type: services.MemoryTypeIncidentPattern,
-		Name: "skill-sig", Description: "d", Body: "b",
-	})
-	skill.regenerated = nil // reset after create
-
-	w := doJSON(t, h, http.MethodPatch,
-		fmt.Sprintf("/api/memories/%d/suppress", created.ID),
-		SuppressRequest{Suppress: true})
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
-	}
-	if len(skill.regenerated) != 1 || skill.regenerated[0] != "my-skill" {
-		t.Errorf("expected RegenerateSkillMd(\"my-skill\"), got %v", skill.regenerated)
 	}
 }
 

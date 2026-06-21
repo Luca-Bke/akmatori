@@ -31,7 +31,6 @@ func setupIncidentTestDB(t *testing.T) *gorm.DB {
 		&database.Alert{},
 		&database.LLMSettings{},
 		&database.GeneralSettings{},
-		&database.AlertCorrelationLog{},
 	)
 	if err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)

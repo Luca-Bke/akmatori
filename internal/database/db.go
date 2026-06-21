@@ -1365,17 +1365,6 @@ func migrateBackfillAlerts(db *gorm.DB) error {
 	return nil
 }
 
-// ensureMemoriesSuppressScopeIndex creates a composite index on (suppress, scope)
-// to speed up the suppressor's query for memories flagged as suppression signatures.
-// Idempotent (uses IF NOT EXISTS); works on both PostgreSQL and SQLite.
-func ensureMemoriesSuppressScopeIndex(db *gorm.DB) error {
-	stmt := "CREATE INDEX IF NOT EXISTS idx_memories_suppress_scope ON memories (suppress, scope)"
-	if err := db.Exec(stmt).Error; err != nil {
-		return fmt.Errorf("create idx_memories_suppress_scope: %w", err)
-	}
-	return nil
-}
-
 // ensureMemoriesScopeTypeIndex creates a composite index on (scope, type) to
 // speed up scope-scoped, type-filtered memory queries (e.g. memory-searcher
 // range queries that filter by scope and type). Idempotent (uses IF NOT EXISTS);
