@@ -268,7 +268,7 @@ removed.
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] Run `go test -coverprofile=coverage.out ./...` — must pass clean
-- [ ] Run `make test` — full Go test suite
-- [ ] Run `make test-web` — frontend tests
-- [ ] Run `make verify` — pre-commit full gate
+- [x] Run `go test -coverprofile=coverage.out ./...` — must pass clean
+- [x] Run `make test` — full Go test suite
+- [x] Run `make test-web` — frontend tests
+- [x] Run `make verify` — pre-commit full gate
