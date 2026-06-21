@@ -240,7 +240,7 @@ func buildCorrelationUserPrompt(alert alerts.NormalizedAlert, candidates []candi
 func sanitizeForPrompt(s string) string {
 	return strings.NewReplacer(
 		"\n", " ", "\r", " ", "\v", " ", "\f", " ",
-		" ", " ", " ", " ",
+		"\u2028", " ", "\u2029", " ",
 	).Replace(s)
 }
 
