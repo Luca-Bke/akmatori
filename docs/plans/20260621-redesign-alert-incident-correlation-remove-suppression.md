@@ -99,20 +99,20 @@ removed.
 **Files:**
 - Modify: `internal/services/alert_correlator.go`
 
-- [ ] Replace `CorrelationConfig` struct: keep `Enabled bool` only; remove all other fields
-- [ ] Add package-level consts: `correlationMaxCandidates = 25`, `correlationThreshold = 0.7`
-- [ ] Collapse `fetchCandidates` to a single DB query: `source_kind='alert' AND (status IN
+- [x] Replace `CorrelationConfig` struct: keep `Enabled bool` only; remove all other fields
+- [x] Add package-level consts: `correlationMaxCandidates = 25`, `correlationThreshold = 0.7`
+- [x] Collapse `fetchCandidates` to a single DB query: `source_kind='alert' AND (status IN
       ('pending','running','diagnosed') OR (status='monitor' AND monitor_until >= NOW()))`,
       `ORDER BY started_at DESC LIMIT correlationMaxCandidates`
-- [ ] Update `loadConfig` to read only `AlertCorrelationEnabled` from `GeneralSettings`
-- [ ] Remove `IsLongWindowMatch` from `CorrelationVerdict` struct; keep `Correlated`,
+- [x] Update `loadConfig` to read only `AlertCorrelationEnabled` from `GeneralSettings`
+- [x] Remove `IsLongWindowMatch` from `CorrelationVerdict` struct; keep `Correlated`,
       `IncidentUUID`, `Confidence`, `Reasoning`
-- [ ] Remove the `[KNOWN OPEN ISSUE]` long-window labeling from prompt construction; keep
+- [x] Remove the `[KNOWN OPEN ISSUE]` long-window labeling from prompt construction; keep
       hallucination guard and JSON parse unchanged
-- [ ] Update `alert_correlator_test.go`: remove long-window test cases and multi-query tests; add
+- [x] Update `alert_correlator_test.go`: remove long-window test cases and multi-query tests; add
       tests for single-predicate (monitor incident within window → candidate; expired monitor_until
       → not a candidate); remove any reference to `IsLongWindowMatch`
-- [ ] Run `make test` — must pass before task 4
+- [x] Run `make test` — must pass before task 4
 
 ### Task 4: Incident service refactor
 

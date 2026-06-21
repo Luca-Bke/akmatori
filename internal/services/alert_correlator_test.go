@@ -26,7 +26,6 @@ func setupCorrelatorDB(t *testing.T) *gorm.DB {
 		&database.Incident{},
 		&database.LLMSettings{},
 		&database.GeneralSettings{},
-		&database.AlertSuppressionLog{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
@@ -49,7 +48,7 @@ func setupCorrelatorDB(t *testing.T) *gorm.DB {
 }
 
 // seedCorrelationSettings inserts a GeneralSettings row that enables the correlator.
-func seedCorrelationSettings(t *testing.T, db *gorm.DB, enabled bool, _, _ int, _ float64) {
+func seedCorrelationSettings(t *testing.T, db *gorm.DB, enabled bool) {
 	t.Helper()
 	if err := db.Create(&database.GeneralSettings{
 		AlertCorrelationEnabled: &enabled,
@@ -117,31 +116,10 @@ func TestAlertCorrelator_NilCaller_NoLLMCall(t *testing.T) {
 	}
 }
 
-func TestAlertCorrelator_EmptyWindow_NoLLMCall(t *testing.T) {
-	db := setupCorrelatorDB(t)
-	// Seed an incident that is outside the window (2 hours ago, window is 30m).
-	seedIncident(t, db, "inc-old", "CPU high on web01", "running", time.Now().Add(-2*time.Hour))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
-
-	caller := &fakeOneShotLLMCaller{}
-	c := newCorrelator(t, caller, db)
-
-	verdict, err := c.Correlate(context.Background(), "src-1", alerts.NormalizedAlert{AlertName: "CPUHigh"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if verdict.Correlated {
-		t.Error("expected Correlated=false when no candidates in window")
-	}
-	if caller.callCount() != 0 {
-		t.Errorf("expected 0 LLM calls when candidates empty, got %d", caller.callCount())
-	}
-}
-
 func TestAlertCorrelator_ConfidentMatch_AboveThreshold(t *testing.T) {
 	db := setupCorrelatorDB(t)
 	seedIncident(t, db, "inc-match", "CPU high on web01", "running", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -170,7 +148,7 @@ func TestAlertCorrelator_ConfidentMatch_AboveThreshold(t *testing.T) {
 func TestAlertCorrelator_ConfidentMatch_BelowThreshold(t *testing.T) {
 	db := setupCorrelatorDB(t)
 	seedIncident(t, db, "inc-low", "CPU high on web01", "running", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -194,7 +172,7 @@ func TestAlertCorrelator_ConfidentMatch_BelowThreshold(t *testing.T) {
 func TestAlertCorrelator_NotCorrelated(t *testing.T) {
 	db := setupCorrelatorDB(t)
 	seedIncident(t, db, "inc-unrelated", "Disk full on db01", "running", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -217,7 +195,7 @@ func TestAlertCorrelator_NotCorrelated(t *testing.T) {
 func TestAlertCorrelator_HallucinatedUUID_ForcedFalse(t *testing.T) {
 	db := setupCorrelatorDB(t)
 	seedIncident(t, db, "inc-real", "CPU high on web01", "running", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -237,9 +215,9 @@ func TestAlertCorrelator_HallucinatedUUID_ForcedFalse(t *testing.T) {
 
 func TestAlertCorrelator_FailedIncidentExcluded(t *testing.T) {
 	db := setupCorrelatorDB(t)
-	// Only a failed incident in the window — should not be a candidate.
+	// Only a failed incident — should not be a candidate.
 	seedIncident(t, db, "inc-failed", "CPU high on web01", "failed", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	c := newCorrelator(t, caller, db)
@@ -259,7 +237,7 @@ func TestAlertCorrelator_FailedIncidentExcluded(t *testing.T) {
 func TestAlertCorrelator_WorkerNotConnected_ReturnedAsIs(t *testing.T) {
 	db := setupCorrelatorDB(t)
 	seedIncident(t, db, "inc-3", "CPU high on web01", "running", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -276,7 +254,7 @@ func TestAlertCorrelator_WorkerNotConnected_ReturnedAsIs(t *testing.T) {
 func TestAlertCorrelator_MalformedJSON_Silent(t *testing.T) {
 	db := setupCorrelatorDB(t)
 	seedIncident(t, db, "inc-4", "CPU high on web01", "running", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -343,38 +321,6 @@ func TestCorrelationVerdict_IsConfident(t *testing.T) {
 	}
 }
 
-func TestCorrelationConfigWithDefaults_AppliesDefaults(t *testing.T) {
-	cfg := CorrelationConfigWithDefaults(CorrelationConfig{})
-	if cfg.Window != 30*time.Minute {
-		t.Errorf("expected Window=30m, got %v", cfg.Window)
-	}
-	if cfg.MaxCandidates != 20 {
-		t.Errorf("expected MaxCandidates=20, got %d", cfg.MaxCandidates)
-	}
-	if cfg.Threshold != 0.7 {
-		t.Errorf("expected Threshold=0.7, got %f", cfg.Threshold)
-	}
-	// Enabled should remain false (zero value).
-	if cfg.Enabled {
-		t.Error("Enabled should default to false")
-	}
-}
-
-func TestCorrelationConfigWithDefaults_PreservesNonZero(t *testing.T) {
-	cfg := CorrelationConfigWithDefaults(CorrelationConfig{
-		Enabled:       true,
-		Window:        10 * time.Minute,
-		MaxCandidates: 5,
-		Threshold:     0.8,
-	})
-	if cfg.Window != 10*time.Minute || cfg.MaxCandidates != 5 || cfg.Threshold != 0.8 {
-		t.Errorf("non-zero values should be preserved: %+v", cfg)
-	}
-	if !cfg.Enabled {
-		t.Error("Enabled should be preserved")
-	}
-}
-
 // TestAlertCorrelator_DBStoredFlagOff_NoLLMCall verifies that a GeneralSettings
 // row with enabled=false prevents any LLM call even when candidates exist.
 func TestAlertCorrelator_DBStoredFlagOff_NoLLMCall(t *testing.T) {
@@ -409,7 +355,7 @@ func TestAlertCorrelator_DBStoredFlagOff_NoLLMCall(t *testing.T) {
 func TestAlertCorrelator_Threshold_DefaultApplied(t *testing.T) {
 	db := setupCorrelatorDB(t)
 	seedIncident(t, db, "inc-thresh", "CPU high on web01", "running", time.Now().Add(-5*time.Minute))
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -424,10 +370,10 @@ func TestAlertCorrelator_Threshold_DefaultApplied(t *testing.T) {
 	if !verdict.Correlated {
 		t.Error("expected Correlated=true from LLM response")
 	}
-	// Threshold is hardcoded at 0.7; confidence 0.85 must be confident.
+	// Threshold is hardcoded at correlationThreshold (0.7); confidence 0.85 must be confident.
 	thresh := c.Threshold()
-	if thresh != 0.7 {
-		t.Errorf("expected Threshold()=0.7, got %f", thresh)
+	if thresh != correlationThreshold {
+		t.Errorf("expected Threshold()=%v, got %f", correlationThreshold, thresh)
 	}
 	if !verdict.IsConfident(thresh) {
 		t.Error("expected IsConfident(0.7)=true for confidence 0.85")
@@ -449,7 +395,7 @@ func TestBuildCorrelationUserPrompt_ContainsAlertAndCandidates(t *testing.T) {
 			StartedAt: time.Now().Add(-10 * time.Minute),
 		},
 	}
-	prompt := buildCorrelationUserPrompt(alert, candidates, map[string]struct{}{})
+	prompt := buildCorrelationUserPrompt(alert, candidates)
 
 	if !strings.Contains(prompt, "DiskFull") {
 		t.Error("prompt should contain alert name")
@@ -465,272 +411,73 @@ func TestBuildCorrelationUserPrompt_ContainsAlertAndCandidates(t *testing.T) {
 	}
 }
 
-// seedIncidentWithFingerprint inserts an incident with the given fingerprint.
-func seedIncidentWithFingerprint(t *testing.T, db *gorm.DB, uuid, title, status, fingerprint string, startedAt time.Time) {
-	t.Helper()
+// TestFetchCandidates_MonitorWithinWindow_IsCandidate verifies that a monitor-status
+// incident with monitor_until in the future is included in candidates.
+func TestFetchCandidates_MonitorWithinWindow_IsCandidate(t *testing.T) {
+	db := setupCorrelatorDB(t)
+
+	futureUntil := time.Now().Add(30 * time.Minute)
 	inc := database.Incident{
-		UUID:             uuid,
-		Source:           "test",
-		SourceKind:       database.IncidentSourceKindAlert,
-		SourceUUID:       "src-1",
-		Title:            title,
-		Status:           database.IncidentStatus(status),
-		StartedAt:        startedAt,
-		Response:         "blocked — awaiting vendor fix",
-		AlertFingerprint: fingerprint,
+		UUID:         "monitor-active",
+		Source:       "test",
+		SourceKind:   database.IncidentSourceKindAlert,
+		SourceUUID:   "src-1",
+		Title:        "CPU high - in monitor",
+		Status:       database.IncidentStatusMonitor,
+		StartedAt:    time.Now().Add(-2 * time.Hour),
+		MonitorUntil: &futureUntil,
 	}
 	if err := db.Create(&inc).Error; err != nil {
-		t.Fatalf("seed fingerprint incident %s: %v", uuid, err)
+		t.Fatalf("seed: %v", err)
 	}
-}
-
-// TestFetchCandidates_LongWindowMatch verifies that a fingerprint-matching
-// incident with status 'running' started 4 days ago is returned in the long-window
-// set but NOT in the standard 30m window, and its UUID appears in longWindowUUIDs.
-func TestFetchCandidates_LongWindowMatch(t *testing.T) {
-	db := setupCorrelatorDB(t)
-
-	fp := "abc123fingerprint"
-	// Incident started 4 days ago — outside the 30m standard window.
-	fourDaysAgo := time.Now().Add(-4 * 24 * time.Hour)
-	seedIncidentWithFingerprint(t, db, "long-inc", "Service down for 4d", "running", fp, fourDaysAgo)
 
 	c := NewAlertCorrelator(nil, db)
-	candidates, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 24*time.Hour, 7, 20)
+	candidates, err := c.fetchCandidates(context.Background())
 	if err != nil {
 		t.Fatalf("fetchCandidates: %v", err)
 	}
 
 	found := false
 	for _, row := range candidates {
-		if row.UUID == "long-inc" {
+		if row.UUID == "monitor-active" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected long-window incident to be in the candidates list")
-	}
-	if _, ok := longWindowUUIDs["long-inc"]; !ok {
-		t.Error("expected long-inc to appear in longWindowUUIDs")
+		t.Error("expected monitor incident with future monitor_until to be a candidate")
 	}
 }
 
-// TestFetchCandidates_ResolvedExcludedFromLongWindow verifies that a completed
-// (resolved) incident is not returned by the long-window query.
-func TestFetchCandidates_ResolvedExcludedFromLongWindow(t *testing.T) {
+// TestFetchCandidates_MonitorExpired_NotCandidate verifies that a monitor-status
+// incident whose monitor_until is in the past is excluded from candidates.
+func TestFetchCandidates_MonitorExpired_NotCandidate(t *testing.T) {
 	db := setupCorrelatorDB(t)
 
-	fp := "resolvedfp"
-	fourDaysAgo := time.Now().Add(-4 * 24 * time.Hour)
-	// 'completed' incident — should be excluded from long-window (which only includes running/diagnosed).
-	seedIncidentWithFingerprint(t, db, "resolved-inc", "Old resolved issue", "completed", fp, fourDaysAgo)
+	pastUntil := time.Now().Add(-5 * time.Minute)
+	inc := database.Incident{
+		UUID:         "monitor-expired",
+		Source:       "test",
+		SourceKind:   database.IncidentSourceKindAlert,
+		SourceUUID:   "src-1",
+		Title:        "CPU high - monitor expired",
+		Status:       database.IncidentStatusMonitor,
+		StartedAt:    time.Now().Add(-3 * time.Hour),
+		MonitorUntil: &pastUntil,
+	}
+	if err := db.Create(&inc).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
 	c := NewAlertCorrelator(nil, db)
-	_, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 24*time.Hour, 7, 20)
-	if err != nil {
-		t.Fatalf("fetchCandidates: %v", err)
-	}
-	if _, ok := longWindowUUIDs["resolved-inc"]; ok {
-		t.Error("completed incident must not appear in longWindowUUIDs")
-	}
-}
-
-// TestFetchCandidates_EmptyFingerprintNoLongWindow verifies that the long-window
-// query is skipped entirely when fingerprint is empty.
-func TestFetchCandidates_EmptyFingerprintNoLongWindow(t *testing.T) {
-	db := setupCorrelatorDB(t)
-
-	fourDaysAgo := time.Now().Add(-4 * 24 * time.Hour)
-	seedIncidentWithFingerprint(t, db, "nofp-inc", "Blocked issue", "running", "somefp", fourDaysAgo)
-
-	c := NewAlertCorrelator(nil, db)
-	// Empty fingerprint — no long-window query should run.
-	_, longWindowUUIDs, err := c.fetchCandidates(context.Background(), "", 30*time.Minute, 24*time.Hour, 7, 20)
-	if err != nil {
-		t.Fatalf("fetchCandidates: %v", err)
-	}
-	if len(longWindowUUIDs) != 0 {
-		t.Errorf("expected empty longWindowUUIDs when fingerprint is empty, got %v", longWindowUUIDs)
-	}
-}
-
-// TestCorrelate_LongWindowMatch_SetsIsLongWindowMatch verifies the end-to-end
-// path: a fingerprint-matching running incident older than the standard window
-// causes IsLongWindowMatch=true in the verdict.
-func TestCorrelate_LongWindowMatch_SetsIsLongWindowMatch(t *testing.T) {
-	db := setupCorrelatorDB(t)
-
-	// Use the same fingerprint the correlator will compute.
-	fp := ComputeAlertFingerprint("src-1", "CPUHigh", "web01")
-
-	// Seed a running incident 4 days old — long-window only.
-	fourDaysAgo := time.Now().Add(-4 * 24 * time.Hour)
-	seedIncidentWithFingerprint(t, db, "blocked-inc", "CPU blocked 4d", "running", fp, fourDaysAgo)
-
-	enabled := true
-	if err := db.Create(&database.GeneralSettings{
-		AlertCorrelationEnabled: &enabled,
-	}).Error; err != nil {
-		t.Fatalf("seed settings: %v", err)
-	}
-
-	caller := &fakeOneShotLLMCaller{}
-	caller.respond = func(_ context.Context) (string, error) {
-		return `{"correlated":true,"incident_uuid":"blocked-inc","confidence":0.92,"reasoning":"same host blocked"}`, nil
-	}
-	c := NewAlertCorrelator(caller, db)
-
-	verdict, err := c.Correlate(context.Background(), "src-1", alerts.NormalizedAlert{AlertName: "CPUHigh", TargetHost: "web01"})
-	if err != nil {
-		t.Fatalf("Correlate: %v", err)
-	}
-	if !verdict.Correlated {
-		t.Error("expected Correlated=true")
-	}
-	if verdict.IncidentUUID != "blocked-inc" {
-		t.Errorf("expected matched UUID blocked-inc, got %q", verdict.IncidentUUID)
-	}
-	if !verdict.IsLongWindowMatch {
-		t.Error("expected IsLongWindowMatch=true for 4-day-old incident matched via long-window")
-	}
-}
-
-// TestBuildCorrelationUserPrompt_LongWindowLabel verifies that a long-window
-// candidate is labeled with the [KNOWN OPEN ISSUE] marker in the prompt.
-func TestBuildCorrelationUserPrompt_LongWindowLabel(t *testing.T) {
-	alert := alerts.NormalizedAlert{AlertName: "DiskFull", TargetHost: "db01"}
-	candidates := []candidateRow{
-		{UUID: "short-inc", Title: "Short window inc", Status: "completed", StartedAt: time.Now().Add(-5 * time.Minute)},
-		{UUID: "long-inc", Title: "Long window blocked inc", Status: "running", StartedAt: time.Now().Add(-96 * time.Hour)},
-	}
-	longWindowUUIDs := map[string]struct{}{"long-inc": {}}
-
-	prompt := buildCorrelationUserPrompt(alert, candidates, longWindowUUIDs)
-
-	if !strings.Contains(prompt, "KNOWN OPEN ISSUE") {
-		t.Error("expected [KNOWN OPEN ISSUE] label for long-window candidate")
-	}
-	// Short-window candidate should NOT have the label.
-	if strings.Contains(prompt, "short-inc") && strings.Contains(prompt, "KNOWN OPEN ISSUE") {
-		// This is a coarse check; need to verify the label is only on the long candidate.
-		// A more precise check: the label should NOT appear near short-inc.
-		shortIdx := strings.Index(prompt, "short-inc")
-		longIdx := strings.Index(prompt, "KNOWN OPEN ISSUE")
-		if longIdx < shortIdx {
-			t.Error("expected KNOWN OPEN ISSUE label to appear AFTER short-inc entry")
-		}
-	}
-}
-
-// TestCorrelationConfigWithDefaults_LongWindowDays verifies LongWindowDays defaults to 7.
-func TestCorrelationConfigWithDefaults_LongWindowDays(t *testing.T) {
-	cfg := CorrelationConfigWithDefaults(CorrelationConfig{})
-	if cfg.LongWindowDays != 7 {
-		t.Errorf("expected default LongWindowDays=7, got %d", cfg.LongWindowDays)
-	}
-}
-
-// TestCorrelationConfigWithDefaults_FingerprintWindowDefault verifies FingerprintWindow
-// defaults to 24h (1440 minutes) when not set.
-func TestCorrelationConfigWithDefaults_FingerprintWindowDefault(t *testing.T) {
-	cfg := CorrelationConfigWithDefaults(CorrelationConfig{})
-	if cfg.FingerprintWindow != 24*time.Hour {
-		t.Errorf("expected default FingerprintWindow=24h, got %v", cfg.FingerprintWindow)
-	}
-}
-
-// TestFetchCandidates_FingerprintWindowMatchAt2h verifies that a fingerprint-matching
-// incident started 2 hours ago (outside the standard 30m window) IS found when
-// FingerprintWindow=1440m (24h).
-func TestFetchCandidates_FingerprintWindowMatchAt2h(t *testing.T) {
-	db := setupCorrelatorDB(t)
-
-	fp := "fp-2hour-test"
-	twoHoursAgo := time.Now().Add(-2 * time.Hour)
-	// running status so it also qualifies for long-window, but 2h is within
-	// the fingerprint window (24h) — should appear via query 2, NOT longWindowUUIDs.
-	// Must NOT be completed: query 2 excludes completed incidents so that
-	// AppendCorrelatedAlert is never called against a closed investigation.
-	seedIncidentWithFingerprint(t, db, "fp-2h-inc", "Service down", "running", fp, twoHoursAgo)
-
-	c := NewAlertCorrelator(nil, db)
-	candidates, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 24*time.Hour, 7, 20)
-	if err != nil {
-		t.Fatalf("fetchCandidates: %v", err)
-	}
-
-	found := false
-	for _, row := range candidates {
-		if row.UUID == "fp-2h-inc" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected 2h-old fingerprint-matching incident to be found with FingerprintWindow=24h")
-	}
-	// Must NOT be in longWindowUUIDs (it was found via fingerprint query, not long-window).
-	if _, ok := longWindowUUIDs["fp-2h-inc"]; ok {
-		t.Error("2h incident found via fingerprint window must not be in longWindowUUIDs")
-	}
-}
-
-// TestFetchCandidates_NonFingerprintAt40m_NotFound verifies that a legacy (empty
-// fingerprint) incident started 40 minutes ago is NOT found when the standard
-// window is 30 minutes — the fingerprint-gated wider window does not apply to
-// empty-fingerprint rows.
-func TestFetchCandidates_NonFingerprintAt40m_NotFound(t *testing.T) {
-	db := setupCorrelatorDB(t)
-
-	// Seed a 40m-old incident with no fingerprint (legacy row).
-	fortyMinutesAgo := time.Now().Add(-40 * time.Minute)
-	seedIncident(t, db, "legacy-40m", "Legacy alert", "running", fortyMinutesAgo)
-
-	// Use a non-empty fingerprint for the incoming alert.
-	incomingFP := "some-incoming-fingerprint"
-	c := NewAlertCorrelator(nil, db)
-	candidates, _, err := c.fetchCandidates(context.Background(), incomingFP, 30*time.Minute, 24*time.Hour, 7, 20)
+	candidates, err := c.fetchCandidates(context.Background())
 	if err != nil {
 		t.Fatalf("fetchCandidates: %v", err)
 	}
 
 	for _, row := range candidates {
-		if row.UUID == "legacy-40m" {
-			t.Error("legacy 40m incident must not be found: standard window is 30m and it has no matching fingerprint")
+		if row.UUID == "monitor-expired" {
+			t.Error("expected monitor incident with expired monitor_until to be excluded from candidates")
 		}
-	}
-}
-
-// TestFetchCandidates_FingerprintWindowShorterThanLongWindow verifies that an
-// incident started 2 days ago (within 7d long-window but outside 24h fingerprint
-// window default) is found only via the long-window query and appears in
-// longWindowUUIDs.
-func TestFetchCandidates_FingerprintWindowShorterThanLongWindow(t *testing.T) {
-	db := setupCorrelatorDB(t)
-
-	fp := "fp-2day"
-	twoDaysAgo := time.Now().Add(-2 * 24 * time.Hour)
-	seedIncidentWithFingerprint(t, db, "2day-running", "Ongoing issue", "running", fp, twoDaysAgo)
-
-	c := NewAlertCorrelator(nil, db)
-	// FingerprintWindow=1h (shorter than 2 days), LongWindowDays=7.
-	candidates, longWindowUUIDs, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 1*time.Hour, 7, 20)
-	if err != nil {
-		t.Fatalf("fetchCandidates: %v", err)
-	}
-
-	found := false
-	for _, row := range candidates {
-		if row.UUID == "2day-running" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected 2-day running incident to be found via long-window query")
-	}
-	if _, ok := longWindowUUIDs["2day-running"]; !ok {
-		t.Error("2-day running incident should be in longWindowUUIDs (found only via long-window)")
 	}
 }

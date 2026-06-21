@@ -69,62 +69,32 @@ func TestComputeAlertFingerprint_Length(t *testing.T) {
 	}
 }
 
-// TestFetchCandidates_FingerprintFilter verifies that fetchCandidates returns
-// only incidents whose alert_fingerprint matches the incoming fingerprint OR
-// whose fingerprint is empty (legacy rows).
-func TestFetchCandidates_FingerprintFilter(t *testing.T) {
+// TestFetchCandidates_ActiveIncidentsReturned verifies that active incidents
+// (running, pending, diagnosed) are included in candidates.
+func TestFetchCandidates_ActiveIncidentsReturned(t *testing.T) {
 	db := setupCorrelatorDB(t)
 
-	fp := ComputeAlertFingerprint("src-1", "CPUHigh", "web01")
-
-	// Seed an incident with the matching fingerprint.
-	match := database.Incident{
-		UUID:             "fp-match",
-		Source:           "test",
-		SourceKind:       database.IncidentSourceKindAlert,
-		SourceUUID:       "src-1",
-		Title:            "CPU high",
-		Status:           database.IncidentStatusRunning,
-		StartedAt:        time.Now().Add(-5 * time.Minute),
-		AlertFingerprint: fp,
-	}
-	if err := db.Create(&match).Error; err != nil {
-		t.Fatalf("seed match: %v", err)
-	}
-
-	// Seed an incident with a different fingerprint.
-	noMatch := database.Incident{
-		UUID:             "fp-nomatch",
-		Source:           "test",
-		SourceKind:       database.IncidentSourceKindAlert,
-		SourceUUID:       "src-1",
-		Title:            "Disk full",
-		Status:           database.IncidentStatusRunning,
-		StartedAt:        time.Now().Add(-5 * time.Minute),
-		AlertFingerprint: ComputeAlertFingerprint("src-1", "DiskFull", "db01"),
-	}
-	if err := db.Create(&noMatch).Error; err != nil {
-		t.Fatalf("seed nomatch: %v", err)
-	}
-
-	// Seed a legacy incident with no fingerprint (empty string).
-	legacy := database.Incident{
-		UUID:             "fp-legacy",
-		Source:           "test",
-		SourceKind:       database.IncidentSourceKindAlert,
-		SourceUUID:       "src-1",
-		Title:            "Legacy",
-		Status:           database.IncidentStatusRunning,
-		StartedAt:        time.Now().Add(-5 * time.Minute),
-		AlertFingerprint: "",
-	}
-	if err := db.Create(&legacy).Error; err != nil {
-		t.Fatalf("seed legacy: %v", err)
+	for _, status := range []database.IncidentStatus{
+		database.IncidentStatusRunning,
+		database.IncidentStatusPending,
+		database.IncidentStatusDiagnosed,
+	} {
+		inc := database.Incident{
+			UUID:       "inc-" + string(status),
+			Source:     "test",
+			SourceKind: database.IncidentSourceKindAlert,
+			SourceUUID: "src-1",
+			Title:      "test",
+			Status:     status,
+			StartedAt:  time.Now().Add(-5 * time.Minute),
+		}
+		if err := db.Create(&inc).Error; err != nil {
+			t.Fatalf("seed %s: %v", status, err)
+		}
 	}
 
 	c := NewAlertCorrelator(nil, db)
-
-	candidates, _, err := c.fetchCandidates(context.Background(), fp, 30*time.Minute, 24*time.Hour, 7, 20)
+	candidates, err := c.fetchCandidates(context.Background())
 	if err != nil {
 		t.Fatalf("fetchCandidates: %v", err)
 	}
@@ -134,55 +104,20 @@ func TestFetchCandidates_FingerprintFilter(t *testing.T) {
 		uuids[row.UUID] = true
 	}
 
-	if !uuids["fp-match"] {
-		t.Error("expected matching fingerprint incident to be returned")
-	}
-	if !uuids["fp-legacy"] {
-		t.Error("expected legacy (empty fingerprint) incident to be returned")
-	}
-	if uuids["fp-nomatch"] {
-		t.Error("expected non-matching fingerprint incident to be excluded")
-	}
-}
-
-// TestFetchCandidates_EmptyFingerprintPassthrough verifies that when the
-// incoming fingerprint is empty (edge case), all candidates are returned
-// (no filter applied).
-func TestFetchCandidates_EmptyFingerprintPassthrough(t *testing.T) {
-	db := setupCorrelatorDB(t)
-
-	fp := ComputeAlertFingerprint("src-1", "CPUHigh", "web01")
-
-	inc := database.Incident{
-		UUID:             "fp-any",
-		Source:           "test",
-		SourceKind:       database.IncidentSourceKindAlert,
-		SourceUUID:       "src-1",
-		Title:            "Any",
-		Status:           database.IncidentStatusRunning,
-		StartedAt:        time.Now().Add(-5 * time.Minute),
-		AlertFingerprint: fp,
-	}
-	if err := db.Create(&inc).Error; err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	c := NewAlertCorrelator(nil, db)
-
-	// Pass empty fingerprint — all qualifying candidates should be returned.
-	candidates, _, err := c.fetchCandidates(context.Background(), "", 30*time.Minute, 24*time.Hour, 7, 20)
-	if err != nil {
-		t.Fatalf("fetchCandidates: %v", err)
-	}
-	if len(candidates) == 0 {
-		t.Error("expected at least one candidate when fingerprint is empty")
+	for _, status := range []database.IncidentStatus{
+		database.IncidentStatusRunning,
+		database.IncidentStatusPending,
+		database.IncidentStatusDiagnosed,
+	} {
+		if !uuids["inc-"+string(status)] {
+			t.Errorf("expected %s incident to be a candidate", status)
+		}
 	}
 }
 
-// TestCorrelate_UsesFingerprint verifies the end-to-end path: Correlate
-// computes the fingerprint internally and uses it to filter candidates, so the
-// LLM is only given same-identity incidents.
-func TestCorrelate_UsesFingerprint(t *testing.T) {
+// TestCorrelate_EndToEnd verifies the end-to-end path: Correlate makes an LLM
+// call when active candidates exist and returns a verdict.
+func TestCorrelate_EndToEnd(t *testing.T) {
 	db := setupCorrelatorDB(t)
 
 	fp := ComputeAlertFingerprint("src-1", "CPUHigh", "web01")
@@ -202,22 +137,7 @@ func TestCorrelate_UsesFingerprint(t *testing.T) {
 		t.Fatalf("seed match: %v", err)
 	}
 
-	irrelevant := database.Incident{
-		UUID:             "corr-fp-other",
-		Source:           "test",
-		SourceKind:       database.IncidentSourceKindAlert,
-		SourceUUID:       "src-1",
-		Title:            "Disk full",
-		Status:           database.IncidentStatusRunning,
-		StartedAt:        time.Now().Add(-5 * time.Minute),
-		AlertFingerprint: ComputeAlertFingerprint("src-1", "DiskFull", "db01"),
-		Response:         "disk investigation",
-	}
-	if err := db.Create(&irrelevant).Error; err != nil {
-		t.Fatalf("seed irrelevant: %v", err)
-	}
-
-	seedCorrelationSettings(t, db, true, 30, 20, 0.7)
+	seedCorrelationSettings(t, db, true)
 
 	caller := &fakeOneShotLLMCaller{}
 	caller.respond = func(_ context.Context) (string, error) {
@@ -234,13 +154,9 @@ func TestCorrelate_UsesFingerprint(t *testing.T) {
 		t.Fatalf("Correlate: %v", err)
 	}
 
-	// The user prompt sent to the LLM should include the matching incident but
-	// NOT the disk-full one.
+	// The prompt should contain the active candidate incident.
 	capturedPrompt := caller.lastUser
 	if !strings.Contains(capturedPrompt, "corr-fp-match") {
-		t.Error("expected prompt to contain matching fingerprint incident UUID")
-	}
-	if strings.Contains(capturedPrompt, "corr-fp-other") {
-		t.Error("expected prompt to exclude non-matching fingerprint incident UUID")
+		t.Error("expected prompt to contain active candidate incident UUID")
 	}
 }

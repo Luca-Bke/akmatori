@@ -154,7 +154,7 @@ func (h *AlertHandler) correlate(ctx context.Context, sourceUUID string, alert a
 }
 
 // correlationThreshold returns the configured correlation confidence threshold,
-// or the CorrelationConfigWithDefaults default (0.7) when no correlator is wired.
+// or the hardcoded default (0.7) when no correlator is wired.
 func (h *AlertHandler) correlationThreshold() float64 {
 	if h.alertCorrelator != nil {
 		return h.alertCorrelator.Threshold()
