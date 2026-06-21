@@ -203,25 +203,25 @@ func TestDefaultIncidentManagerPrompt_SingleMemorySearcherInvocation(t *testing.
 	}
 }
 
-// TestDefaultIncidentManagerPrompt_FPVerdictSuppressGuidance verifies that the
-// incident-manager prompt instructs the agent to set suppress:true in the
-// memory-writer task when the verdict is a false positive or self-healing.
-func TestDefaultIncidentManagerPrompt_FPVerdictSuppressGuidance(t *testing.T) {
-	tests := []struct {
-		name     string
-		contains string
-	}{
-		{"suppress true instruction", "suppress:true"},
-		{"false positive trigger", "false positive"},
-		{"self-healing trigger", "self-healing"},
-		{"safe to suppress trigger", "safe to suppress"},
-		{"memory-writer agent referenced", `"agent": "memory-writer"`},
+// TestDefaultIncidentManagerPrompt_MemoryWriterGuidance verifies that the
+// incident-manager prompt instructs the agent to use memory-writer for durable
+// findings, and that stale suppression guidance (suppress:true) is absent.
+func TestDefaultIncidentManagerPrompt_MemoryWriterGuidance(t *testing.T) {
+	present := []string{
+		`"agent": "memory-writer"`,
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !strings.Contains(DefaultIncidentManagerPrompt, tt.contains) {
-				t.Errorf("DefaultIncidentManagerPrompt should contain %q for suppress guidance", tt.contains)
-			}
-		})
+	absent := []string{
+		"suppress:true",
+		"safe to suppress",
+	}
+	for _, s := range present {
+		if !strings.Contains(DefaultIncidentManagerPrompt, s) {
+			t.Errorf("DefaultIncidentManagerPrompt should contain %q", s)
+		}
+	}
+	for _, s := range absent {
+		if strings.Contains(DefaultIncidentManagerPrompt, s) {
+			t.Errorf("DefaultIncidentManagerPrompt must not contain stale suppression guidance %q", s)
+		}
 	}
 }

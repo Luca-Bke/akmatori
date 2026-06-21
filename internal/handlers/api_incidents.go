@@ -63,11 +63,29 @@ func (h *APIHandler) handleIncidents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Populate alert_count for each incident from the alerts table.
-		for i := range incidents {
-			var cnt int64
-			db.Model(&database.Alert{}).Where("incident_uuid = ?", incidents[i].UUID).Count(&cnt)
-			incidents[i].AlertCount = cnt
+		// Populate alert_count for each incident from the alerts table (single batch query).
+		if len(incidents) > 0 {
+			uuids := make([]string, len(incidents))
+			for i, inc := range incidents {
+				uuids[i] = inc.UUID
+			}
+			type alertCountRow struct {
+				IncidentUUID string
+				Count        int64
+			}
+			var rows []alertCountRow
+			db.Model(&database.Alert{}).
+				Select("incident_uuid, COUNT(*) as count").
+				Where("incident_uuid IN ?", uuids).
+				Group("incident_uuid").
+				Scan(&rows)
+			counts := make(map[string]int64, len(rows))
+			for _, r := range rows {
+				counts[r.IncidentUUID] = r.Count
+			}
+			for i := range incidents {
+				incidents[i].AlertCount = counts[incidents[i].UUID]
+			}
 		}
 
 		api.RespondJSON(w, http.StatusOK, api.PaginatedResponse{

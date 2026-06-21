@@ -318,7 +318,7 @@ func (s *SkillService) UpdateIncidentComplete(incidentUUID string, status databa
 		return fmt.Errorf("failed to update incident: %w", err)
 	}
 
-	if status == database.IncidentStatusCompleted && s.memoryIngester != nil {
+	if (status == database.IncidentStatusCompleted || status == database.IncidentStatusFailed) && s.memoryIngester != nil {
 		// Detached: the request context may already be cancelled by the time
 		// this runs, so a fresh background context is used. Failures are
 		// logged-only — ingest is best-effort and must not affect the caller.
