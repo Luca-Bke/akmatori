@@ -59,12 +59,12 @@ export default function IncidentDetailView({ incident, autoRefresh = false }: In
   const [alertsLoading, setAlertsLoading] = useState(false);
   const [alertsError, setAlertsError] = useState('');
   const [expandedReasoning, setExpandedReasoning] = useState<Set<string>>(new Set());
-  const alertsFetchedRef = useRef(false);
+  const alertsFetchedForRef = useRef<string | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Reset alert fetch state and active tab when the viewed incident changes.
   useEffect(() => {
-    alertsFetchedRef.current = false;
+    alertsFetchedForRef.current = null;
     setAlerts(null);
     setAlertsError('');
     setActiveTab('reasoning');
@@ -77,14 +77,29 @@ export default function IncidentDetailView({ incident, autoRefresh = false }: In
     }
   }, [incident.full_log, activeTab]);
 
-  // Lazy-fetch alerts on first tab open
+  // Lazy-fetch alerts on first tab open. We track the fetched UUID rather than
+  // a boolean so that a fetch cancelled mid-flight (tab/incident switch) does
+  // not permanently block a later retry for the same incident.
   useEffect(() => {
-    if (activeTab !== 'alerts' || alertsFetchedRef.current) return;
-    alertsFetchedRef.current = true;
+    if (activeTab !== 'alerts' || alertsFetchedForRef.current === incident.uuid) return;
     setAlertsLoading(true);
+    let cancelled = false;
     incidentsApi.getAlerts(incident.uuid)
-      .then(data => { setAlerts(data); setAlertsLoading(false); })
-      .catch(err => { setAlertsError(String(err)); setAlertsLoading(false); });
+      .then(data => {
+        if (!cancelled) {
+          alertsFetchedForRef.current = incident.uuid;
+          setAlerts(data);
+          setAlertsLoading(false);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          alertsFetchedForRef.current = incident.uuid;
+          setAlertsError(String(err));
+          setAlertsLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
   }, [activeTab, incident.uuid]);
 
   const parsedLog = useMemo(() => {

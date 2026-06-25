@@ -165,7 +165,15 @@ export default function Incidents() {
         try {
           const updated = await incidentsApi.get(selectedIncident.uuid);
           setSelectedIncident(updated);
-          setIncidents(prev => prev.map(i => i.uuid === updated.uuid ? updated : i));
+          setIncidents(prev => prev.map(i => {
+            if (i.uuid !== updated.uuid) return i;
+            return {
+              ...updated,
+              first_seen: updated.first_seen ?? i.first_seen,
+              last_seen: updated.last_seen ?? i.last_seen,
+              trend: updated.trend ?? i.trend,
+            };
+          }));
         } catch (err) {
           console.error('Failed to refresh incident:', err);
         }
@@ -217,7 +225,7 @@ export default function Incidents() {
             Cron
           </span>
         );
-      case 'slack':
+      case 'slack_mention':
         return (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
             Slack
