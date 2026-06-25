@@ -314,6 +314,29 @@ func (h *APIHandler) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleIncidentAlerts handles GET /api/incidents/{uuid}/alerts — returns the
+// alert rows attached to an incident, ordered by fired_at ASC.
+func (h *APIHandler) handleIncidentAlerts(w http.ResponseWriter, r *http.Request) {
+	uuid := r.PathValue("uuid")
+
+	db := database.GetDB()
+
+	// Verify incident exists first.
+	var count int64
+	if err := db.Model(&database.Incident{}).Where("uuid = ?", uuid).Count(&count).Error; err != nil || count == 0 {
+		api.RespondError(w, http.StatusNotFound, "Incident not found")
+		return
+	}
+
+	var alerts []database.Alert
+	if err := db.Where("incident_uuid = ?", uuid).Order("fired_at ASC").Find(&alerts).Error; err != nil {
+		api.RespondError(w, http.StatusInternalServerError, "Failed to get alerts")
+		return
+	}
+
+	api.RespondJSON(w, http.StatusOK, alerts)
+}
+
 // handleIncidentByID handles GET /api/incidents/:uuid
 func (h *APIHandler) handleIncidentByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

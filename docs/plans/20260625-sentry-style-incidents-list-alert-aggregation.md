@@ -64,10 +64,10 @@ Replace the flat incidents table with a Sentry-style issues list showing alert a
 - Modify: `internal/handlers/api.go`
 - Modify: `internal/handlers/api_incidents.go`
 
-- [ ] In `api.go` beside the existing incident routes, add `mux.HandleFunc("GET /api/incidents/{uuid}/alerts", h.handleIncidentAlerts)` — use exact-method prefix routing so it resolves before the wildcard `/api/incidents/` catch-all
-- [ ] Append `handleIncidentAlerts` to `api_incidents.go`: extract `uuid` via `r.PathValue("uuid")`, query `Where("incident_uuid = ?", uuid).Order("fired_at ASC").Find(&alerts)`, respond JSON; 404 if the incident doesn't exist (check incident row first)
-- [ ] Write handler test: fixture incident with two alert rows, GET returns them ordered by `fired_at` ASC; assert correlation fields present on the correlated row
-- [ ] Run `make test`
+- [x] In `api.go` beside the existing incident routes, add `mux.HandleFunc("GET /api/incidents/{uuid}/alerts", h.handleIncidentAlerts)` — use exact-method prefix routing so it resolves before the wildcard `/api/incidents/` catch-all
+- [x] Append `handleIncidentAlerts` to `api_incidents.go`: extract `uuid` via `r.PathValue("uuid")`, query `Where("incident_uuid = ?", uuid).Order("fired_at ASC").Find(&alerts)`, respond JSON; 404 if the incident doesn't exist (check incident row first)
+- [x] Write handler test: fixture incident with two alert rows, GET returns them ordered by `fired_at` ASC; assert correlation fields present on the correlated row
+- [x] Run `make test`
 
 ### Task 5: Frontend — extend types + API client
 

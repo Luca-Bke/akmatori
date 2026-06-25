@@ -115,8 +115,9 @@ func (h *APIHandler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/tools", h.handleTools)
 	mux.HandleFunc("/api/tools/", h.handleToolByID)
 
-	// Incidents
+	// Incidents — exact-method prefix routes resolve before the wildcard catch-all.
 	mux.HandleFunc("/api/incidents", h.handleIncidents)
+	mux.HandleFunc("GET /api/incidents/{uuid}/alerts", h.handleIncidentAlerts)
 	mux.HandleFunc("/api/incidents/", h.handleIncidentByID)
 
 	// Slack settings (removed; returns 410 Gone — use /api/integrations and
