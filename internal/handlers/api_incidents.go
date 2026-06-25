@@ -63,28 +63,75 @@ func (h *APIHandler) handleIncidents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Populate alert_count for each incident from the alerts table (single batch query).
+		// Enrich incidents with alert aggregation fields.
 		if len(incidents) > 0 {
 			uuids := make([]string, len(incidents))
 			for i, inc := range incidents {
 				uuids[i] = inc.UUID
 			}
-			type alertCountRow struct {
+
+			// Parse trend_window (default "1h", also accept "3h").
+			trendWindowParam := r.URL.Query().Get("trend_window")
+			var trendWindow time.Duration
+			switch trendWindowParam {
+			case "3h":
+				trendWindow = 3 * time.Hour
+			default:
+				trendWindow = time.Hour
+			}
+
+			// Batch 1: count + first/last seen per incident.
+			type alertAggRow struct {
 				IncidentUUID string
 				Count        int64
+				FirstSeen    *time.Time
+				LastSeen     *time.Time
 			}
-			var rows []alertCountRow
+			var aggRows []alertAggRow
 			db.Model(&database.Alert{}).
-				Select("incident_uuid, COUNT(*) as count").
+				Select("incident_uuid, COUNT(*) as count, MIN(fired_at) as first_seen, MAX(fired_at) as last_seen").
 				Where("incident_uuid IN ?", uuids).
 				Group("incident_uuid").
-				Scan(&rows)
-			counts := make(map[string]int64, len(rows))
-			for _, r := range rows {
-				counts[r.IncidentUUID] = r.Count
+				Scan(&aggRows)
+			aggMap := make(map[string]alertAggRow, len(aggRows))
+			for _, row := range aggRows {
+				aggMap[row.IncidentUUID] = row
 			}
+
+			// Batch 2: timestamps within the trend window for sparkline.
+			windowStart := time.Now().Add(-trendWindow)
+			type alertTsRow struct {
+				IncidentUUID string
+				FiredAt      time.Time
+			}
+			var tsRows []alertTsRow
+			db.Model(&database.Alert{}).
+				Select("incident_uuid, fired_at").
+				Where("incident_uuid IN ? AND fired_at >= ?", uuids, windowStart).
+				Scan(&tsRows)
+			tsMap := make(map[string][]time.Time, len(incidents))
+			for _, row := range tsRows {
+				tsMap[row.IncidentUUID] = append(tsMap[row.IncidentUUID], row.FiredAt)
+			}
+
+			const trendBuckets = 12
+			windowEnd := time.Now()
+			zeroTrend := make([]int, trendBuckets)
+
 			for i := range incidents {
-				incidents[i].AlertCount = counts[incidents[i].UUID]
+				uuid := incidents[i].UUID
+				if agg, ok := aggMap[uuid]; ok {
+					incidents[i].AlertCount = agg.Count
+					incidents[i].FirstSeen = agg.FirstSeen
+					incidents[i].LastSeen = agg.LastSeen
+				}
+				if ts, ok := tsMap[uuid]; ok {
+					incidents[i].Trend = bucketTimestamps(ts, windowStart, windowEnd, trendBuckets)
+				} else {
+					trend := make([]int, trendBuckets)
+					copy(trend, zeroTrend)
+					incidents[i].Trend = trend
+				}
 			}
 		}
 

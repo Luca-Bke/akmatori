@@ -32,13 +32,13 @@ Replace the flat incidents table with a Sentry-style issues list showing alert a
 - Create: `internal/handlers/incident_trend.go`
 - Modify: `internal/handlers/api_incidents.go`
 
-- [ ] Create `internal/handlers/incident_trend.go` with unexported `bucketTimestamps(events []time.Time, start, end time.Time, buckets int) []int` — divide the window into N equal buckets, count events falling in each, return slice of length N
-- [ ] In `api_incidents.go` GET list branch: read `trend_window` query param (`"1h"` default, `"3h"` accepted); parse it to a `time.Duration`
-- [ ] Replace the existing single COUNT batch query with two batch queries: (1) `SELECT incident_uuid, COUNT(*) AS count, MIN(fired_at) AS first_seen, MAX(fired_at) AS last_seen FROM alerts WHERE incident_uuid IN ? GROUP BY incident_uuid` — populate `AlertCount`, `FirstSeen`, `LastSeen`; (2) `SELECT incident_uuid, fired_at FROM alerts WHERE incident_uuid IN ? AND fired_at >= ?` (now - window) → collect per-incident slices of `time.Time`; call `bucketTimestamps` (12 fixed buckets) per incident; populate `Trend`; assign zero-filled `[]int{0,...,0}` (len 12) for incidents with no alerts in window
-- [ ] Add a struct for the windowed rows query to avoid ambiguous scan
-- [ ] Write unit tests for `bucketTimestamps` in `internal/handlers/incident_trend_test.go`: empty events, all events in one bucket, events spanning all buckets, window boundary edge cases
-- [ ] Write handler test asserting `GET /api/incidents?trend_window=1h` returns `first_seen`, `last_seen`, and 12-element `trend` alongside `alert_count`
-- [ ] Run `make test`
+- [x] Create `internal/handlers/incident_trend.go` with unexported `bucketTimestamps(events []time.Time, start, end time.Time, buckets int) []int` — divide the window into N equal buckets, count events falling in each, return slice of length N
+- [x] In `api_incidents.go` GET list branch: read `trend_window` query param (`"1h"` default, `"3h"` accepted); parse it to a `time.Duration`
+- [x] Replace the existing single COUNT batch query with two batch queries: (1) `SELECT incident_uuid, COUNT(*) AS count, MIN(fired_at) AS first_seen, MAX(fired_at) AS last_seen FROM alerts WHERE incident_uuid IN ? GROUP BY incident_uuid` — populate `AlertCount`, `FirstSeen`, `LastSeen`; (2) `SELECT incident_uuid, fired_at FROM alerts WHERE incident_uuid IN ? AND fired_at >= ?` (now - window) → collect per-incident slices of `time.Time`; call `bucketTimestamps` (12 fixed buckets) per incident; populate `Trend`; assign zero-filled `[]int{0,...,0}` (len 12) for incidents with no alerts in window
+- [x] Add a struct for the windowed rows query to avoid ambiguous scan
+- [x] Write unit tests for `bucketTimestamps` in `internal/handlers/incident_trend_test.go`: empty events, all events in one bucket, events spanning all buckets, window boundary edge cases
+- [x] Write handler test asserting `GET /api/incidents?trend_window=1h` returns `first_seen`, `last_seen`, and 12-element `trend` alongside `alert_count`
+- [x] Run `make test`
 
 ### Task 3: Persist correlation verdict — extend LinkAlertToIncident through the stack
 
