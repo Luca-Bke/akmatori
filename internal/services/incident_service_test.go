@@ -687,7 +687,7 @@ func TestLinkAlertToIncident_PersistsCorrelationFields(t *testing.T) {
 	}
 
 	var row database.Alert
-	if err := db.Where("incident_uuid = ?", incidentUUID).First(&row).Error; err != nil {
+	if err := db.Where("incident_uuid = ? AND correlated = ?", incidentUUID, true).First(&row).Error; err != nil {
 		t.Fatalf("load alert row: %v", err)
 	}
 	if !row.Correlated {
