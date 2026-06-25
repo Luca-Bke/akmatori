@@ -108,6 +108,49 @@ func TestHandleIncidentAlerts_OrderedByFiredAt(t *testing.T) {
 	}
 }
 
+// TestHandleIncidentAlerts_EmptySlice verifies that a valid incident with no
+// alerts returns 200 with an empty JSON array (not 404 or 500).
+func TestHandleIncidentAlerts_EmptySlice(t *testing.T) {
+	testhelpers.NewGlobalSQLiteDB(t,
+		&database.Incident{},
+		&database.Alert{},
+	)
+	db := database.GetDB()
+
+	incUUID := uuid.New().String()
+	if err := db.Create(&database.Incident{
+		UUID:       incUUID,
+		Source:     "test",
+		SourceKind: database.IncidentSourceKindAlert,
+		SourceUUID: "src-empty-alerts",
+		Title:      "empty alerts test",
+		Status:     database.IncidentStatusRunning,
+		StartedAt:  time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("seed incident: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h.SetupRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/incidents/"+incUUID+"/alerts", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var alerts []map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&alerts); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(alerts) != 0 {
+		t.Errorf("expected empty alerts array, got %d alerts", len(alerts))
+	}
+}
+
 // TestHandleIncidentAlerts_NotFound verifies that a 404 is returned for an
 // unknown incident UUID.
 func TestHandleIncidentAlerts_NotFound(t *testing.T) {

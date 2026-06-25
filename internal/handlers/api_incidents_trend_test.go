@@ -159,9 +159,14 @@ func TestHandleIncidents_NoAlerts_ZeroTrend(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	dataBytes, _ := json.Marshal(resp.Data)
+	dataBytes, err := json.Marshal(resp.Data)
+	if err != nil {
+		t.Fatalf("re-encode data: %v", err)
+	}
 	var incidents []map[string]interface{}
-	_ = json.Unmarshal(dataBytes, &incidents)
+	if err := json.Unmarshal(dataBytes, &incidents); err != nil {
+		t.Fatalf("decode incidents: %v", err)
+	}
 
 	if len(incidents) != 1 {
 		t.Fatalf("expected 1 incident, got %d", len(incidents))
@@ -177,5 +182,83 @@ func TestHandleIncidents_NoAlerts_ZeroTrend(t *testing.T) {
 		if int(v.(float64)) != 0 {
 			t.Errorf("trend[%d] = %v, want 0", i, v)
 		}
+	}
+}
+
+// TestHandleIncidents_TrendWindow_3h verifies that an alert fired 2 hours ago
+// appears in the trend when ?trend_window=3h but not with ?trend_window=1h.
+func TestHandleIncidents_TrendWindow_3h(t *testing.T) {
+	testhelpers.NewGlobalSQLiteDB(t,
+		&database.Incident{},
+		&database.Alert{},
+	)
+	db := database.GetDB()
+
+	incUUID := uuid.New().String()
+	now := time.Now().UTC()
+	firedAt := now.Add(-2 * time.Hour) // outside 1h, inside 3h
+
+	if err := db.Create(&database.Incident{
+		UUID:       incUUID,
+		Source:     "test",
+		SourceKind: database.IncidentSourceKindAlert,
+		SourceUUID: "src-3h-test",
+		Title:      "3h trend test",
+		Status:     database.IncidentStatusRunning,
+		StartedAt:  firedAt,
+	}).Error; err != nil {
+		t.Fatalf("seed incident: %v", err)
+	}
+	if err := db.Create(&database.Alert{
+		UUID:         uuid.New().String(),
+		IncidentUUID: incUUID,
+		Status:       database.AlertStatusFiring,
+		AlertName:    "OldAlert",
+		TargetHost:   "host1",
+		FiredAt:      firedAt,
+	}).Error; err != nil {
+		t.Fatalf("seed alert: %v", err)
+	}
+
+	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	getSum := func(window string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/incidents?trend_window="+window, nil)
+		rec := httptest.NewRecorder()
+		h.handleIncidents(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for window=%s, got %d: %s", window, rec.Code, rec.Body.String())
+		}
+		var resp api.PaginatedResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		dataBytes, err := json.Marshal(resp.Data)
+		if err != nil {
+			t.Fatalf("re-encode data: %v", err)
+		}
+		var incidents []map[string]interface{}
+		if err := json.Unmarshal(dataBytes, &incidents); err != nil {
+			t.Fatalf("decode incidents: %v", err)
+		}
+		if len(incidents) != 1 {
+			t.Fatalf("expected 1 incident, got %d", len(incidents))
+		}
+		trend, ok := incidents[0]["trend"].([]interface{})
+		if !ok {
+			t.Fatalf("trend field missing or wrong type")
+		}
+		sum := 0
+		for _, v := range trend {
+			sum += int(v.(float64))
+		}
+		return sum
+	}
+
+	if sum := getSum("1h"); sum != 0 {
+		t.Errorf("1h window: trend sum = %d, want 0 (alert is 2h old)", sum)
+	}
+	if sum := getSum("3h"); sum != 1 {
+		t.Errorf("3h window: trend sum = %d, want 1 (alert is 2h old, within 3h)", sum)
 	}
 }

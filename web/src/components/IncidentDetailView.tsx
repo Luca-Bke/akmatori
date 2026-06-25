@@ -62,6 +62,13 @@ export default function IncidentDetailView({ incident, autoRefresh = false }: In
   const alertsFetchedRef = useRef(false);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // Reset alert fetch state when the viewed incident changes.
+  useEffect(() => {
+    alertsFetchedRef.current = false;
+    setAlerts(null);
+    setAlertsError('');
+  }, [incident.uuid]);
+
   // Auto-scroll to bottom when log updates
   useEffect(() => {
     if (logContainerRef.current && activeTab === 'reasoning') {

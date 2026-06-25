@@ -148,7 +148,7 @@ Rules:
 - gate is flag-gated (`AlertCorrelationEnabled` in `GeneralSettings`, default false); when disabled, no LLM call is made and all alerts spawn normally (fail-open)
 - `AlertCorrelator` is constructed with `NewAlertCorrelator(caller, db)`; wired via `alertHandler.SetAlertCorrelator(c)`; reads config live — changes take effect without a restart
 - both `processAlert` and `ProcessAlertFromListenerChannel` wrap the evaluate-and-spawn block in `h.spawnGroup.Do(key, ...)`; singleflight followers are no-ops — the partial-unique index on `alerts` handles burst dedup
-- on a confident match: `skillService.LinkAlertToIncident` attaches the alert row to the existing incident; if the incident is in `monitor` status, `monitor_until` is extended by the window; no new investigation is spawned
+- on a confident match: `skillService.LinkAlertToIncident(ctx, incidentUUID, sourceUUID, alert, verdict.Confidence, verdict.Reasoning)` attaches the alert row to the existing incident, persisting `Correlated=true`, `CorrelationConfidence`, and `CorrelationReasoning`; if the incident is in `monitor` status, `monitor_until` is extended by the window; no new investigation is spawned
 - on no-match or error (fail-open): `SpawnIncidentManager` then `InsertFiringAlert`; resolved alerts go to `processResolvedAlert`
 - `fetchCandidates` runs a single query: `source_kind='alert' AND (status IN ('pending','running','diagnosed') OR (status='monitor' AND monitor_until >= NOW()))`, `ORDER BY started_at DESC LIMIT 25`
 - `ErrWorkerNotConnected` is fail-open (alert spawns normally)
@@ -222,6 +222,8 @@ Rules:
 - `internal/handlers/api_channels.go` - Channels CRUD (with filters)
 - `internal/handlers/api_cron_jobs.go` - Cron jobs CRUD + manual `/run` fire
 - `internal/handlers/alert_processor.go` - main investigation path; sets `source_kind`/`source_uuid`
+- `internal/handlers/api_incidents.go` - incidents list (GET, paginated, enriched with `alert_count`/`first_seen`/`last_seen`/`trend`); `GET /api/incidents/{uuid}/alerts` returns alert rows ordered by `fired_at ASC`; accepts `?trend_window=1h|3h`
+- `internal/handlers/incident_trend.go` - `bucketTimestamps(ts, start, end, n)` helper for sparkline bucket generation
 - `internal/handlers/alert_slack.go` - outbound routing via `ChannelService` + `ProviderRegistry`
 - `internal/handlers/slack_processor.go` - Slack message and mention handling; reads `Channel.ExtractionPrompt`
 - `internal/handlers/slack_progress.go` - reasoning-line streaming for Slack banner

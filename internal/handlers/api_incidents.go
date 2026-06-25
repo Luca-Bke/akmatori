@@ -88,35 +88,38 @@ func (h *APIHandler) handleIncidents(w http.ResponseWriter, r *http.Request) {
 				LastSeen     *time.Time
 			}
 			var aggRows []alertAggRow
-			db.Model(&database.Alert{}).
+			if err := db.Model(&database.Alert{}).
 				Select("incident_uuid, COUNT(*) as count, MIN(fired_at) as first_seen, MAX(fired_at) as last_seen").
 				Where("incident_uuid IN ?", uuids).
 				Group("incident_uuid").
-				Scan(&aggRows)
+				Scan(&aggRows).Error; err != nil {
+				slog.Warn("failed to fetch alert aggregates", "err", err)
+			}
 			aggMap := make(map[string]alertAggRow, len(aggRows))
 			for _, row := range aggRows {
 				aggMap[row.IncidentUUID] = row
 			}
 
 			// Batch 2: timestamps within the trend window for sparkline.
-			windowStart := time.Now().Add(-trendWindow)
+			windowEnd := time.Now()
+			windowStart := windowEnd.Add(-trendWindow)
 			type alertTsRow struct {
 				IncidentUUID string
 				FiredAt      time.Time
 			}
 			var tsRows []alertTsRow
-			db.Model(&database.Alert{}).
+			if err := db.Model(&database.Alert{}).
 				Select("incident_uuid, fired_at").
 				Where("incident_uuid IN ? AND fired_at >= ?", uuids, windowStart).
-				Scan(&tsRows)
+				Scan(&tsRows).Error; err != nil {
+				slog.Warn("failed to fetch alert timestamps", "err", err)
+			}
 			tsMap := make(map[string][]time.Time, len(incidents))
 			for _, row := range tsRows {
 				tsMap[row.IncidentUUID] = append(tsMap[row.IncidentUUID], row.FiredAt)
 			}
 
 			const trendBuckets = 12
-			windowEnd := time.Now()
-			zeroTrend := make([]int, trendBuckets)
 
 			for i := range incidents {
 				uuid := incidents[i].UUID
@@ -128,9 +131,7 @@ func (h *APIHandler) handleIncidents(w http.ResponseWriter, r *http.Request) {
 				if ts, ok := tsMap[uuid]; ok {
 					incidents[i].Trend = bucketTimestamps(ts, windowStart, windowEnd, trendBuckets)
 				} else {
-					trend := make([]int, trendBuckets)
-					copy(trend, zeroTrend)
-					incidents[i].Trend = trend
+					incidents[i].Trend = make([]int, trendBuckets)
 				}
 			}
 		}
@@ -323,7 +324,11 @@ func (h *APIHandler) handleIncidentAlerts(w http.ResponseWriter, r *http.Request
 
 	// Verify incident exists first.
 	var count int64
-	if err := db.Model(&database.Incident{}).Where("uuid = ?", uuid).Count(&count).Error; err != nil || count == 0 {
+	if err := db.Model(&database.Incident{}).Where("uuid = ?", uuid).Count(&count).Error; err != nil {
+		api.RespondError(w, http.StatusInternalServerError, "Failed to verify incident")
+		return
+	}
+	if count == 0 {
 		api.RespondError(w, http.StatusNotFound, "Incident not found")
 		return
 	}

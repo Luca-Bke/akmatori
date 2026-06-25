@@ -18,7 +18,7 @@ const DEFAULT_REFRESH_INTERVAL = 60000;
 
 const formatRelative = (iso: string): string => {
   const diffMs = Date.now() - new Date(iso).getTime();
-  const diffSec = Math.floor(diffMs / 1000);
+  const diffSec = Math.max(0, Math.floor(diffMs / 1000));
   if (diffSec < 60) return `${diffSec}s`;
   const diffMin = Math.floor(diffSec / 60);
   if (diffMin < 60) return `${diffMin}m`;
@@ -198,7 +198,7 @@ export default function Incidents() {
       case 'failed':
         return { class: 'badge-error', icon: AlertCircle, label: 'Failed', subLabel: undefined };
       default:
-        return { class: 'badge-default', icon: Clock, label: 'Ongoing', subLabel: undefined };
+        return { class: 'badge-default', icon: Clock, label: 'Pending', subLabel: undefined };
     }
   };
 
@@ -288,6 +288,10 @@ export default function Incidents() {
       setCreating(false);
     }
   };
+
+  const selectedStatusConfig = selectedIncident
+    ? getStatusConfig(selectedIncident.status, selectedIncident.monitor_until)
+    : null;
 
   return (
     <div>
@@ -514,9 +518,7 @@ export default function Incidents() {
                   <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
                     {selectedIncident.title || 'Incident Details'}
                   </h2>
-                  <span className={`badge ${getStatusConfig(selectedIncident.status, selectedIncident.monitor_until).class}`}>
-                    {getStatusConfig(selectedIncident.status, selectedIncident.monitor_until).label}
-                  </span>
+                  {selectedStatusConfig && <span className={`badge ${selectedStatusConfig.class}`}>{selectedStatusConfig.label}</span>}
                 </div>
                 <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
                   <span>
