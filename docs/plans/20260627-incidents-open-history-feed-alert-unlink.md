@@ -121,6 +121,6 @@ Three related features: (1) Incidents tab defaults to an Open view with no time 
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] run `make test` (Go full suite)
-- [ ] run `make test-web`
-- [ ] run `make verify` (pre-commit gate)
+- [x] run `make test` (Go full suite)
+- [x] run `make test-web`
+- [x] run `make verify` (pre-commit gate)
