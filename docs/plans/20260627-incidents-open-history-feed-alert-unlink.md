@@ -65,15 +65,15 @@ Three related features: (1) Incidents tab defaults to an Open view with no time 
 - Modify: `internal/handlers/api_incidents.go`
 - Modify: `internal/handlers/api.go`
 
-- [ ] Add `UnlinkAlertFromIncident(ctx context.Context, alertUUID string) (newIncidentUUID string, err error)` to `incident_service.go`: load alert; reject with typed error if `Correlated == false`; reconstruct `IncidentContext` from alert fields; call `SpawnIncidentManager`; repoint alert row (`IncidentUUID=new`, `Correlated=false`, `CorrelationDecision="new_incident"`, `CorrelationReasoning="manually unlinked from <oldUUID>"`, `CorrelationConfidence=nil`); return new UUID
-- [ ] Add `ErrAlertNotCorrelated` error sentinel in `services` package (HTTP 409)
-- [ ] Add `UnlinkAlertFromIncident` to `IncidentManager` interface in `interfaces.go`
-- [ ] Extract the inline investigation goroutine from `POST /api/incidents` into `func (h *APIHandler) runAgentInvestigation(incidentUUID, taskHeader, task string)` on `api_incidents.go` — make it a goroutine-launching method, keeping all existing logic (WebSocket path, superseded guard, formatter, metrics, fallback)
-- [ ] Add `handleAlertUnlink` for `POST /api/alerts/{uuid}/unlink`: call `UnlinkAlertFromIncident`, on `ErrAlertNotCorrelated` return 409, on success call `go h.runAgentInvestigation(...)`, return `{"incident_uuid": newUUID}`
-- [ ] Wire `POST /api/alerts/{uuid}/unlink` in `api.go`
-- [ ] Add service tests in `internal/services/incident_service_test.go`: `UnlinkAlertFromIncident` happy path repoints row and clears correlation; rejects unlinking a non-correlated origin alert (ErrAlertNotCorrelated)
-- [ ] Add handler test for `POST /api/alerts/{uuid}/unlink`: 200 happy path, 409 on non-correlated alert
-- [ ] run `make test` — must pass before Task 5
+- [x] Add `UnlinkAlertFromIncident(ctx context.Context, alertUUID string) (newIncidentUUID string, err error)` to `incident_service.go`: load alert; reject with typed error if `Correlated == false`; reconstruct `IncidentContext` from alert fields; call `SpawnIncidentManager`; repoint alert row (`IncidentUUID=new`, `Correlated=false`, `CorrelationDecision="new_incident"`, `CorrelationReasoning="manually unlinked from <oldUUID>"`, `CorrelationConfidence=nil`); return new UUID
+- [x] Add `ErrAlertNotCorrelated` error sentinel in `services` package (HTTP 409)
+- [x] Add `UnlinkAlertFromIncident` to `IncidentManager` interface in `interfaces.go`
+- [x] Extract the inline investigation goroutine from `POST /api/incidents` into `func (h *APIHandler) runAgentInvestigation(incidentUUID, taskHeader, task string)` on `api_incidents.go` — make it a goroutine-launching method, keeping all existing logic (WebSocket path, superseded guard, formatter, metrics, fallback)
+- [x] Add `handleAlertUnlink` for `POST /api/alerts/{uuid}/unlink`: call `UnlinkAlertFromIncident`, on `ErrAlertNotCorrelated` return 409, on success call `go h.runAgentInvestigation(...)`, return `{"incident_uuid": newUUID}`
+- [x] Wire `POST /api/alerts/{uuid}/unlink` in `api.go`
+- [x] Add service tests in `internal/services/incident_service_test.go`: `UnlinkAlertFromIncident` happy path repoints row and clears correlation; rejects unlinking a non-correlated origin alert (ErrAlertNotCorrelated)
+- [x] Add handler test for `POST /api/alerts/{uuid}/unlink`: 200 happy path, 409 on non-correlated alert
+- [x] run `make test` — must pass before Task 5
 
 ### Task 5: Frontend API client and type updates
 

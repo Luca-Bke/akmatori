@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -772,5 +773,106 @@ func TestUpdateIncidentComplete_CronSourced_DoesNotSetMonitor(t *testing.T) {
 	}
 	if incident.MonitorUntil != nil {
 		t.Errorf("MonitorUntil should be nil for cron-sourced incident, got %v", incident.MonitorUntil)
+	}
+}
+
+// --- UnlinkAlertFromIncident Tests ---
+
+func seedCorrelatedAlert(t *testing.T, db *gorm.DB, incidentUUID string) string {
+	t.Helper()
+	conf := 0.92
+	alertUUID := "alert-" + incidentUUID[:8]
+	if err := db.Create(&database.Alert{
+		UUID:                  alertUUID,
+		IncidentUUID:          incidentUUID,
+		Status:                database.AlertStatusFiring,
+		AlertName:             "HighCPU",
+		TargetHost:            "host-99",
+		SourceUUID:            "src-uuid-555",
+		Correlated:            true,
+		CorrelationConfidence: &conf,
+		CorrelationReasoning:  "same host",
+		CorrelationDecision:   "linked",
+	}).Error; err != nil {
+		t.Fatalf("seed correlated alert: %v", err)
+	}
+	return alertUUID
+}
+
+func TestUnlinkAlertFromIncident_HappyPath(t *testing.T) {
+	db := setupIncidentTestDB(t)
+	svc := newIncidentTestService(t, db)
+
+	// Spawn original incident and create a correlated alert linked to it.
+	origIncidentUUID := spawnAlertIncident(t, svc)
+	alertUUID := seedCorrelatedAlert(t, db, origIncidentUUID)
+
+	newIncidentUUID, err := svc.UnlinkAlertFromIncident(context.Background(), alertUUID)
+	if err != nil {
+		t.Fatalf("UnlinkAlertFromIncident failed: %v", err)
+	}
+
+	if newIncidentUUID == "" {
+		t.Fatal("newIncidentUUID should not be empty")
+	}
+	if newIncidentUUID == origIncidentUUID {
+		t.Error("new incident UUID should differ from the original")
+	}
+
+	// Verify new incident was created in the DB.
+	var newInc database.Incident
+	if err := db.Where("uuid = ?", newIncidentUUID).First(&newInc).Error; err != nil {
+		t.Fatalf("new incident not found: %v", err)
+	}
+
+	// Verify alert row was repointed.
+	var row database.Alert
+	if err := db.Where("uuid = ?", alertUUID).First(&row).Error; err != nil {
+		t.Fatalf("load alert row: %v", err)
+	}
+	if row.IncidentUUID != newIncidentUUID {
+		t.Errorf("IncidentUUID = %q, want %q", row.IncidentUUID, newIncidentUUID)
+	}
+	if row.Correlated {
+		t.Error("Correlated should be false after unlink")
+	}
+	if row.CorrelationDecision != "new_incident" {
+		t.Errorf("CorrelationDecision = %q, want new_incident", row.CorrelationDecision)
+	}
+	if !strings.Contains(row.CorrelationReasoning, origIncidentUUID) {
+		t.Errorf("CorrelationReasoning %q should contain original incident UUID %q", row.CorrelationReasoning, origIncidentUUID)
+	}
+	if row.CorrelationConfidence != nil {
+		t.Errorf("CorrelationConfidence should be nil after unlink, got %v", row.CorrelationConfidence)
+	}
+}
+
+func TestUnlinkAlertFromIncident_RejectsNonCorrelated(t *testing.T) {
+	db := setupIncidentTestDB(t)
+	svc := newIncidentTestService(t, db)
+
+	origIncidentUUID := spawnAlertIncident(t, svc)
+
+	// Seed a non-correlated (origin) alert.
+	alertUUID := "alert-origin-abc"
+	if err := db.Create(&database.Alert{
+		UUID:                alertUUID,
+		IncidentUUID:        origIncidentUUID,
+		Status:              database.AlertStatusFiring,
+		AlertName:           "DiskFull",
+		TargetHost:          "host-88",
+		SourceUUID:          "src-uuid-777",
+		Correlated:          false,
+		CorrelationDecision: "new_incident",
+	}).Error; err != nil {
+		t.Fatalf("seed alert: %v", err)
+	}
+
+	_, err := svc.UnlinkAlertFromIncident(context.Background(), alertUUID)
+	if err == nil {
+		t.Fatal("expected ErrAlertNotCorrelated, got nil")
+	}
+	if !errors.Is(err, ErrAlertNotCorrelated) {
+		t.Errorf("expected ErrAlertNotCorrelated, got %v", err)
 	}
 }

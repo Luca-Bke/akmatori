@@ -17,6 +17,11 @@ var ErrWorkerNotConnected = errors.New("agent worker not connected")
 // pair, indicating a cross-process duplicate spawn that must be cancelled.
 var ErrAlertAlreadyClaimed = errors.New("alert already claimed by concurrent process")
 
+// ErrAlertNotCorrelated is returned by UnlinkAlertFromIncident when the target
+// alert was not correlated (linked) from another incident. The caller should
+// surface this as HTTP 409.
+var ErrAlertNotCorrelated = errors.New("alert is not correlated from another incident")
+
 // ErrIncidentSuperseded is delivered via OnError to a previously registered
 // incident callback when a newer StartIncident/ContinueIncident call replaces
 // it for the same incident_id (e.g. a second Slack message lands in the same

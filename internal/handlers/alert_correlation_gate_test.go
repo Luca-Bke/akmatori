@@ -120,6 +120,9 @@ func (s *corrGateSkillService) GetSkillScript(string, string) (*services.ScriptI
 }
 func (s *corrGateSkillService) UpdateSkillScript(string, string, string) error { return nil }
 func (s *corrGateSkillService) DeleteSkillScript(string, string) error         { return nil }
+func (s *corrGateSkillService) UnlinkAlertFromIncident(context.Context, string) (string, error) {
+	return "", nil
+}
 
 // corrOneShotLLMCaller is a configurable stub for services.OneShotLLMCaller.
 type corrOneShotLLMCaller struct {

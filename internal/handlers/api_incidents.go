@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -196,126 +197,8 @@ func (h *APIHandler) handleIncidents(w http.ResponseWriter, r *http.Request) {
 
 		slog.Info("created incident via API", "incident_id", incidentUUID)
 
-		go func() {
-			taskHeader := fmt.Sprintf("📝 API Incident Task:\n%s\n\n--- Execution Log ---\n\n", req.Task)
-			if err := h.skillService.UpdateIncidentStatus(incidentUUID, database.IncidentStatusRunning, "", taskHeader+"Starting execution..."); err != nil {
-				slog.Error("failed to update incident status", "err", err)
-			}
-
-			taskWithGuidance := executor.PrependGuidance(req.Task)
-
-			if h.agentWSHandler != nil && h.agentWSHandler.IsWorkerConnected() {
-				slog.Info("using WebSocket-based agent worker for API incident", "incident_id", incidentUUID)
-
-				var llmSettings *LLMSettingsForWorker
-				if dbSettings, err := database.GetLLMSettings(); err == nil && dbSettings != nil {
-					llmSettings = BuildLLMSettingsForWorker(dbSettings)
-					slog.Info("using LLM provider", "provider", dbSettings.Provider, "model", dbSettings.Model)
-				}
-
-				done := make(chan struct{})
-				var closeOnce sync.Once
-				var response string
-				var sessionID string
-				var hasError bool
-				var superseded atomic.Bool
-				var lastStreamedLog string
-				var finalTokensUsed int
-				var finalExecutionTimeMs int64
-
-				callback := IncidentCallback{
-					OnOutput: func(output string) {
-						lastStreamedLog += output
-						if err := h.skillService.UpdateIncidentLog(incidentUUID, taskHeader+lastStreamedLog); err != nil {
-							slog.Error("failed to update incident log", "err", err)
-						}
-					},
-					OnCompleted: func(sid, output string, tokensUsed int, executionTimeMs int64) {
-						sessionID = sid
-						response = output
-						finalTokensUsed = tokensUsed
-						finalExecutionTimeMs = executionTimeMs
-						closeOnce.Do(func() { close(done) })
-					},
-					OnError: func(errorMsg string) {
-						response = fmt.Sprintf("❌ Error: %s", errorMsg)
-						hasError = true
-						closeOnce.Do(func() { close(done) })
-					},
-					// If a newer API call displaces us for the same incident_id,
-					// the replacement run owns finalization. Unblock and exit
-					// silently rather than overwrite its result with a failure.
-					OnSuperseded: func() {
-						superseded.Store(true)
-						closeOnce.Do(func() { close(done) })
-					},
-				}
-
-				runID, err := h.agentWSHandler.StartIncident(incidentUUID, taskWithGuidance, llmSettings, h.skillService.GetEnabledSkillNames(), h.skillService.GetToolAllowlist(), callback)
-				if err != nil {
-					slog.Error("failed to start incident via WebSocket", "err", err)
-					errorMsg := fmt.Sprintf("Failed to start incident: %v", err)
-					if updateErr := h.skillService.UpdateIncidentComplete(incidentUUID, database.IncidentStatusFailed, "", taskHeader, "❌ "+errorMsg, 0, 0); updateErr != nil {
-						slog.Error("failed to update incident status", "err", updateErr)
-					}
-					return
-				}
-
-				<-done
-
-				// Replacement run owns DB finalization — exit silently.
-				if superseded.Load() {
-					slog.Info("API incident superseded; leaving finalization to the new run", "incident_id", incidentUUID)
-					return
-				}
-
-				// Apply the configured formatting prompt before persistence.
-				// Passthrough on error/empty or when formatting is disabled.
-				formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog)
-
-				// Re-attach the metrics footer AFTER formatting so the LLM
-				// never sees it (and therefore cannot strip or rewrite ⏱️
-				// Time / 🎯 Tokens). The deterministic footer is derived
-				// from finalTokensUsed/finalExecutionTimeMs and lands at
-				// the end of `incident.response`, so the web UI's metrics
-				// line stays correct even when the formatter rewrote the
-				// body.
-				formattedWithMetrics := appendFinalizeMetrics(formattedResponse, finalExecutionTimeMs, finalTokensUsed, hasError)
-				rawWithMetrics := appendFinalizeMetrics(response, finalExecutionTimeMs, finalTokensUsed, hasError)
-
-				// Claim ownership of finalization atomically. A second API
-				// call for the same incident_id displaces this run; without
-				// the ReleaseRun guard we'd race the replacement's DB write.
-				if !h.agentWSHandler.ReleaseRun(incidentUUID, runID) {
-					slog.Info("API incident displaced during finalization; leaving DB write to the new run", "incident_id", incidentUUID)
-					return
-				}
-
-				// Build full log using the raw response (with metrics) so
-				// full_log preserves the original agent output for debugging.
-				fullLog := taskHeader + lastStreamedLog
-				if rawWithMetrics != "" {
-					fullLog += "\n\n--- Final Response ---\n\n" + rawWithMetrics
-				}
-
-				finalStatus := database.IncidentStatusCompleted
-				if hasError {
-					finalStatus = database.IncidentStatusFailed
-				}
-				if err := h.skillService.UpdateIncidentComplete(incidentUUID, finalStatus, sessionID, fullLog, formattedWithMetrics, finalTokensUsed, finalExecutionTimeMs); err != nil {
-					slog.Error("failed to update incident complete", "err", err)
-				}
-
-				slog.Info("API incident completed via WebSocket", "incident_id", incidentUUID)
-				return
-			}
-
-			slog.Error("agent worker not connected for API incident", "incident_id", incidentUUID)
-			errorMsg := "Agent worker not connected. Please check that the agent-worker container is running."
-			if updateErr := h.skillService.UpdateIncidentComplete(incidentUUID, database.IncidentStatusFailed, "", taskHeader, "❌ "+errorMsg, 0, 0); updateErr != nil {
-				slog.Error("failed to update incident status", "err", updateErr)
-			}
-		}()
+		taskHeader := fmt.Sprintf("📝 API Incident Task:\n%s\n\n--- Execution Log ---\n\n", req.Task)
+		go h.runAgentInvestigation(incidentUUID, taskHeader, req.Task)
 
 		api.RespondJSON(w, http.StatusCreated, api.CreateIncidentResponse{
 			UUID:       incidentUUID,
@@ -377,6 +260,169 @@ func (h *APIHandler) handleIncidentByID(w http.ResponseWriter, r *http.Request) 
 	incident.AlertCount = cnt
 
 	api.RespondJSON(w, http.StatusOK, incident)
+}
+
+// runAgentInvestigation runs a full agent investigation for the given incident.
+// It must be launched as a goroutine by the caller. taskHeader is prepended to
+// all log updates; task is the raw user-facing task text (guidance is added
+// internally via executor.PrependGuidance).
+func (h *APIHandler) runAgentInvestigation(incidentUUID, taskHeader, task string) {
+	if err := h.skillService.UpdateIncidentStatus(incidentUUID, database.IncidentStatusRunning, "", taskHeader+"Starting execution..."); err != nil {
+		slog.Error("failed to update incident status", "err", err)
+	}
+
+	taskWithGuidance := executor.PrependGuidance(task)
+
+	if h.agentWSHandler != nil && h.agentWSHandler.IsWorkerConnected() {
+		slog.Info("using WebSocket-based agent worker for API incident", "incident_id", incidentUUID)
+
+		var llmSettings *LLMSettingsForWorker
+		if dbSettings, err := database.GetLLMSettings(); err == nil && dbSettings != nil {
+			llmSettings = BuildLLMSettingsForWorker(dbSettings)
+			slog.Info("using LLM provider", "provider", dbSettings.Provider, "model", dbSettings.Model)
+		}
+
+		done := make(chan struct{})
+		var closeOnce sync.Once
+		var response string
+		var sessionID string
+		var hasError bool
+		var superseded atomic.Bool
+		var lastStreamedLog string
+		var finalTokensUsed int
+		var finalExecutionTimeMs int64
+
+		callback := IncidentCallback{
+			OnOutput: func(output string) {
+				lastStreamedLog += output
+				if err := h.skillService.UpdateIncidentLog(incidentUUID, taskHeader+lastStreamedLog); err != nil {
+					slog.Error("failed to update incident log", "err", err)
+				}
+			},
+			OnCompleted: func(sid, output string, tokensUsed int, executionTimeMs int64) {
+				sessionID = sid
+				response = output
+				finalTokensUsed = tokensUsed
+				finalExecutionTimeMs = executionTimeMs
+				closeOnce.Do(func() { close(done) })
+			},
+			OnError: func(errorMsg string) {
+				response = fmt.Sprintf("❌ Error: %s", errorMsg)
+				hasError = true
+				closeOnce.Do(func() { close(done) })
+			},
+			// If a newer API call displaces us for the same incident_id,
+			// the replacement run owns finalization. Unblock and exit
+			// silently rather than overwrite its result with a failure.
+			OnSuperseded: func() {
+				superseded.Store(true)
+				closeOnce.Do(func() { close(done) })
+			},
+		}
+
+		runID, err := h.agentWSHandler.StartIncident(incidentUUID, taskWithGuidance, llmSettings, h.skillService.GetEnabledSkillNames(), h.skillService.GetToolAllowlist(), callback)
+		if err != nil {
+			slog.Error("failed to start incident via WebSocket", "err", err)
+			errorMsg := fmt.Sprintf("Failed to start incident: %v", err)
+			if updateErr := h.skillService.UpdateIncidentComplete(incidentUUID, database.IncidentStatusFailed, "", taskHeader, "❌ "+errorMsg, 0, 0); updateErr != nil {
+				slog.Error("failed to update incident status", "err", updateErr)
+			}
+			return
+		}
+
+		<-done
+
+		// Replacement run owns DB finalization — exit silently.
+		if superseded.Load() {
+			slog.Info("API incident superseded; leaving finalization to the new run", "incident_id", incidentUUID)
+			return
+		}
+
+		// Apply the configured formatting prompt before persistence.
+		// Passthrough on error/empty or when formatting is disabled.
+		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog)
+
+		// Re-attach the metrics footer AFTER formatting so the LLM
+		// never sees it (and therefore cannot strip or rewrite ⏱️
+		// Time / 🎯 Tokens). The deterministic footer is derived
+		// from finalTokensUsed/finalExecutionTimeMs and lands at
+		// the end of `incident.response`, so the web UI's metrics
+		// line stays correct even when the formatter rewrote the
+		// body.
+		formattedWithMetrics := appendFinalizeMetrics(formattedResponse, finalExecutionTimeMs, finalTokensUsed, hasError)
+		rawWithMetrics := appendFinalizeMetrics(response, finalExecutionTimeMs, finalTokensUsed, hasError)
+
+		// Claim ownership of finalization atomically. A second API
+		// call for the same incident_id displaces this run; without
+		// the ReleaseRun guard we'd race the replacement's DB write.
+		if !h.agentWSHandler.ReleaseRun(incidentUUID, runID) {
+			slog.Info("API incident displaced during finalization; leaving DB write to the new run", "incident_id", incidentUUID)
+			return
+		}
+
+		// Build full log using the raw response (with metrics) so
+		// full_log preserves the original agent output for debugging.
+		fullLog := taskHeader + lastStreamedLog
+		if rawWithMetrics != "" {
+			fullLog += "\n\n--- Final Response ---\n\n" + rawWithMetrics
+		}
+
+		finalStatus := database.IncidentStatusCompleted
+		if hasError {
+			finalStatus = database.IncidentStatusFailed
+		}
+		if err := h.skillService.UpdateIncidentComplete(incidentUUID, finalStatus, sessionID, fullLog, formattedWithMetrics, finalTokensUsed, finalExecutionTimeMs); err != nil {
+			slog.Error("failed to update incident complete", "err", err)
+		}
+
+		slog.Info("API incident completed via WebSocket", "incident_id", incidentUUID)
+		return
+	}
+
+	slog.Error("agent worker not connected for API incident", "incident_id", incidentUUID)
+	errorMsg := "Agent worker not connected. Please check that the agent-worker container is running."
+	if updateErr := h.skillService.UpdateIncidentComplete(incidentUUID, database.IncidentStatusFailed, "", taskHeader, "❌ "+errorMsg, 0, 0); updateErr != nil {
+		slog.Error("failed to update incident status", "err", updateErr)
+	}
+}
+
+// handleAlertUnlink handles POST /api/alerts/{uuid}/unlink. It detaches a
+// correlated alert from its incident and spawns a fresh investigation for it.
+// Returns 409 if the alert was not correlated, 404 if the alert does not exist.
+func (h *APIHandler) handleAlertUnlink(w http.ResponseWriter, r *http.Request) {
+	alertUUID := r.PathValue("uuid")
+
+	// Load the alert to build the task text and verify existence before the
+	// unlink operation modifies the row.
+	db := database.GetDB()
+	var alert database.Alert
+	if err := db.Where("uuid = ?", alertUUID).First(&alert).Error; err != nil {
+		api.RespondError(w, http.StatusNotFound, "Alert not found")
+		return
+	}
+
+	newIncidentUUID, err := h.skillService.UnlinkAlertFromIncident(r.Context(), alertUUID)
+	if err != nil {
+		if errors.Is(err, services.ErrAlertNotCorrelated) {
+			api.RespondError(w, http.StatusConflict, "alert is not correlated")
+			return
+		}
+		slog.Error("UnlinkAlertFromIncident failed", "alert", alertUUID, "err", err)
+		api.RespondError(w, http.StatusInternalServerError, "Failed to unlink alert")
+		return
+	}
+
+	task := alert.AlertName
+	if alert.TargetHost != "" {
+		task += " on " + alert.TargetHost
+	}
+	if task == "" {
+		task = "Alert investigation"
+	}
+	taskHeader := fmt.Sprintf("🔗 Unlinked Alert Investigation:\n%s\n\n--- Execution Log ---\n\n", task)
+	go h.runAgentInvestigation(newIncidentUUID, taskHeader, task)
+
+	api.RespondJSON(w, http.StatusOK, map[string]string{"incident_uuid": newIncidentUUID})
 }
 
 // splitCSV splits a comma-separated string into a trimmed, non-empty slice.

@@ -120,6 +120,9 @@ func (h *APIHandler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/incidents/{uuid}/alerts", h.handleIncidentAlerts)
 	mux.HandleFunc("/api/incidents/", h.handleIncidentByID)
 
+	// Alert management (unlink a correlated alert from its incident).
+	mux.HandleFunc("POST /api/alerts/{uuid}/unlink", h.handleAlertUnlink)
+
 	// Unified events feed (alerts + non-alert incidents merged by occurred_at).
 	mux.HandleFunc("GET /api/events", h.handleEvents)
 

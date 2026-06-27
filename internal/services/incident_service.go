@@ -111,6 +111,63 @@ func (s *SkillService) LinkAlertToIncident(ctx context.Context, incidentUUID str
 	})
 }
 
+// UnlinkAlertFromIncident detaches a correlated alert from its current incident
+// and spawns a fresh investigation for it. Returns the new incident UUID.
+// Returns ErrAlertNotCorrelated if the alert was not correlated (linked) from
+// another incident.
+func (s *SkillService) UnlinkAlertFromIncident(ctx context.Context, alertUUID string) (string, error) {
+	var alert database.Alert
+	if err := s.db.WithContext(ctx).Where("uuid = ?", alertUUID).First(&alert).Error; err != nil {
+		return "", fmt.Errorf("UnlinkAlertFromIncident: load alert: %w", err)
+	}
+	if !alert.Correlated {
+		return "", ErrAlertNotCorrelated
+	}
+
+	oldIncidentUUID := alert.IncidentUUID
+	alertFingerprint := ComputeAlertFingerprint(alert.SourceUUID, alert.AlertName, alert.TargetHost)
+
+	msg := alert.AlertName
+	if alert.TargetHost != "" {
+		msg = alert.AlertName + " on " + alert.TargetHost
+	}
+
+	incidentCtx := &IncidentContext{
+		Source:     "alert",
+		SourceID:   alert.UUID,
+		SourceKind: database.IncidentSourceKindAlert,
+		SourceUUID: alert.SourceUUID,
+		Context: database.JSONB{
+			"alert_name":        alert.AlertName,
+			"target_host":       alert.TargetHost,
+			"alert_fingerprint": alertFingerprint,
+		},
+		Message: msg,
+	}
+
+	newIncidentUUID, _, err := s.SpawnIncidentManager(incidentCtx)
+	if err != nil {
+		return "", fmt.Errorf("UnlinkAlertFromIncident: spawn incident: %w", err)
+	}
+
+	reasoning := "manually unlinked from " + oldIncidentUUID
+	// Use Select to explicitly include correlation_confidence so GORM sets it to
+	// NULL (the zero value for *float64) rather than skipping the zero-value field.
+	if err := s.db.WithContext(ctx).Model(&database.Alert{}).
+		Select("incident_uuid", "correlated", "correlation_decision", "correlation_reasoning", "correlation_confidence").
+		Where("uuid = ?", alertUUID).
+		Updates(database.Alert{
+			IncidentUUID:         newIncidentUUID,
+			Correlated:           false,
+			CorrelationDecision:  "new_incident",
+			CorrelationReasoning: reasoning,
+		}).Error; err != nil {
+		return "", fmt.Errorf("UnlinkAlertFromIncident: repoint alert: %w", err)
+	}
+
+	return newIncidentUUID, nil
+}
+
 // IncidentContext contains context for spawning an incident manager
 type IncidentContext struct {
 	Source     string         // e.g., "slack", "zabbix"

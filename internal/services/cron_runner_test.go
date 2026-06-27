@@ -257,6 +257,9 @@ func (f *fakeSkillIncidentManager) InsertFiringAlert(context.Context, string, st
 func (f *fakeSkillIncidentManager) LinkAlertToIncident(context.Context, string, string, alerts.NormalizedAlert, float64, string) error {
 	return nil
 }
+func (f *fakeSkillIncidentManager) UnlinkAlertFromIncident(context.Context, string) (string, error) {
+	return "", nil
+}
 
 func (f *fakeSkillIncidentManager) CreateSkill(string, string, string, string) (*database.Skill, error) {
 	panic("not implemented")
