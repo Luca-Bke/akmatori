@@ -97,7 +97,10 @@ export default function Layout({ children }: LayoutProps) {
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
-    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    const onChange = (e: MediaQueryListEvent) => {
+      setIsMobile(e.matches);
+      if (!e.matches) setMobileOpen(false);
+    };
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, []);
@@ -124,7 +127,7 @@ export default function Layout({ children }: LayoutProps) {
           {/* Sidebar */}
           <aside
             id="mobile-sidebar"
-            aria-hidden={isMobile && !mobileOpen ? true : undefined}
+            inert={isMobile && !mobileOpen ? true : undefined}
             className={`
               flex flex-col border-r border-gray-200 dark:border-gray-700
               bg-white dark:bg-gray-800 transition-all duration-200 ease-in-out
