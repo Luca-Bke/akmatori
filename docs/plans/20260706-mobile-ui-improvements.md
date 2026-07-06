@@ -47,12 +47,12 @@ The sidebar is currently always in the flex flow and never hides. On mobile, we 
 - Modify: `web/src/components/Layout.tsx`
 - Modify: `web/src/components/PageHeader.tsx`
 
-- [ ] Content padding: `p-6` → `p-3 sm:p-6` on the content wrapper div inside `<main>`
-- [ ] Header side padding: `px-6` → `px-4 md:px-6` on the top `<header>` bar
-- [ ] PageHeader: change outer `flex items-start justify-between` to `flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`
-- [ ] PageHeader: title font size `text-2xl` → `text-xl sm:text-2xl`
-- [ ] PageHeader: remove `flex-shrink-0` from the action wrapper so it can wrap naturally
-- [ ] Run `make test-web`
+- [x] Content padding: `p-6` → `p-3 sm:p-6` on the content wrapper div inside `<main>`
+- [x] Header side padding: `px-6` → `px-4 md:px-6` on the top `<header>` bar
+- [x] PageHeader: change outer `flex items-start justify-between` to `flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`
+- [x] PageHeader: title font size `text-2xl` → `text-xl sm:text-2xl`
+- [x] PageHeader: remove `flex-shrink-0` from the action wrapper so it can wrap naturally
+- [x] Run `make test-web`
 
 ### Task 3: Proposals table overflow
 
