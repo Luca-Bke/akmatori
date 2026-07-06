@@ -74,5 +74,5 @@ The sidebar footer buttons (logout, theme toggle, collapse) use `p-1.5` (~28px t
 
 ### Task 5: Verify acceptance criteria
 
-- [ ] Run `make test-web`
-- [ ] Run `make verify`
+- [x] Run `make test-web`
+- [x] Run `make verify`
