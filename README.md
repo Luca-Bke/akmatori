@@ -1,4 +1,4 @@
-# Akmatori @ LUH
+# Akmatori @  LUH
 
 Akmatori is an AI-powered AIOps agent that integrates with monitoring systems and Slack to provide intelligent incident response and automated remediation.
 
