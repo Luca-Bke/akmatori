@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Layout from './Layout';
@@ -121,37 +121,37 @@ describe('Layout mobile sidebar', () => {
     expect(themeBtn).toBeTruthy();
   });
 
-  it('aside is inert when mobile drawer is closed and not inert when open', () => {
-    // Simulate a mobile viewport so isMobile initialises to true
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: (query: string) => ({
-        matches: query === '(max-width: 767px)',
-        media: query,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
+  describe('mobile viewport (max-width: 767px)', () => {
+    const desktopMock = (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const mobileMock = (query: string) => ({
+      matches: query === '(max-width: 767px)',
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
     });
 
-    renderLayout();
-    const aside = document.querySelector('aside')!;
+    beforeAll(() => {
+      Object.defineProperty(window, 'matchMedia', { writable: true, value: mobileMock });
+    });
+    afterAll(() => {
+      Object.defineProperty(window, 'matchMedia', { writable: true, value: desktopMock });
+    });
 
-    // Drawer is closed on mobile — aside must be inert to prevent keyboard tab-into
-    expect(aside.hasAttribute('inert')).toBe(true);
+    it('aside is inert when mobile drawer is closed and not inert when open', () => {
+      renderLayout();
+      const aside = document.querySelector('aside')!;
 
-    // Opening the drawer removes inert so keyboard users can reach nav items
-    fireEvent.click(screen.getByLabelText('Open menu'));
-    expect(aside.hasAttribute('inert')).toBe(false);
+      // Drawer is closed on mobile — aside must be inert to prevent keyboard tab-into
+      expect(aside.hasAttribute('inert')).toBe(true);
 
-    // Restore desktop mock for subsequent tests
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: (query: string) => ({
-        matches: false,
-        media: query,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
+      // Opening the drawer removes inert so keyboard users can reach nav items
+      fireEvent.click(screen.getByLabelText('Open menu'));
+      expect(aside.hasAttribute('inert')).toBe(false);
     });
   });
 });

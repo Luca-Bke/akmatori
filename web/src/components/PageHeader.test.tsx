@@ -23,12 +23,14 @@ describe('PageHeader', () => {
     expect(screen.getByRole('button', { name: 'Do it' })).toBeTruthy();
   });
 
-  it('renders no extra wrapper around action', () => {
+  it('wraps action in a flex-shrink-0 container to prevent shrinking on long titles', () => {
     const { container } = render(<PageHeader title="Title" action={<button>Act</button>} />);
     const header = container.querySelector('.mb-6 > div');
     const children = Array.from(header?.children ?? []);
-    // The action button should be a direct child element at the flex row level, not wrapped in a div
-    const actionChild = children[children.length - 1];
-    expect(actionChild?.tagName).toBe('BUTTON');
+    // The action is wrapped in a flex-shrink-0 div so it never compresses when the title is long
+    const actionWrapper = children[children.length - 1] as HTMLElement;
+    expect(actionWrapper?.tagName).toBe('DIV');
+    expect(actionWrapper?.className).toContain('flex-shrink-0');
+    expect(actionWrapper?.querySelector('button')).toBeTruthy();
   });
 });

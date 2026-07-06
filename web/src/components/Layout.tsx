@@ -77,6 +77,7 @@ export default function Layout({ children }: LayoutProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
   const sidebarRef = useRef<HTMLElement>(null);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
   const { showOnboarding, dismissOnboarding, markComplete } = useSetupStatus();
   const pendingProposals = usePendingProposalsCount();
 
@@ -98,12 +99,17 @@ export default function Layout({ children }: LayoutProps) {
 
   // Move focus into the sidebar when the mobile drawer opens so keyboard/AT
   // users are not stranded after <main inert> disables the hamburger button.
+  // When the drawer closes, return focus to the hamburger button.
   useEffect(() => {
-    if (!mobileOpen) return;
-    requestAnimationFrame(() => {
-      const first = sidebarRef.current?.querySelector<HTMLElement>('a[href],button:not([disabled])');
-      first?.focus();
-    });
+    if (mobileOpen) {
+      const id = requestAnimationFrame(() => {
+        const first = sidebarRef.current?.querySelector<HTMLElement>('a[href],button:not([disabled])');
+        first?.focus();
+      });
+      return () => cancelAnimationFrame(id);
+    } else {
+      hamburgerRef.current?.focus();
+    }
   }, [mobileOpen]);
 
   useEffect(() => {
@@ -251,6 +257,7 @@ export default function Layout({ children }: LayoutProps) {
             {/* Top bar */}
             <header className="h-16 flex items-center justify-between px-4 md:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
               <button
+                ref={hamburgerRef}
                 type="button"
                 className="block md:hidden p-2 rounded-md text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
                 onClick={() => setMobileOpen(true)}
