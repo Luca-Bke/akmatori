@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -76,6 +76,7 @@ export default function Layout({ children }: LayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 767px)').matches);
+  const sidebarRef = useRef<HTMLElement>(null);
   const { showOnboarding, dismissOnboarding, markComplete } = useSetupStatus();
   const pendingProposals = usePendingProposalsCount();
 
@@ -93,6 +94,16 @@ export default function Layout({ children }: LayoutProps) {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMobileOpen(false); };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+  }, [mobileOpen]);
+
+  // Move focus into the sidebar when the mobile drawer opens so keyboard/AT
+  // users are not stranded after <main inert> disables the hamburger button.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    requestAnimationFrame(() => {
+      const first = sidebarRef.current?.querySelector<HTMLElement>('a[href],button:not([disabled])');
+      first?.focus();
+    });
   }, [mobileOpen]);
 
   useEffect(() => {
@@ -126,6 +137,7 @@ export default function Layout({ children }: LayoutProps) {
 
           {/* Sidebar */}
           <aside
+            ref={sidebarRef}
             id="mobile-sidebar"
             inert={isMobile && !mobileOpen ? true : undefined}
             className={`

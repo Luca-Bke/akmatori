@@ -120,4 +120,38 @@ describe('Layout mobile sidebar', () => {
     const themeBtn = screen.getByTitle(/switch to/i);
     expect(themeBtn).toBeTruthy();
   });
+
+  it('aside is inert when mobile drawer is closed and not inert when open', () => {
+    // Simulate a mobile viewport so isMobile initialises to true
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: (query: string) => ({
+        matches: query === '(max-width: 767px)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+
+    renderLayout();
+    const aside = document.querySelector('aside')!;
+
+    // Drawer is closed on mobile — aside must be inert to prevent keyboard tab-into
+    expect(aside.hasAttribute('inert')).toBe(true);
+
+    // Opening the drawer removes inert so keyboard users can reach nav items
+    fireEvent.click(screen.getByLabelText('Open menu'));
+    expect(aside.hasAttribute('inert')).toBe(false);
+
+    // Restore desktop mock for subsequent tests
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: (query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+  });
 });
