@@ -47,7 +47,9 @@ func newTelegramProviderWithClient(client *http.Client) *TelegramProvider {
 }
 
 // Name reports the canonical provider id used in Integration.Provider rows.
-func (p *TelegramProvider) Name() database.MessagingProvider { return database.MessagingProviderTelegram }
+func (p *TelegramProvider) Name() database.MessagingProvider {
+	return database.MessagingProviderTelegram
+}
 
 // telegramBotToken extracts the bot token from the Integration credentials.
 func telegramBotToken(channel *database.Channel) (string, error) {
@@ -98,11 +100,11 @@ type telegramMessage struct {
 
 // telegramSendMessageRequest is the payload for the sendMessage method.
 type telegramSendMessageRequest struct {
-	ChatID                 any    `json:"chat_id"`
-	Text                   string `json:"text"`
-	ParseMode              string `json:"parse_mode,omitempty"`
-	ReplyToMessageID       int    `json:"reply_to_message_id,omitempty"`
-	DisableWebPagePreview  bool   `json:"disable_web_page_preview"`
+	ChatID                any    `json:"chat_id"`
+	Text                  string `json:"text"`
+	ParseMode             string `json:"parse_mode,omitempty"`
+	ReplyToMessageID      int    `json:"reply_to_message_id,omitempty"`
+	DisableWebPagePreview bool   `json:"disable_web_page_preview"`
 }
 
 // telegramSendChatActionRequest is the payload for the sendChatAction method.
@@ -113,10 +115,10 @@ type telegramSendChatActionRequest struct {
 
 // telegramEditMessageRequest is the payload for the editMessageText method.
 type telegramEditMessageRequest struct {
-	ChatID      any    `json:"chat_id"`
-	MessageID   int    `json:"message_id"`
-	Text        string `json:"text"`
-	ParseMode   string `json:"parse_mode,omitempty"`
+	ChatID    any    `json:"chat_id"`
+	MessageID int    `json:"message_id"`
+	Text      string `json:"text"`
+	ParseMode string `json:"parse_mode,omitempty"`
 }
 
 // postJSON sends a JSON POST to the Telegram Bot API and returns the parsed
