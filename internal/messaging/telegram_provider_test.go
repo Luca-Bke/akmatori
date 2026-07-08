@@ -39,7 +39,7 @@ func TestTelegramProvider_PostMessage_Success(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(telegramResponse{
-			OK: true,
+			OK:     true,
 			Result: json.RawMessage(`{"message_id": 42}`),
 		})
 	}))
@@ -129,7 +129,7 @@ func TestTelegramProvider_PostThreadReply_Success(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(telegramResponse{
-			OK: true,
+			OK:     true,
 			Result: json.RawMessage(`{"message_id": 100}`),
 		})
 	}))
