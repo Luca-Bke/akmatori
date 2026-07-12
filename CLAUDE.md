@@ -80,21 +80,18 @@ Rules:
 - Go callers should depend on `services.OneShotLLMCaller`, not concrete worker code
 - If the worker is disconnected, callers must fail gracefully and use deterministic fallbacks
 
-### Response formatting
+### Response formatting (per-flow rules)
 
-Formatting settings live behind `/api/settings/formatting`.
+Ordered `FormattingRule` rows (`/api/formatting-rules`, CRUD + `PUT /reorder`) are the ONLY formatting mechanism; no match → raw response for every flow kind. `/api/settings/formatting` is 410 Gone; `migrateGlobalFormattingToRule()` converts an enabled legacy row into a catch-all rule once (rules-table-empty guard).
 
 Rules:
-- `ResponseFormatter` is optional and must be passthrough-safe
-- skip formatting on explicit error responses
-- preserve raw fallback behavior when worker or LLM formatting fails
-- handler wiring happens via `SetResponseFormatter(...)`
-- operators configure the output shape via `OutputSchemaExample` (pasted example JSON in `FormattingSettings`); when empty, the built-in four-key default (`status`, `summary`, `actions_taken`, `recommendations`) applies
-- schema inference (`inferSchema` in `internal/services/formatter_schema.go`) derives field types/order from the example; `buildSchemaInstruction` yields `systemPrompt = operatorPrompt + instruction`; responses are validated by `validateAgainstSpecs`, retried once with the errors appended, then fall back to `rawResponse`
-- success renders to Slack mrkdwn via `output.RenderForSlack(parsed, specs)` (`internal/output/schema_render.go`); empty render also falls back to `rawResponse`
-- `DefaultFormattingPrompt` describes field content/tone only — the schema instruction is injected automatically; do not repeat it in the prompt
-- the web form pre-fills editable defaults with `hydrateField` and `dehydrateField` persists unchanged defaults as empty strings, keeping backend fallback constraints authoritative
-- `output.FormatForSlack` is unchanged and used by other callers; do not remove it
+- match fields (empty = wildcard, ANDed): `match_source_kind`, `match_source_uuid` (trigger), `match_channel_uuid` (destination), `match_last_skill` — OR a `match_expression` (`==/!=/&&/||/!`, parens, `and/or/not`; either/or with simple fields, API-enforced; invalid stored expr → rule skipped; Go parser + TS mirror `matchExpression.ts` must stay in sync)
+- `FormatForFlow(ctx, raw, fullLog, FormatFlow)` never errors — failures collapse to passthrough; skips error responses; cron formats only on match (`full_log` keeps raw); proposal chat never formats
+- flow identity via `BuildFormatFlow(incidentUUID, channelUUID)`; Slack chat channel via `ChannelService.FindByExternalID`
+- `Incident.LastSkillUsed`: worker latches the last `<skillsDir>/<name>/SKILL.md` read, sends `last_skill` on `agent_completed`; `agent_ws.go` persists it BEFORE `dispatchOnCompleted` (guard: `isCurrentRun`)
+- blank rule fields fall back: prompt → `DefaultFormattingPrompt`, schema → four-key default (`status`/`summary`/`actions_taken`/`recommendations`), `MaxTokens<=0` → 1500; NO gorm default tags (explicit false/0 must persist)
+- `inferSchema` derives specs from the example; schema instruction appended automatically (never repeat it in the prompt); `validateAgainstSpecs` + one retry, then raw; renders via `output.RenderForSlack` (empty → raw)
+- rule editor `hydrateField`/`dehydrateField` keep backend fallbacks authoritative; `output.FormatForSlack` unchanged — keep it
 
 ### Runbooks and memory search/write
 
@@ -119,11 +116,8 @@ Rules:
 
 ### Memory system
 
-Rules:
-- incident learnings are recorded directly by the `memory-writer` subagent into `akmatori_data/memory/<scope>/`
-- `MemoryService.IngestFromDisk` re-materializes those files into Postgres after each incident
-- memory syncing is scope-aware and manifest-driven
-- memory upserts must stay idempotent by `name:` slug + scope
+Rules (see also "Runbooks and memory search/write" — write/ingest basics live there):
+- memory syncing is scope-aware and manifest-driven; upserts idempotent by `name:` slug + scope
 - memory deletions: `memory-writer` accepts `Action: delete <slug>` and writes a tombstone (`name:` + `deleted: true` frontmatter only); `IngestFromDisk` deletes the matching row and the post-batch sync purges the tombstone and prior `<id>-<slug>.md` snapshot; unknown-slug tombstones are a no-op but still trigger sync
 
 ### Channels, Integrations, and outbound routing
@@ -153,8 +147,7 @@ Rules:
 - `ErrWorkerNotConnected` is fail-open (alert spawns normally)
 - hallucination guard: any UUID not in the fetched candidate set forces `Correlated=false`
 - `CorrelationConfig` holds only `Enabled bool`; `correlationMaxCandidates=25` and `correlationThreshold=0.7` are package-level constants
-- alert fingerprint: `ComputeAlertFingerprint(sourceUUID, lower(alertName), lower(targetHost))` stored as `alert_fingerprint` (32-char sha256) on each `Incident`; defined in `internal/services/alert_fingerprint.go`
-- one-shot LLM path; defined in `internal/services/alert_correlator.go`
+- alert fingerprint: `ComputeAlertFingerprint(sourceUUID, lower(alertName), lower(targetHost))` stored as `alert_fingerprint` (32-char sha256) on each `Incident`
 
 ### Alert monitor mode
 
@@ -166,7 +159,6 @@ Rules:
 - `processResolvedAlert` (tx + row lock): finds the `alerts` row by `source_fingerprint` (then `fingerprint` fallback), marks it `resolved_at=now`; when no firing alerts remain on a completed/monitor incident, sets `monitor_until = min(monitor_until, resolved_at + window)`; no-match is logged and dropped
 - `InsertFiringAlert` inserts the initial `alerts` row (status=firing) for a newly spawned incident
 - `LinkAlertToIncident` attaches an alert to an existing incident; extends `monitor_until` if the incident is in monitor status
-- `IncidentStatusMonitor` is defined in `internal/database/models_incidents.go`; `Alert` model is in `internal/database/models_alerts.go`
 - manifest capped at `manifestMaxEntriesPerScope` (150) entries per scope by `UpdatedAt` descending
 
 ### Post-investigation incident merge
@@ -215,7 +207,7 @@ Rules:
 - `post_results` (default true) gates channel posting; when false the tick skips channel/provider resolution entirely and records its outcome only on the Incident row
 - crons spawn with ONLY the `cron-agent` root prompt — do NOT wrap the task with `executor.PrependGuidance` (incident-triage framed); the task is prefixed only with the current UTC time
 - tool-less crons (e.g. `Dreaming`) MUST send an explicit empty allowlist; `ToolAllowlist` on `WebSocketMessage` is intentionally NOT `omitempty` — `[]` means reject-all, `null` means allow-all
-- the seeded `Dreaming` cron dedupes `/akmatori/memory/global/` via memory-writer (`Action: delete <slug>` emits tombstones)
+- the seeded `Dreaming` cron dedupes `/akmatori/memory/global/` via memory-writer tombstones
 - cron expressions are validated at write time (invalid → 400); `CronRunner` survives tick failures, recording `LastRunStatus=error` + `LastRunError`
 - manual fire is `POST /api/cron-jobs/{uuid}/run`; CRUD reloads the runner without restart
 - `CronJobTool` is the explicit join-table model; include it alongside `CronJob` in all `AutoMigrate` calls and test schemas — GORM does not auto-discover it from the `many2many:` tag
@@ -242,13 +234,12 @@ Rules:
 
 - `internal/handlers/agent_ws.go` - worker transport and message types
 - `internal/handlers/api.go` - REST route wiring
-- `internal/handlers/api_settings_formatting*.go` - formatting settings API
+- `internal/handlers/api_formatting_rules.go` - formatting rules CRUD + reorder (`/api/settings/formatting` is 410)
 - `internal/handlers/api_integrations.go` - Integrations CRUD
 - `internal/handlers/api_channels.go` - Channels CRUD (with filters)
 - `internal/handlers/api_cron_jobs.go` - Cron jobs CRUD + manual `/run` fire
 - `internal/handlers/alert_processor.go` - main investigation path; sets `source_kind`/`source_uuid`
 - `internal/handlers/api_incidents.go` - incidents list (GET, paginated, enriched with `alert_count`/`first_seen`/`last_seen`/`trend`); `GET /api/incidents/{uuid}/alerts` returns alert rows ordered by `fired_at ASC`; accepts `?trend_window=1h|3h`
-- `internal/handlers/incident_trend.go` - `bucketTimestamps(ts, start, end, n)` helper for sparkline bucket generation
 - `internal/handlers/alert_slack.go` - outbound routing via `ChannelService` + `ProviderRegistry`
 - `internal/handlers/slack_processor.go` - Slack message and mention handling; reads `Channel.ExtractionPrompt`
 - `internal/handlers/slack_progress.go` - reasoning-line streaming for Slack banner
@@ -257,7 +248,8 @@ Rules:
 
 - `internal/services/interfaces.go` - dependency interfaces used by handlers
 - `internal/services/runbook_service.go` - runbook CRUD and DB↔disk sync
-- `internal/services/response_formatter.go` - optional response rewrite stage
+- `internal/services/response_formatter.go` - rule-driven response rewrite stage (`FormatForFlow`)
+- `internal/services/formatting_rule_matcher.go` - `FormatFlow`, `MatchFormattingRule`, `BuildFormatFlow`
 - `internal/services/formatter_schema.go` - schema inference (`inferSchema`, `buildSchemaInstruction`, `validateAgainstSpecs`) and built-in default schema example
 - `internal/output/schema_render.go` - `RenderForSlack(parsed, specs)`: walks `FieldSpec` slice in key order to produce Slack mrkdwn; defines the exported `FieldSpec` type used by both renderer and schema helpers
 - `internal/services/memory_service.go` - cross-incident memory CRUD, DB↔disk sync, and `IngestFromDisk`
@@ -282,7 +274,7 @@ Rules:
 
 ### Frontend
 
-- `web/src/components/settings/FormattingSettingsSection.tsx` - response formatter settings form and validation
+- `web/src/components/settings/FormattingRulesSection.tsx` - formatting rules list/editor (shared fields in `FormattingConfigFields.tsx`)
 - `web/src/components/settings/formattingSettingsHelpers.ts` - formatter default hydrate/dehydrate helpers; keep constants aligned with Go defaults
 
 ## Code Patterns
@@ -373,7 +365,7 @@ Command: `docker-compose -f docker-compose.yml -f docker-compose.dev.yml build <
 
 Details live in rules sections above:
 - QMD is gone; recall runs through pi-mono subagents
-- session resume is NOT used anywhere — Slack launches and proposal chat start fresh agent sessions per turn (stale resumes fail once the agent process exits)
+- session resume is NOT used anywhere — Slack launches and proposal chat start fresh agent sessions per turn
 - `/api/settings/slack` returns 410 Gone
 
 ## When Editing This File

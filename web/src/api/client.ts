@@ -22,8 +22,9 @@ import type {
   GeneralSettingsUpdate,
   RetentionSettings,
   RetentionSettingsUpdate,
-  FormattingSettings,
-  FormattingSettingsUpdate,
+  FormattingRule,
+  FormattingRuleCreate,
+  FormattingRuleUpdate,
   ContextFile,
   ValidateReferencesResponse,
   CreateIncidentRequest,
@@ -384,14 +385,31 @@ export const retentionSettingsApi = {
     }),
 };
 
-// Formatting Settings API
-export const formattingSettingsApi = {
-  get: () => fetchApi<FormattingSettings>('/api/settings/formatting'),
+// Formatting Rules API (per-flow output formats)
+export const formattingRulesApi = {
+  list: () => fetchApi<FormattingRule[]>('/api/formatting-rules'),
 
-  update: (settings: FormattingSettingsUpdate) =>
-    fetchApi<FormattingSettings>('/api/settings/formatting', {
+  create: (rule: FormattingRuleCreate) =>
+    fetchApi<FormattingRule>('/api/formatting-rules', {
+      method: 'POST',
+      body: JSON.stringify(rule),
+    }),
+
+  update: (uuid: string, rule: FormattingRuleUpdate) =>
+    fetchApi<FormattingRule>(`/api/formatting-rules/${uuid}`, {
       method: 'PUT',
-      body: JSON.stringify(settings),
+      body: JSON.stringify(rule),
+    }),
+
+  delete: (uuid: string) =>
+    fetchApi<{ status: string }>(`/api/formatting-rules/${uuid}`, {
+      method: 'DELETE',
+    }),
+
+  reorder: (uuids: string[]) =>
+    fetchApi<FormattingRule[]>('/api/formatting-rules/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ uuids }),
     }),
 };
 

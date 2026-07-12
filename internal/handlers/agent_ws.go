@@ -65,6 +65,11 @@ type AgentMessage struct {
 	TokensUsed      int   `json:"tokens_used,omitempty"`
 	ExecutionTimeMs int64 `json:"execution_time_ms,omitempty"`
 
+	// LastSkill is the name of the last skill whose SKILL.md the agent read
+	// during the run (sent with agent_completed). Persisted onto the Incident
+	// row for formatting-rule matching before the completion callback fires.
+	LastSkill string `json:"last_skill,omitempty"`
+
 	// LLM settings (sent with new_incident)
 	Provider      string `json:"provider,omitempty"`
 	APIKey        string `json:"api_key,omitempty"`
@@ -472,6 +477,19 @@ func (h *AgentWSHandler) dispatchOnOutput(msg AgentMessage) bool {
 func (h *AgentWSHandler) handleAgentCompleted(msg AgentMessage) {
 	slog.Info("incident completed", "incident_id", msg.IncidentID, "session_id", msg.SessionID, "tokens_used", msg.TokensUsed, "execution_time_ms", msg.ExecutionTimeMs)
 
+	// Persist the last skill BEFORE the completion callback fires: the
+	// finalizer goroutine unblocked by OnCompleted reads the incident row
+	// (BuildFormatFlow) to match formatting rules, so the column must be
+	// visible by then. Guarded so a superseded run's late frame cannot
+	// overwrite the current run's observation.
+	if msg.LastSkill != "" && h.isCurrentRun(msg.IncidentID, msg.RunID) {
+		if err := database.GetDB().Model(&database.Incident{}).
+			Where("uuid = ?", msg.IncidentID).
+			Update("last_skill_used", msg.LastSkill).Error; err != nil {
+			slog.Warn("failed to persist last skill used", "incident_id", msg.IncidentID, "err", err)
+		}
+	}
+
 	if h.dispatchOnCompleted(msg, msg.Output) {
 		return
 	}
@@ -509,10 +527,31 @@ func (h *AgentWSHandler) handleAgentCompleted(msg AgentMessage) {
 			"response":          responseWithMetrics,
 			"tokens_used":       msg.TokensUsed,
 			"execution_time_ms": msg.ExecutionTimeMs,
+			"last_skill_used":   msg.LastSkill,
 			"completed_at":      &now,
 		}).Error; err != nil {
 		slog.Error("failed to update incident completion", "err", err)
 	}
+}
+
+// isCurrentRun reports whether a frame carrying runID belongs to the
+// incident's current (non-finalized) run. Used to gate side-effect writes
+// (e.g. last_skill_used) that must not be overwritten by a superseded run's
+// late frames. Frames without a run_id are accepted when a live entry exists
+// or when no callback is registered at all (legacy worker / synthetic test
+// events, mirroring the DB-fallback trust level).
+func (h *AgentWSHandler) isCurrentRun(incidentID, runID string) bool {
+	h.callbackMu.RLock()
+	defer h.callbackMu.RUnlock()
+	entry, exists := h.callbacks[incidentID]
+	if !exists {
+		// No live callback: only the legacy no-run-id fallback path writes.
+		return runID == ""
+	}
+	if entry.finalized {
+		return false
+	}
+	return entry.runID == "" || runID == "" || entry.runID == runID
 }
 
 // dispatchOnCompleted delivers a completion frame to the registered callback

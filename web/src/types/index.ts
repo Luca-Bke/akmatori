@@ -535,24 +535,52 @@ export interface RetentionSettingsUpdate {
   cleanup_interval_hours?: number;
 }
 
-// Formatting Settings
-export interface FormattingSettings {
+// Per-flow formatting rules (replaces the global formatting settings)
+export interface FormattingRule {
   id: number;
+  uuid: string;
+  name: string;
   enabled: boolean;
+  position: number;
+  match_source_kind: string;
+  match_source_uuid: string;
+  match_channel_uuid: string;
+  match_last_skill: string;
+  match_expression: string;
   system_prompt: string;
+  output_schema_example: string;
   max_tokens: number;
   temperature: number;
-  output_schema_example?: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface FormattingSettingsUpdate {
+export interface FormattingRuleCreate {
+  name: string;
   enabled?: boolean;
+  match_source_kind?: string;
+  match_source_uuid?: string;
+  match_channel_uuid?: string;
+  match_last_skill?: string;
+  match_expression?: string;
   system_prompt?: string;
+  output_schema_example?: string;
   max_tokens?: number;
   temperature?: number;
+}
+
+export interface FormattingRuleUpdate {
+  name?: string;
+  enabled?: boolean;
+  match_source_kind?: string;
+  match_source_uuid?: string;
+  match_channel_uuid?: string;
+  match_last_skill?: string;
+  match_expression?: string;
+  system_prompt?: string;
   output_schema_example?: string;
+  max_tokens?: number;
+  temperature?: number;
 }
 
 // General Settings

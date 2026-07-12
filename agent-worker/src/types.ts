@@ -107,6 +107,10 @@ export interface WebSocketMessage {
   tokens_used?: number;
   execution_time_ms?: number;
 
+  // Name of the last skill whose SKILL.md the agent read (sent with
+  // agent_completed; drives formatting-rule matching on the API side)
+  last_skill?: string;
+
   // LLM settings (sent with new_incident)
   provider?: string;
   api_key?: string;
@@ -151,6 +155,8 @@ export interface ExecuteResult {
   execution_time_ms: number;
   /** Path to JSONL session export file (for post-mortem analysis) */
   session_export?: string;
+  /** Name of the last skill whose SKILL.md the agent read during the run */
+  last_skill?: string;
 }
 
 // ---------------------------------------------------------------------------

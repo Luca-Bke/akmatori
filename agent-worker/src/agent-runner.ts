@@ -132,6 +132,32 @@ export interface AgentRunnerConfig {
  * avoids OpenAI-compatible gateways that reject "minimal" (some only accept
  * high|medium|low|none).
  */
+/**
+ * Extract the skill name from a read-tool path when it targets a SKILL.md
+ * inside the shared skills directory (<skillsDir>/<name>/SKILL.md). Returns
+ * undefined for any other path, a missing skillsDir, or non-string input.
+ * Used to track the last skill the agent consulted during a run, which the
+ * API matches against formatting rules.
+ */
+export function extractSkillNameFromReadPath(
+  skillsDir: string | undefined,
+  rawPath: unknown,
+): string | undefined {
+  if (!skillsDir || typeof rawPath !== "string" || rawPath.length === 0) {
+    return undefined;
+  }
+  const base = path.resolve(skillsDir);
+  const resolved = path.resolve(rawPath);
+  if (!resolved.startsWith(base + path.sep)) {
+    return undefined;
+  }
+  const rel = resolved.slice(base.length + 1).split(path.sep);
+  if (rel.length !== 2 || rel[1] !== "SKILL.md" || rel[0] === "") {
+    return undefined;
+  }
+  return rel[0];
+}
+
 export function mapThinkingLevel(level: ThinkingLevel): PiThinkingLevel | "off" {
   if (level === "off") return "off";
   const valid: PiThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh"];
@@ -1044,8 +1070,23 @@ export class AgentRunner {
     const thinkingBuffers = new Map<number, string>();
 
     let lastErrorMessage = "";
+    let lastSkillName: string | undefined;
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       params.onEvent?.(event);
+
+      // Track the last skill the agent consulted: pi-mono skills are invoked
+      // by reading <skillsDir>/<name>/SKILL.md with the read tool. Latched on
+      // tool_execution_start so even an aborted run keeps the observation.
+      if (event.type === "tool_execution_start" && event.toolName === "read") {
+        const args = event.args as Record<string, unknown> | undefined;
+        const skill = extractSkillNameFromReadPath(
+          this.skillsDir,
+          args?.path ?? args?.file_path,
+        );
+        if (skill) {
+          lastSkillName = skill;
+        }
+      }
 
       // Capture API-level errors from message_end / turn_end events.
       // The SDK surfaces provider errors (quota, auth, model not found, etc.)
@@ -1097,6 +1138,7 @@ export class AgentRunner {
         tokens_used: totalTokens,
         execution_time_ms: Date.now() - startTime,
         session_export: sessionExportPath,
+        last_skill: lastSkillName,
       };
     } catch (err) {
       const sessionExportPath = this.exportSession(sessionManager, params.workDir);
@@ -1109,6 +1151,7 @@ export class AgentRunner {
         tokens_used: totalTokens,
         execution_time_ms: Date.now() - startTime,
         session_export: sessionExportPath,
+        last_skill: lastSkillName,
       };
     } finally {
       unsubscribe();

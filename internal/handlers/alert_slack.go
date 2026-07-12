@@ -77,15 +77,18 @@ func (h *AlertHandler) resolveSlackExternalID(externalID string) string {
 	return resolved
 }
 
-func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *database.AlertSourceInstance) (string, string, error) {
+// postAlertToSlack posts the initial alert banner and returns the Slack
+// channel ID, the message timestamp, and the resolved Channel row UUID (used
+// for formatting-rule matching; "" when posting was skipped).
+func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *database.AlertSourceInstance) (string, string, string, error) {
 	slackClient := h.slackManager.GetClient()
 	if slackClient == nil {
-		return "", "", nil
+		return "", "", "", nil
 	}
 
 	channel, channelID := h.resolveOutboundSlackChannel(instance)
 	if channelID == "" {
-		return "", "", nil
+		return "", "", "", nil
 	}
 
 	// Format alert message
@@ -116,12 +119,12 @@ func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *
 	// channel's provider name (keeps tests + legacy boot paths working).
 	ts, err := h.postViaProvider(context.Background(), channel, channelID, message)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if ts == "" {
 		_, t, err := slackClient.PostMessage(channelID, slack.MsgOptionText(message, false))
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		ts = t
 	}
@@ -134,7 +137,7 @@ func (h *AlertHandler) postAlertToSlack(alert alerts.NormalizedAlert, instance *
 		slog.Warn("failed to add reaction", "err", err)
 	}
 
-	return channelID, ts, nil
+	return channelID, ts, channel.UUID, nil
 }
 
 // postViaProvider posts text to the destination using the registered messaging

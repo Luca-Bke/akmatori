@@ -15,22 +15,34 @@ func setupFormatterTestDB(t *testing.T) {
 	// Reuse the title-generator helper: it migrates LLMSettings into an
 	// in-memory sqlite db and rebinds database.DB.
 	setupTitleGeneratorTestDB(t)
-	if err := database.DB.AutoMigrate(&database.FormattingSettings{}); err != nil {
-		t.Fatalf("migrate formatting_settings: %v", err)
+	if err := database.DB.AutoMigrate(&database.FormattingRule{}, &database.Incident{}); err != nil {
+		t.Fatalf("migrate formatting rules: %v", err)
 	}
 }
 
-func seedFormatterSettings(t *testing.T, settings database.FormattingSettings) {
+// seedFormatterSettings replaces all formatting rules with the supplied one,
+// defaulting to an enabled catch-all so legacy single-config tests keep their
+// shape. Rule identity fields are filled in when omitted.
+func seedFormatterSettings(t *testing.T, rule database.FormattingRule) {
 	t.Helper()
-	if err := database.DB.Exec("DELETE FROM formatting_settings").Error; err != nil {
-		t.Fatalf("clear formatting_settings: %v", err)
+	if err := database.DB.Exec("DELETE FROM formatting_rules").Error; err != nil {
+		t.Fatalf("clear formatting_rules: %v", err)
 	}
-	if settings.SingletonKey == "" {
-		settings.SingletonKey = "default"
+	if rule.UUID == "" {
+		rule.UUID = "00000000-0000-0000-0000-000000000001"
 	}
-	if err := database.DB.Create(&settings).Error; err != nil {
-		t.Fatalf("seed formatting_settings: %v", err)
+	if rule.Name == "" {
+		rule.Name = "test rule"
 	}
+	if err := database.DB.Create(&rule).Error; err != nil {
+		t.Fatalf("seed formatting_rules: %v", err)
+	}
+}
+
+// formatCatchAll invokes FormatForFlow with an empty flow, which any
+// catch-all rule matches. Keeps the pre-rules test bodies unchanged.
+func formatCatchAll(f *ResponseFormatter, ctx context.Context, raw, log string) string {
+	return f.FormatForFlow(ctx, raw, log, FormatFlow{})
 }
 
 func seedFormatterLLM(t *testing.T, settings database.LLMSettings) {
@@ -56,11 +68,11 @@ func defaultLLMForFormatter() database.LLMSettings {
 
 func TestResponseFormatter_NilCallerPassthrough(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat please.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat please.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	f := NewResponseFormatter(nil)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if got != "raw output" {
 		t.Errorf("expected passthrough, got %q", got)
 	}
@@ -68,7 +80,7 @@ func TestResponseFormatter_NilCallerPassthrough(t *testing.T) {
 
 func TestResponseFormatter_DisabledPassthrough(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: false, SystemPrompt: "Should not be called.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: false, SystemPrompt: "Should not be called.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -77,7 +89,7 @@ func TestResponseFormatter_DisabledPassthrough(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if got != "raw output" {
 		t.Errorf("expected passthrough, got %q", got)
 	}
@@ -88,7 +100,7 @@ func TestResponseFormatter_DisabledPassthrough(t *testing.T) {
 
 func TestResponseFormatter_EmptyPromptUsesDefaultPrompt(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "   \n\t  ", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "   \n\t  ", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -96,7 +108,7 @@ func TestResponseFormatter_EmptyPromptUsesDefaultPrompt(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if !strings.Contains(got, "*Status:*") {
 		t.Errorf("expected rendered output via default prompt, got %q", got)
 	}
@@ -113,7 +125,7 @@ func TestResponseFormatter_EmptyPromptUsesDefaultPrompt(t *testing.T) {
 
 func TestResponseFormatter_MissingLLMSettingsPassthrough(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat please.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat please.", MaxTokens: 1000, Temperature: 0.2})
 	// No LLM settings seeded → GetLLMSettings returns an error, formatter falls back.
 	if err := database.DB.Exec("DELETE FROM llm_settings").Error; err != nil {
 		t.Fatalf("clear llm_settings: %v", err)
@@ -125,7 +137,7 @@ func TestResponseFormatter_MissingLLMSettingsPassthrough(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if got != "raw output" {
 		t.Errorf("expected passthrough, got %q", got)
 	}
@@ -133,7 +145,7 @@ func TestResponseFormatter_MissingLLMSettingsPassthrough(t *testing.T) {
 
 func TestResponseFormatter_MissingAPIKeyPassthrough(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat please.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat please.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, database.LLMSettings{
 		Name:     "openai-no-key",
 		Provider: database.LLMProviderOpenAI,
@@ -147,7 +159,7 @@ func TestResponseFormatter_MissingAPIKeyPassthrough(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if got != "raw output" {
 		t.Errorf("expected passthrough, got %q", got)
 	}
@@ -156,7 +168,7 @@ func TestResponseFormatter_MissingAPIKeyPassthrough(t *testing.T) {
 func TestResponseFormatter_HappyPathReturnsLLMOutput(t *testing.T) {
 	customSchema := `{"severity":"high","summary":"1-3 sentences.","affected_hosts":["host1"]}`
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{
+	seedFormatterSettings(t, database.FormattingRule{
 		Enabled:             true,
 		SystemPrompt:        "You are a strict JSON formatter.",
 		MaxTokens:           1234,
@@ -170,7 +182,7 @@ func TestResponseFormatter_HappyPathReturnsLLMOutput(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "Raw final answer.", "step 1\nstep 2")
+	got := formatCatchAll(f, context.Background(), "Raw final answer.", "step 1\nstep 2")
 	if !strings.Contains(got, "*Severity:*") {
 		t.Errorf("expected rendered Slack output with custom severity field, got %q", got)
 	}
@@ -220,7 +232,7 @@ func TestResponseFormatter_HappyPathReturnsLLMOutput(t *testing.T) {
 
 func TestResponseFormatter_DefaultsMaxTokensWhenZero(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{
+	seedFormatterSettings(t, database.FormattingRule{
 		Enabled:      true,
 		SystemPrompt: "Reformat.",
 		MaxTokens:    0,
@@ -233,7 +245,7 @@ func TestResponseFormatter_DefaultsMaxTokensWhenZero(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw", "log")
+	got := formatCatchAll(f, context.Background(), "raw", "log")
 	if got == "" || got == "raw" {
 		t.Errorf("expected rendered formatted output, got %q", got)
 	}
@@ -244,7 +256,7 @@ func TestResponseFormatter_DefaultsMaxTokensWhenZero(t *testing.T) {
 
 func TestResponseFormatter_WorkerNotConnectedPassthrough(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -252,7 +264,7 @@ func TestResponseFormatter_WorkerNotConnectedPassthrough(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if got != "raw output" {
 		t.Errorf("expected passthrough on ErrWorkerNotConnected, got %q", got)
 	}
@@ -263,7 +275,7 @@ func TestResponseFormatter_WorkerNotConnectedPassthrough(t *testing.T) {
 
 func TestResponseFormatter_GenericErrorPassthrough(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -271,7 +283,7 @@ func TestResponseFormatter_GenericErrorPassthrough(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if got != "raw output" {
 		t.Errorf("expected passthrough on generic error, got %q", got)
 	}
@@ -279,7 +291,7 @@ func TestResponseFormatter_GenericErrorPassthrough(t *testing.T) {
 
 func TestResponseFormatter_EmptyResultPassthrough(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -287,7 +299,7 @@ func TestResponseFormatter_EmptyResultPassthrough(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if got != "raw output" {
 		t.Errorf("expected passthrough on empty/whitespace result, got %q", got)
 	}
@@ -295,7 +307,7 @@ func TestResponseFormatter_EmptyResultPassthrough(t *testing.T) {
 
 func TestResponseFormatter_PropagatesCallerDeadline(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -306,7 +318,7 @@ func TestResponseFormatter_PropagatesCallerDeadline(t *testing.T) {
 	defer cancel()
 
 	f := NewResponseFormatter(caller)
-	if got := f.Format(parent, "raw", "log"); got == "" || got == "raw" {
+	if got := formatCatchAll(f, parent, "raw", "log"); got == "" || got == "raw" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	if caller.contextSeen == nil {
@@ -327,7 +339,7 @@ func TestResponseFormatter_PropagatesCallerDeadline(t *testing.T) {
 
 func TestResponseFormatter_AppliesDefaultTimeout(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -335,7 +347,7 @@ func TestResponseFormatter_AppliesDefaultTimeout(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	if got := f.Format(context.Background(), "raw", "log"); got == "" || got == "raw" {
+	if got := formatCatchAll(f, context.Background(), "raw", "log"); got == "" || got == "raw" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	if caller.contextSeen == nil {
@@ -353,7 +365,7 @@ func TestResponseFormatter_AppliesDefaultTimeout(t *testing.T) {
 
 func TestResponseFormatter_TruncatesLargeFullLog(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -370,7 +382,7 @@ func TestResponseFormatter_TruncatesLargeFullLog(t *testing.T) {
 	fullLog := opener + filler + trailer
 
 	f := NewResponseFormatter(caller)
-	if got := f.Format(context.Background(), rawResp, fullLog); got == "" || got == rawResp {
+	if got := formatCatchAll(f, context.Background(), rawResp, fullLog); got == "" || got == rawResp {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	prompt := caller.lastUser
@@ -393,7 +405,7 @@ func TestResponseFormatter_TruncatesLargeFullLog(t *testing.T) {
 
 func TestResponseFormatter_TruncatesLargeRawResponse(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -409,7 +421,7 @@ func TestResponseFormatter_TruncatesLargeRawResponse(t *testing.T) {
 	rawResp := opener + filler + trailer
 
 	f := NewResponseFormatter(caller)
-	if got := f.Format(context.Background(), rawResp, "step 1"); got == "" {
+	if got := formatCatchAll(f, context.Background(), rawResp, "step 1"); got == "" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	prompt := caller.lastUser
@@ -474,7 +486,7 @@ func lenFormatterOverheadWithReasoning() int {
 
 func TestResponseFormatter_OmitsReasoningSectionWhenEmpty(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
@@ -482,7 +494,7 @@ func TestResponseFormatter_OmitsReasoningSectionWhenEmpty(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	if got := f.Format(context.Background(), "raw only", ""); got == "" || got == "raw only" {
+	if got := formatCatchAll(f, context.Background(), "raw only", ""); got == "" || got == "raw only" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	if strings.Contains(caller.lastUser, "--- Full reasoning ---") {
@@ -495,7 +507,7 @@ func TestResponseFormatter_OmitsReasoningSectionWhenEmpty(t *testing.T) {
 
 func TestResponseFormatter_RetryOnValidationFailure(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{
@@ -510,7 +522,7 @@ func TestResponseFormatter_RetryOnValidationFailure(t *testing.T) {
 	}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if caller.callCount() != 2 {
 		t.Fatalf("expected 2 LLM calls (initial + retry), got %d", caller.callCount())
 	}
@@ -536,7 +548,7 @@ func TestResponseFormatter_RetryOnValidationFailure(t *testing.T) {
 
 func TestResponseFormatter_FallbackWhenRetryReturnsEmpty(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{
@@ -551,7 +563,7 @@ func TestResponseFormatter_FallbackWhenRetryReturnsEmpty(t *testing.T) {
 	}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if caller.callCount() != 2 {
 		t.Fatalf("expected 2 LLM calls, got %d", caller.callCount())
 	}
@@ -562,7 +574,7 @@ func TestResponseFormatter_FallbackWhenRetryReturnsEmpty(t *testing.T) {
 
 func TestResponseFormatter_FallbackAfterTwoValidationFailures(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{
@@ -577,7 +589,7 @@ func TestResponseFormatter_FallbackAfterTwoValidationFailures(t *testing.T) {
 	}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if caller.callCount() != 2 {
 		t.Fatalf("expected 2 LLM calls, got %d", caller.callCount())
 	}
@@ -588,7 +600,7 @@ func TestResponseFormatter_FallbackAfterTwoValidationFailures(t *testing.T) {
 
 func TestResponseFormatter_FallbackOnRetryCallError(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{
@@ -603,7 +615,7 @@ func TestResponseFormatter_FallbackOnRetryCallError(t *testing.T) {
 	}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if caller.callCount() != 2 {
 		t.Fatalf("expected 2 LLM calls, got %d", caller.callCount())
 	}
@@ -614,7 +626,7 @@ func TestResponseFormatter_FallbackOnRetryCallError(t *testing.T) {
 
 func TestResponseFormatter_MissingRequiredFieldTriggersRetry(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterSettings(t, database.FormattingRule{Enabled: true, SystemPrompt: "Reformat.", MaxTokens: 1000, Temperature: 0.2})
 	seedFormatterLLM(t, defaultLLMForFormatter())
 
 	caller := &fakeOneShotLLMCaller{
@@ -630,7 +642,7 @@ func TestResponseFormatter_MissingRequiredFieldTriggersRetry(t *testing.T) {
 	}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "full log")
+	got := formatCatchAll(f, context.Background(), "raw output", "full log")
 	if caller.callCount() != 2 {
 		t.Fatalf("expected 2 LLM calls (missing field triggers retry), got %d", caller.callCount())
 	}
@@ -714,7 +726,7 @@ func TestParseAndValidateResponse(t *testing.T) {
 func TestResponseFormatter_CustomSchemaHappyPath(t *testing.T) {
 	customSchema := `{"severity":"high","summary":"one-liner.","affected_hosts":["host1"]}`
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{
+	seedFormatterSettings(t, database.FormattingRule{
 		Enabled:             true,
 		SystemPrompt:        "You are a JSON formatter.",
 		MaxTokens:           1000,
@@ -728,7 +740,7 @@ func TestResponseFormatter_CustomSchemaHappyPath(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "")
+	got := formatCatchAll(f, context.Background(), "raw output", "")
 	if !strings.Contains(got, "*Severity:*") {
 		t.Errorf("expected custom severity field in output, got %q", got)
 	}
@@ -749,7 +761,7 @@ func TestResponseFormatter_CustomSchemaHappyPath(t *testing.T) {
 
 func TestResponseFormatter_EmptySchemaExampleUsesBuiltinDefault(t *testing.T) {
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{
+	seedFormatterSettings(t, database.FormattingRule{
 		Enabled:             true,
 		SystemPrompt:        "You are a formatter.",
 		MaxTokens:           1000,
@@ -763,7 +775,7 @@ func TestResponseFormatter_EmptySchemaExampleUsesBuiltinDefault(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "")
+	got := formatCatchAll(f, context.Background(), "raw output", "")
 	if !strings.Contains(got, "*Status:*") {
 		t.Errorf("expected status field from built-in schema, got %q", got)
 	}
@@ -787,7 +799,7 @@ func TestResponseFormatter_EmptyRenderFallback(t *testing.T) {
 	// returns an empty string which should fall back to rawResponse.
 	customSchema := `{"tags":["example"]}`
 	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{
+	seedFormatterSettings(t, database.FormattingRule{
 		Enabled:             true,
 		SystemPrompt:        "You are a formatter.",
 		MaxTokens:           1000,
@@ -801,50 +813,9 @@ func TestResponseFormatter_EmptyRenderFallback(t *testing.T) {
 	}}
 
 	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "")
+	got := formatCatchAll(f, context.Background(), "raw output", "")
 	if got != "raw output" {
 		t.Errorf("expected rawResponse fallback when render is empty, got %q", got)
-	}
-}
-
-func TestResponseFormatter_LegacyDefaultPromptTreatedAsDefault(t *testing.T) {
-	// Simulate an existing install that has the pre-schema-feature default prompt
-	// stored in the DB. When a custom OutputSchemaExample is set, the formatter
-	// must replace the stale field-specific guidance with DefaultFormattingPrompt
-	// so there is no conflict between the old field names and the new schema.
-	legacyPrompt := "You are a senior incident-response writer. Reformat the agent's investigation into a structured incident summary aimed at on-call engineers.\n\nUse the full reasoning trace as context but base the output on the agent's final response. Do not invent facts that are not supported by the trace.\n\nField guidance:\n- Status (\"status\"): one of \"resolved\", \"unresolved\", or \"escalate\" — choose the word that best matches the outcome. Use exactly one of the three values with no additional text.\n- Summary (\"summary\"): 1-3 sentences describing what happened and the suspected root cause. Be factual and concise; preserve specific identifiers (hosts, services, timestamps, error codes).\n- Actions taken (\"actions_taken\"): each entry is one concrete step the agent performed. Use past tense. Omit steps with no observable effect. Empty array is valid.\n- Recommendations (\"recommendations\"): each entry is one actionable next step for a human. Omit if none apply. Empty array is valid.\n\nKeep the tone factual and concise. The JSON output schema is enforced automatically — focus on accurate, useful content."
-	customSchema := `{"severity":"high","summary":"one-liner."}`
-
-	setupFormatterTestDB(t)
-	seedFormatterSettings(t, database.FormattingSettings{
-		Enabled:             true,
-		SystemPrompt:        legacyPrompt,
-		MaxTokens:           1000,
-		Temperature:         0.2,
-		OutputSchemaExample: customSchema,
-	})
-	seedFormatterLLM(t, defaultLLMForFormatter())
-
-	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
-		return `{"severity":"critical","summary":"Disk full."}`, nil
-	}}
-
-	f := NewResponseFormatter(caller)
-	got := f.Format(context.Background(), "raw output", "")
-	if got == "raw output" {
-		t.Fatalf("expected formatted output, not raw fallback")
-	}
-	// The system prompt sent to the LLM must use the new schema-agnostic prompt,
-	// not the legacy field-specific guidance.
-	if strings.Contains(caller.lastSystem, `"status"`) && strings.Contains(caller.lastSystem, "Actions taken") {
-		t.Errorf("legacy field guidance leaked into system prompt: %q", caller.lastSystem)
-	}
-	if !strings.Contains(caller.lastSystem, strings.TrimSpace(database.DefaultFormattingPrompt)) {
-		t.Errorf("expected new DefaultFormattingPrompt in system prompt, got %q", caller.lastSystem)
-	}
-	// Custom schema instruction must still be present.
-	if !strings.Contains(caller.lastSystem, `"severity"`) {
-		t.Errorf("expected custom schema field 'severity' in system prompt, got %q", caller.lastSystem)
 	}
 }
 

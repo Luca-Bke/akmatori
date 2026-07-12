@@ -165,6 +165,7 @@ func runMigrations(db *gorm.DB) error {
 		&MCPServerConfig{},
 		&RetentionSettings{},
 		&FormattingSettings{},
+		&FormattingRule{},
 		// Channels & cron (unified channels + cron jobs feature)
 		&Integration{},
 		&Channel{},
@@ -233,6 +234,12 @@ func runMigrations(db *gorm.DB) error {
 
 	// Backfill alert rows for pre-existing alert-sourced incidents.
 	if err := migrateBackfillAlerts(db); err != nil {
+		return err
+	}
+
+	// Convert a legacy enabled global FormattingSettings row into a catch-all
+	// FormattingRule so upgraded installs keep formatting responses.
+	if err := migrateGlobalFormattingToRule(db); err != nil {
 		return err
 	}
 

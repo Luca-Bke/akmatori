@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   AgentRunner,
+  extractSkillNameFromReadPath,
   mapThinkingLevel,
   resolveModel,
   type ExecuteParams,
@@ -2423,5 +2424,48 @@ describe("AgentRunner", () => {
       expect(captured.no_proxy).toBe("localhost,127.0.0.1");
     });
 
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractSkillNameFromReadPath — last-skill tracking for formatting rules
+// ---------------------------------------------------------------------------
+
+describe("extractSkillNameFromReadPath", () => {
+  const skillsDir = "/akmatori/skills";
+
+  it("extracts the skill name from a SKILL.md read", () => {
+    expect(extractSkillNameFromReadPath(skillsDir, "/akmatori/skills/victoria-metrics/SKILL.md")).toBe(
+      "victoria-metrics",
+    );
+  });
+
+  it("normalizes redundant path segments", () => {
+    expect(extractSkillNameFromReadPath(skillsDir, "/akmatori/skills/./netbox//SKILL.md")).toBe("netbox");
+  });
+
+  it("ignores non-SKILL.md reads inside the skills dir", () => {
+    expect(extractSkillNameFromReadPath(skillsDir, "/akmatori/skills/netbox/scripts/query.sh")).toBeUndefined();
+    expect(extractSkillNameFromReadPath(skillsDir, "/akmatori/skills/netbox/README.md")).toBeUndefined();
+  });
+
+  it("ignores nested SKILL.md deeper than one level", () => {
+    expect(extractSkillNameFromReadPath(skillsDir, "/akmatori/skills/a/b/SKILL.md")).toBeUndefined();
+  });
+
+  it("ignores SKILL.md outside the skills dir", () => {
+    expect(extractSkillNameFromReadPath(skillsDir, "/other/place/netbox/SKILL.md")).toBeUndefined();
+    expect(extractSkillNameFromReadPath(skillsDir, "/akmatori/skills-evil/netbox/SKILL.md")).toBeUndefined();
+  });
+
+  it("ignores a direct read of the skills dir itself", () => {
+    expect(extractSkillNameFromReadPath(skillsDir, "/akmatori/skills/SKILL.md")).toBeUndefined();
+  });
+
+  it("handles missing skillsDir and non-string args", () => {
+    expect(extractSkillNameFromReadPath(undefined, "/akmatori/skills/netbox/SKILL.md")).toBeUndefined();
+    expect(extractSkillNameFromReadPath(skillsDir, undefined)).toBeUndefined();
+    expect(extractSkillNameFromReadPath(skillsDir, 42)).toBeUndefined();
+    expect(extractSkillNameFromReadPath(skillsDir, "")).toBeUndefined();
   });
 });

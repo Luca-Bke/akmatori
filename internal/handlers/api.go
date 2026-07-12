@@ -169,8 +169,14 @@ func (h *APIHandler) SetupRoutes(mux *http.ServeMux) {
 	// Retention settings
 	mux.HandleFunc("/api/settings/retention", h.handleRetentionSettings)
 
-	// Formatting settings
+	// Formatting settings (removed; returns 410 Gone — use /api/formatting-rules)
 	mux.HandleFunc("/api/settings/formatting", h.handleFormattingSettings)
+
+	// Per-flow formatting rules
+	mux.HandleFunc("/api/formatting-rules", h.handleFormattingRules)
+	mux.HandleFunc("PUT /api/formatting-rules/reorder", h.handleFormattingRulesReorder)
+	mux.HandleFunc("PUT /api/formatting-rules/{uuid}", h.handleFormattingRuleByUUID)
+	mux.HandleFunc("DELETE /api/formatting-rules/{uuid}", h.handleFormattingRuleByUUID)
 
 	// Context files
 	mux.HandleFunc("/api/context", h.handleContext)

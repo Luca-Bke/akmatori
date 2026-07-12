@@ -19,17 +19,16 @@ import (
 	"github.com/slack-go/slack/slackevents"
 )
 
-// applyResponseFormatter runs the configured global formatting prompt
-// against the agent's final response. Skipped on error/empty responses
-// where formatting would be meaningless. Format itself is a passthrough
-// when the formatter is unset, formatting is disabled in DB settings, the
-// LLM is unavailable, or the call fails — so this helper never blocks
-// finalization.
-func applyResponseFormatter(ctx context.Context, formatter *services.ResponseFormatter, hasError bool, response, reasoning string) string {
+// applyResponseFormatter applies the first formatting rule matching the
+// incident's flow to the agent's final response. Skipped on error/empty
+// responses where formatting would be meaningless. FormatForFlow itself is a
+// passthrough when the formatter is unset, no rule matches, the LLM is
+// unavailable, or the call fails — so this helper never blocks finalization.
+func applyResponseFormatter(ctx context.Context, formatter *services.ResponseFormatter, hasError bool, response, reasoning string, flow services.FormatFlow) string {
 	if hasError || response == "" {
 		return response
 	}
-	return formatter.Format(ctx, response, reasoning)
+	return formatter.FormatForFlow(ctx, response, reasoning, flow)
 }
 
 // appendFinalizeMetrics re-attaches the execution-time/token footer that
@@ -69,6 +68,21 @@ func finalizeSlackMessageBody(ctx context.Context, summarizer *services.SlackSum
 	}
 	formatted := output.FormatForSlack(output.Parse(contentOnly))
 	return truncateWithFooter(formatted, footer, slackMaxTextBytes)
+}
+
+// channelUUIDForExternalID resolves a Slack channel's external ID to the
+// corresponding Channel row UUID for formatting-rule matching. Best-effort:
+// unknown channels or an unwired channel service yield "" so only
+// wildcard-channel rules can match.
+func (h *SlackHandler) channelUUIDForExternalID(externalID string) string {
+	if h.channelService == nil {
+		return ""
+	}
+	ch, err := h.channelService.FindByExternalID(database.MessagingProviderSlack, externalID)
+	if err != nil || ch == nil {
+		return ""
+	}
+	return ch.UUID
 }
 
 // processMessage is the core message processing logic
@@ -285,10 +299,11 @@ func (h *SlackHandler) processMessage(channel, threadTS, messageTS, text, user s
 			finalSessionID = sessionID
 		}
 
-		// Apply the configured formatting prompt before persistence and
+		// Apply the first matching formatting rule before persistence and
 		// before the Slack-side compression. Passthrough on error/empty
-		// or when formatting is disabled.
-		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog)
+		// or when no rule matches the incident's flow.
+		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog,
+			services.BuildFormatFlow(incidentUUID, h.channelUUIDForExternalID(channel)))
 
 		// Re-attach the metrics footer AFTER formatting so the LLM never
 		// sees it (and therefore cannot strip or rewrite ⏱️ Time / 🎯
