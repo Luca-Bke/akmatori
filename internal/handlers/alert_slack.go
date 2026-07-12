@@ -344,6 +344,25 @@ func truncateForSlack(message string, maxBytes int) string {
 	return truncated + suffix
 }
 
+// incidentThreadPostable reports whether akmatori may write into the Slack
+// thread recorded on an incident. Incidents spawned from a listener Channel
+// carry that channel's UUID in source_uuid; when the row resolves to a
+// channel with can_post=false the channel is a silent listener — alerts are
+// extracted and investigated (results land in the UI) but akmatori never
+// posts back into the thread. Source UUIDs that don't resolve to a channel
+// (webhook alert sources, deleted channels) default to postable so
+// webhook-notification threads keep working.
+func (h *AlertHandler) incidentThreadPostable(incident *database.Incident) bool {
+	if incident == nil || h.channelService == nil || incident.SourceUUID == "" {
+		return true
+	}
+	ch, err := h.channelService.GetChannelByUUID(incident.SourceUUID)
+	if err != nil || ch == nil {
+		return true
+	}
+	return ch.CanPost
+}
+
 // updateIncidentSlackContext updates the incident with Slack channel context
 func (h *AlertHandler) updateIncidentSlackContext(incidentUUID, channelID, messageTS string) error {
 	return database.GetDB().Model(&database.Incident{}).

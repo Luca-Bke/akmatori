@@ -261,6 +261,13 @@ export default function ChannelsManager() {
                 />
                 <span className="text-sm text-gray-700 dark:text-gray-300">Enabled</span>
               </label>
+              {form.can_listen && !form.can_post && (
+                <span className="w-full text-xs text-gray-500 dark:text-gray-400">
+                  Silent listener: alerts from this channel are investigated and shown in the
+                  incidents UI, but Akmatori never posts replies, reactions, or status back to the
+                  channel.
+                </span>
+              )}
             </div>
 
             {form.can_listen && (

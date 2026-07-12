@@ -505,7 +505,11 @@ func (h *SlackHandler) handleAlertChannelMessage(event *slackevents.MessageEvent
 		slog.Error("AlertHandler not configured, cannot process listener channel alert")
 		// No hourglass to remove on this error path — the typing controller
 		// in runListenerChannelInvestigation never started because we never
-		// got there. Just surface the misconfiguration as a warning reaction.
+		// got there. Just surface the misconfiguration as a warning reaction
+		// (skipped for silent listeners, which never write to the channel).
+		if !channel.CanPost {
+			return
+		}
 		if err := h.client.AddReaction("warning", slack.ItemRef{
 			Channel:   event.Channel,
 			Timestamp: event.TimeStamp,

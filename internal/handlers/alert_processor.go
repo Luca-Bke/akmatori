@@ -114,8 +114,10 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 				slog.Warn("failed to link alert to incident, spawning new incident", "incident_uuid", verdict.IncidentUUID, "err", err)
 			} else {
 				// Best-effort Slack thread note on the matched incident's thread.
+				// Skipped when that thread belongs to a silent listener channel.
 				if incident, err := h.skillService.GetIncident(verdict.IncidentUUID); err == nil && incident != nil &&
-					incident.SlackChannelID != "" && incident.SlackMessageTS != "" {
+					incident.SlackChannelID != "" && incident.SlackMessageTS != "" &&
+					h.incidentThreadPostable(incident) {
 					h.postSlackThreadReply(incident.SlackChannelID, incident.SlackMessageTS,
 						fmt.Sprintf("Recurring alert: %s", normalized.AlertName))
 				}
@@ -290,9 +292,11 @@ func (h *AlertHandler) ProcessAlertFromListenerChannel(
 				// Fail-open: link failed — spawn new investigation instead.
 				slog.Warn("failed to link alert to incident, spawning new incident", "incident_uuid", verdict.IncidentUUID, "err", err)
 			} else {
-				h.updateSlackChannelReactions(slackChannelID, slackMessageTS, false)
-				h.postSlackThreadReply(slackChannelID, slackMessageTS,
-					h.buildAlertMergedMessage(verdict.IncidentUUID))
+				if channel.CanPost {
+					h.updateSlackChannelReactions(slackChannelID, slackMessageTS, false)
+					h.postSlackThreadReply(slackChannelID, slackMessageTS,
+						h.buildAlertMergedMessage(verdict.IncidentUUID))
+				}
 				return nil, nil
 			}
 		}
@@ -315,9 +319,11 @@ func (h *AlertHandler) ProcessAlertFromListenerChannel(
 		incidentUUID, _, err := h.skillService.SpawnIncidentManager(incidentCtx)
 		if err != nil {
 			slog.Error("failed to spawn incident manager for listener channel alert", "err", err)
-			h.updateSlackChannelReactions(slackChannelID, slackMessageTS, true)
-			h.postSlackThreadReply(slackChannelID, slackMessageTS,
-				fmt.Sprintf("Failed to create incident: %v", err))
+			if channel.CanPost {
+				h.updateSlackChannelReactions(slackChannelID, slackMessageTS, true)
+				h.postSlackThreadReply(slackChannelID, slackMessageTS,
+					fmt.Sprintf("Failed to create incident: %v", err))
+			}
 			return nil, err
 		}
 
@@ -799,6 +805,13 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 ) {
 	slog.Info("starting investigation for listener channel alert", "alert_name", alert.AlertName, "incident_id", incidentUUID)
 
+	// can_post=false marks a silent listener: the alert is investigated and
+	// the incident (response + full log) lands in the UI as usual, but
+	// akmatori never writes back into the channel — no typing banner, no
+	// reactions, no thread replies. Explicit @mentions in the thread are
+	// handled by the mention flow and still get responses.
+	canPost := channel.CanPost
+
 	// Build investigation prompt
 	investigationPrompt := h.buildInvestigationPromptForChannel(alert, channel)
 	taskWithGuidance := executor.PrependGuidance(investigationPrompt)
@@ -820,7 +833,7 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 	// erases the replacement run's banner + hourglass on the shared thread.
 	var progressStreamer *SlackProgressStreamer
 	var typing slackutil.TypingController
-	if slackClient := h.slackManager.GetClient(); slackClient != nil {
+	if slackClient := h.slackManager.GetClient(); slackClient != nil && canPost {
 		typing = slackutil.NewTypingController(slackutil.TypingControllerConfig{
 			Client:      slackClient,
 			ChannelID:   slackChannelID,
@@ -903,8 +916,10 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 			if updateErr := h.skillService.UpdateIncidentComplete(incidentUUID, database.IncidentStatusFailed, "", "", errorMsg, 0, 0); updateErr != nil {
 				slog.Error("failed to update incident status", "err", updateErr)
 			}
-			h.updateSlackChannelReactions(slackChannelID, slackMessageTS, true)
-			h.postSlackThreadReply(slackChannelID, slackMessageTS, errorMsg)
+			if canPost {
+				h.updateSlackChannelReactions(slackChannelID, slackMessageTS, true)
+				h.postSlackThreadReply(slackChannelID, slackMessageTS, errorMsg)
+			}
 			return
 		}
 
@@ -955,14 +970,18 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 		// invariant — a newer Start/Continue arriving during this call
 		// can still fire OnSuperseded on the displaced waiter, and the
 		// subsequent ReleaseRun returns false so the stale finalize is
-		// abandoned.
+		// abandoned. Silent listeners skip this entirely: the summarizer
+		// output is only ever used for the Slack post below, so running the
+		// LLM call for a channel we never post to would be pure waste.
 		var formattedResponse string
-		if hasError {
-			formattedResponse = response
-		} else if dbResponseWithMetrics != "" {
-			formattedResponse = finalizeSlackMessageBody(context.Background(), h.slackSummarizer, dbResponseWithMetrics, incidentUUID)
-		} else {
-			formattedResponse = "Task completed (no output)"
+		if canPost {
+			if hasError {
+				formattedResponse = response
+			} else if dbResponseWithMetrics != "" {
+				formattedResponse = finalizeSlackMessageBody(context.Background(), h.slackSummarizer, dbResponseWithMetrics, incidentUUID)
+			} else {
+				formattedResponse = "Task completed (no output)"
+			}
 		}
 
 		// Claim ownership of finalization atomically. A newer alert / Slack
@@ -998,9 +1017,13 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 		// allows up to ~40,000 chars so long summaries always reach the user.
 		// Completion is signaled by the success/error reaction added above
 		// and the typing banner clearing as the deferred Stop fires.
-		h.updateSlackChannelReactions(slackChannelID, slackMessageTS, hasError)
-		slog.Info("posting Slack final summary as new thread reply", "response_len", len(formattedResponse), "incident", incidentUUID)
-		h.postSlackThreadReply(slackChannelID, slackMessageTS, formattedResponse)
+		// Silent listeners (can_post=false) stop at the DB update above —
+		// the result is only visible in the UI.
+		if canPost {
+			h.updateSlackChannelReactions(slackChannelID, slackMessageTS, hasError)
+			slog.Info("posting Slack final summary as new thread reply", "response_len", len(formattedResponse), "incident", incidentUUID)
+			h.postSlackThreadReply(slackChannelID, slackMessageTS, formattedResponse)
+		}
 
 		slog.Info("investigation completed for Slack channel alert", "alert", alert.AlertName)
 		return
@@ -1012,6 +1035,8 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 	if updateErr := h.skillService.UpdateIncidentComplete(incidentUUID, database.IncidentStatusFailed, "", "", errorMsg, 0, 0); updateErr != nil {
 		slog.Error("failed to update incident status", "err", updateErr)
 	}
-	h.updateSlackChannelReactions(slackChannelID, slackMessageTS, true)
-	h.postSlackThreadReply(slackChannelID, slackMessageTS, errorMsg)
+	if canPost {
+		h.updateSlackChannelReactions(slackChannelID, slackMessageTS, true)
+		h.postSlackThreadReply(slackChannelID, slackMessageTS, errorMsg)
+	}
 }

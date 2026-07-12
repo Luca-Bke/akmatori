@@ -122,16 +122,16 @@ Rules (see also "Runbooks and memory search/write" — write/ingest basics live 
 
 ### Channels, Integrations, and outbound routing
 
-Operators configure a messaging `Integration` (provider credentials) and one or more `Channel` rows under it. Triggers — alert sources, cron jobs, the workspace default — reference Channels by UUID. Slack is implemented; Telegram is a registry stub so the data model is ready when it lands.
+Operators configure a messaging `Integration` (provider credentials) and `Channel` rows under it. Triggers (alert sources, cron jobs, workspace default) reference Channels by UUID. Slack is implemented; Telegram is a registry stub.
 
 Rules:
-- outbound posting goes through `ProviderRegistry.Get(channel.Integration.Provider).PostMessage(ctx, channel, ...)`, never the legacy `SlackSettings.AlertsChannel`
-- alert routing uses `ChannelService.ResolveForAlertSource(asi)`: explicit `notification_channel_id` wins, otherwise fall back to the provider's `is_default_post=true` Channel
-- at most one `is_default_post=true` per provider (enforced by a partial-unique index and a service-layer check)
-- inbound listening reads `Channel.ExtractionPrompt` and `Channel.ProcessHumanMessages`, not alert-source `Settings` JSONB; `slack_processor.go` must honour this
-- `Channel.CanPost` / `Channel.CanListen` capability flags gate which triggers may reference a channel
-- the `slack_channel` AlertSourceInstance type is deprecated and hidden from the UI; do not reintroduce it for new flows
-- Telegram requests must surface `ErrNotImplemented` from the registry — never silently no-op
+- outbound posting goes through `ProviderRegistry.Get(channel.Integration.Provider).PostMessage(...)`, never legacy `SlackSettings.AlertsChannel`
+- alert routing: `ChannelService.ResolveForAlertSource(asi)` — explicit `notification_channel_id` wins, else the provider's `is_default_post=true` Channel
+- at most one `is_default_post=true` per provider (partial-unique index + service-layer check)
+- inbound listening reads `Channel.ExtractionPrompt` / `Channel.ProcessHumanMessages`, not alert-source `Settings` JSONB (`slack_processor.go`)
+- `Channel.CanPost`/`CanListen` gate which triggers may reference a channel; `can_listen=true, can_post=false` = silent listener: alerts investigated, results UI-only, no replies/reactions/banner (listener flow + `incidentThreadPostable`)
+- the `slack_channel` AlertSourceInstance type is deprecated and UI-hidden; do not reintroduce it
+- Telegram requests surface `ErrNotImplemented` from the registry — never silently no-op
 
 ### Alert correlation gate
 
@@ -179,9 +179,9 @@ Webhook alert sources are still `AlertSourceInstance` rows, while message destin
 Rules:
 - `GET /api/alert-source-types` must hide deprecated types; `slack_channel` exists only for historical rows
 - creating deprecated `slack_channel` sources must fail; inbound Slack listening belongs to Channels with `can_listen=true`
-- `notification_channel_uuid` is optional on alert sources; when set, resolve it to a post-capable Channel before creating/updating the source
-- webhook handlers must fetch the instance, reject disabled rows, find the registered adapter by source type, validate the secret, then parse the body
-- adapter integration tests should use the real `AlertService` plus the real adapter for at least one happy path, bad-secret path, and malformed-payload path
+- `notification_channel_uuid` is optional on alert sources; when set, resolve to a post-capable Channel before create/update
+- webhook handlers: fetch instance, reject disabled rows, find adapter by source type, validate secret, then parse body
+- adapter integration tests: real `AlertService` + real adapter for at least one happy, bad-secret, and malformed-payload path
 
 ### Incidents tool (built-in, credential-less)
 
