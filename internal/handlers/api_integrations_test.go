@@ -219,6 +219,16 @@ func (m *mockChannelManager) ResolveForAlertSource(asi *database.AlertSourceInst
 	return m.ResolveDefault(provider)
 }
 
+func (m *mockChannelManager) FindByExternalID(provider database.MessagingProvider, externalID string) (*database.Channel, error) {
+	for i := range m.channels {
+		if m.channels[i].ExternalID == externalID && m.channels[i].Enabled {
+			out := m.channels[i]
+			return &out, nil
+		}
+	}
+	return nil, services.ErrChannelNotFound
+}
+
 func newHandlerWithChannelManager(mgr services.ChannelManager) *APIHandler {
 	h := NewAPIHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h.SetChannelManager(mgr)

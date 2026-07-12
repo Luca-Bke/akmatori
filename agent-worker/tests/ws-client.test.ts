@@ -204,6 +204,25 @@ describe("WebSocketClient", () => {
       expect(parsed.tokens_used).toBe(1500);
       expect(parsed.execution_time_ms).toBe(45000);
       expect(parsed.run_id).toBe("run-xyz");
+      expect(parsed).not.toHaveProperty("last_skill");
+    });
+
+    it("should include last_skill when provided", async () => {
+      client = new WebSocketClient({
+        url: mockServer.url,
+        heartbeatIntervalMs: 60_000,
+        logger: () => {},
+      });
+
+      await client.connect();
+      await sleep(50);
+
+      client.sendCompleted("inc-789", "run-xyz", "sess-001", "done", 100, 2000, "victoria-metrics");
+      await sleep(50);
+
+      const parsed = JSON.parse(mockServer.received[0]);
+      expect(parsed.type).toBe("agent_completed");
+      expect(parsed.last_skill).toBe("victoria-metrics");
     });
   });
 

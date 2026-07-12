@@ -339,6 +339,7 @@ func main() {
 	// — every cron tick spawns a cron-agent investigation through the same
 	// WebSocket as alert/Slack flows.
 	cronRunner := services.NewCronRunner(channelService, providerRegistry, skillService, agentWSHandler)
+	cronRunner.SetResponseFormatter(responseFormatter)
 	apiHandler.SetCronJobManager(cronRunner)
 
 	// Self-improvement proposals: apply-on-approve goes through the same

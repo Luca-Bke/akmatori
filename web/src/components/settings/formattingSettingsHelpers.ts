@@ -1,4 +1,4 @@
-import type { FormattingSettingsUpdate } from '../../types';
+import type { FormattingRuleUpdate } from '../../types';
 
 export const DEFAULT_FORMATTING_PROMPT_PLACEHOLDER = `You are a senior incident-response writer. Reformat the agent's investigation into a structured incident summary aimed at on-call engineers.
 
@@ -39,7 +39,7 @@ export function dehydrateField(current: string, defaultText: string): string {
   return current.trim() === defaultText.trim() ? '' : current;
 }
 
-export interface FormattingSettingsFormState {
+export interface FormattingConfigFormState {
   enabled: boolean;
   systemPrompt: string;
   maxTokens: number;
@@ -47,9 +47,13 @@ export interface FormattingSettingsFormState {
   outputSchemaExample: string;
 }
 
+// buildFormattingUpdatePayload maps the shared format-config form state to
+// the wire shape used by the formatting-rule create/update endpoints,
+// dehydrating unchanged defaults back to '' so backend fallbacks stay
+// authoritative.
 export function buildFormattingUpdatePayload(
-  state: FormattingSettingsFormState,
-): FormattingSettingsUpdate {
+  state: FormattingConfigFormState,
+): FormattingRuleUpdate {
   return {
     enabled: state.enabled,
     system_prompt: dehydrateField(state.systemPrompt, DEFAULT_FORMATTING_PROMPT_PLACEHOLDER),

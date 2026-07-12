@@ -73,6 +73,12 @@ type Incident struct {
 	// "merged" (post-investigation root-cause merge). Empty otherwise.
 	MergedIntoUUID string `gorm:"size:36;index" json:"merged_into_uuid,omitempty"`
 
+	// LastSkillUsed is the name of the last skill whose SKILL.md the agent
+	// read during the investigation, reported by the worker on the
+	// agent_completed frame. Empty for runs that touched no skill. Used as a
+	// formatting-rule match dimension.
+	LastSkillUsed string `gorm:"size:64" json:"last_skill_used,omitempty"`
+
 	// AlertCount is not stored; populated by API handlers via COUNT query.
 	AlertCount int64 `gorm:"-" json:"alert_count"`
 

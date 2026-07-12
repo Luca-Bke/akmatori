@@ -435,6 +435,7 @@ export class Orchestrator {
         result.response,
         result.tokens_used,
         result.execution_time_ms,
+        result.last_skill,
       );
 
       this.log(

@@ -430,6 +430,31 @@ func (s *ChannelService) ResolveDefault(provider database.MessagingProvider) (*d
 	return &row, nil
 }
 
+// FindByExternalID resolves a channel by its provider-native identifier
+// (e.g. a Slack channel ID). Best-effort helper for formatting-rule flow
+// identification: returns ErrChannelNotFound when no enabled row matches.
+// External IDs are unique per integration in practice but not DB-enforced;
+// the first enabled match wins.
+func (s *ChannelService) FindByExternalID(provider database.MessagingProvider, externalID string) (*database.Channel, error) {
+	if externalID == "" {
+		return nil, ErrChannelNotFound
+	}
+	var row database.Channel
+	err := s.db.
+		Preload("Integration").
+		Joins("JOIN integrations ON integrations.id = channels.integration_id").
+		Where("channels.external_id = ? AND channels.enabled = ? AND integrations.provider = ?", externalID, true, provider).
+		Order("channels.id ASC").
+		First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrChannelNotFound
+		}
+		return nil, fmt.Errorf("find channel by external id: %w", err)
+	}
+	return &row, nil
+}
+
 // ResolveForAlertSource picks the Channel that should receive outbound posts
 // for the given alert source instance. The explicit NotificationChannelID
 // wins (provided the channel and its integration are both enabled and the

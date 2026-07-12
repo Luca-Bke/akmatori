@@ -98,6 +98,7 @@ type CronRunner struct {
 	runner    IncidentRunner
 	scheduler cronScheduler
 	parser    cron.Parser
+	formatter *ResponseFormatter
 
 	mu       sync.Mutex
 	entries  map[uint]cron.EntryID // cronJob.ID -> scheduler entry
@@ -111,6 +112,12 @@ type CronRunner struct {
 // "*/2 * * * *" works without seconds.
 func NewCronRunner(channels ChannelManager, registry ProviderRegistry, skills SkillIncidentManager, runner IncidentRunner) *CronRunner {
 	return newCronRunnerWithDeps(database.GetDB(), channels, registry, skills, runner, cron.New())
+}
+
+// SetResponseFormatter wires the formatting-rule formatter into cron
+// finalization. Optional: a nil formatter leaves cron output raw.
+func (r *CronRunner) SetResponseFormatter(f *ResponseFormatter) {
+	r.formatter = f
 }
 
 // newCronRunnerWithDeps is the test seam: injects the DB, the scheduler, and
@@ -487,11 +494,25 @@ func (r *CronRunner) execute(job *database.CronJob) {
 		fullLog += "\n\n--- Final Response ---\n\n" + response
 	}
 
+	// Apply the first matching formatting rule before persistence and the
+	// channel post. Passthrough when no rule matches (crons historically
+	// post raw output) or the formatter is unwired; full_log keeps the raw
+	// response either way.
+	formattedResponse := response
+	if !hasError && response != "" && r.formatter != nil {
+		var channelUUID string
+		if channel != nil {
+			channelUUID = channel.UUID
+		}
+		formattedResponse = r.formatter.FormatForFlow(context.Background(), response, taskHeader+lastStreamedLog,
+			BuildFormatFlow(incidentUUID, channelUUID))
+	}
+
 	finalStatus := database.IncidentStatusCompleted
 	if hasError {
 		finalStatus = database.IncidentStatusFailed
 	}
-	if err := r.skills.UpdateIncidentComplete(incidentUUID, finalStatus, sessionID, fullLog, response, finalTokensUsed, finalExecutionTimeMs); err != nil {
+	if err := r.skills.UpdateIncidentComplete(incidentUUID, finalStatus, sessionID, fullLog, formattedResponse, finalTokensUsed, finalExecutionTimeMs); err != nil {
 		slog.Warn("cron agent: failed to update incident complete", "incident", incidentUUID, "err", err)
 	}
 
@@ -500,7 +521,7 @@ func (r *CronRunner) execute(job *database.CronJob) {
 	// tick failed without having to open the incident. Post-less crons skip
 	// this entirely — the incident row is their only output surface.
 	if job.PostResults {
-		body := formatCronAgentMessage(job, response, hasError, errorMsg)
+		body := formatCronAgentMessage(job, formattedResponse, hasError, errorMsg)
 		postCtx, cancel := context.WithTimeout(context.Background(), cronChannelPostTimeout)
 		defer cancel()
 		if _, err := provider.PostMessage(postCtx, channel, body); err != nil {

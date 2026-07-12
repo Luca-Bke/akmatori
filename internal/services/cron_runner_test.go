@@ -118,6 +118,9 @@ func (r *recordingChannelManager) UpdateChannel(string, ChannelUpdate) (*databas
 	panic("not implemented")
 }
 func (r *recordingChannelManager) DeleteChannel(string) error { panic("not implemented") }
+func (r *recordingChannelManager) FindByExternalID(database.MessagingProvider, string) (*database.Channel, error) {
+	return nil, ErrChannelNotFound
+}
 func (r *recordingChannelManager) ResolveDefault(provider database.MessagingProvider) (*database.Channel, error) {
 	if r.resolveErr != nil {
 		return nil, r.resolveErr
@@ -393,6 +396,8 @@ func setupCronRunnerTest(t *testing.T) (*CronRunner, *gorm.DB, *fakeScheduler, *
 		&database.ToolType{},
 		&database.ToolInstance{},
 		&database.LLMSettings{},
+		&database.Incident{},
+		&database.FormattingRule{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
@@ -1748,5 +1753,134 @@ func TestCronRunner_AgentTick_PostResultsOff_NoChannelNeeded(t *testing.T) {
 	}
 	if got.LastRunStatus != database.CronJobRunStatusOK {
 		t.Errorf("LastRunStatus = %q, want ok (channel resolution must be skipped), got error: %s", got.LastRunStatus, got.LastRunError)
+	}
+}
+
+// TestCronRunner_AgentTick_FormatsOnMatchingRule verifies that a formatting
+// rule matching the cron flow rewrites both the persisted response and the
+// posted channel message, while full_log keeps the raw agent output.
+func TestCronRunner_AgentTick_FormatsOnMatchingRule(t *testing.T) {
+	runner, db, _, chMgr, prov := setupCronRunnerTest(t)
+	chUUID := chMgr.channels[0].UUID
+
+	// The fake spawn returns "test-incident-uuid"; seed the matching incident
+	// row so BuildFormatFlow resolves source_kind=cron.
+	if err := db.Create(&database.Incident{
+		UUID:       "test-incident-uuid",
+		Source:     "cron",
+		SourceKind: database.IncidentSourceKindCron,
+		SourceUUID: "some-cron-uuid",
+	}).Error; err != nil {
+		t.Fatalf("seed incident: %v", err)
+	}
+	if err := db.Create(&database.FormattingRule{
+		UUID:                uuid.New().String(),
+		Name:                "cron reports",
+		Enabled:             true,
+		MatchSourceKind:     database.IncidentSourceKindCron,
+		OutputSchemaExample: `{"report":"text"}`,
+	}).Error; err != nil {
+		t.Fatalf("seed rule: %v", err)
+	}
+	seedFormatterLLM(t, defaultLLMForFormatter())
+
+	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
+		return `{"report":"FORMATTED CRON REPORT"}`, nil
+	}}
+	runner.SetResponseFormatter(NewResponseFormatter(caller))
+
+	job, err := runner.CreateJob("morning report", "*/2 * * * *", "Summarize incidents", chUUID, true, true, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := runner.RunNow(job.UUID); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	runner.WaitForInflight()
+
+	prov.mu.Lock()
+	posts := append([]recordedPost(nil), prov.posts...)
+	prov.mu.Unlock()
+	if len(posts) != 1 {
+		t.Fatalf("expected one PostMessage call, got %d", len(posts))
+	}
+	if !contains(posts[0].text, "FORMATTED CRON REPORT") {
+		t.Errorf("post body missing formatted output: %q", posts[0].text)
+	}
+	if contains(posts[0].text, "Final cron summary") {
+		t.Errorf("post body should not contain raw response: %q", posts[0].text)
+	}
+
+	skills := runner.skills.(*fakeSkillIncidentManager)
+	skills.mu.Lock()
+	defer skills.mu.Unlock()
+	var completed *fakeIncidentUpdate
+	for i := range skills.updates {
+		if skills.updates[i].response != "" {
+			completed = &skills.updates[i]
+		}
+	}
+	if completed == nil {
+		t.Fatal("expected an UpdateIncidentComplete call with a response")
+	}
+	if !contains(completed.response, "FORMATTED CRON REPORT") {
+		t.Errorf("persisted response not formatted: %q", completed.response)
+	}
+	if !contains(completed.fullLog, "Final cron summary") {
+		t.Errorf("full_log must keep the raw response: %q", completed.fullLog)
+	}
+}
+
+// TestCronRunner_AgentTick_NoRuleMatchKeepsRawOutput verifies that with a
+// formatter wired but no rule matching the cron flow, the posted message and
+// persisted response stay raw (crons have no global formatting fallback).
+func TestCronRunner_AgentTick_NoRuleMatchKeepsRawOutput(t *testing.T) {
+	runner, db, _, chMgr, prov := setupCronRunnerTest(t)
+	chUUID := chMgr.channels[0].UUID
+
+	if err := db.Create(&database.Incident{
+		UUID:       "test-incident-uuid",
+		Source:     "cron",
+		SourceKind: database.IncidentSourceKindCron,
+	}).Error; err != nil {
+		t.Fatalf("seed incident: %v", err)
+	}
+	// Alert-only rule — must not match a cron flow.
+	if err := db.Create(&database.FormattingRule{
+		UUID:            uuid.New().String(),
+		Name:            "alerts only",
+		Enabled:         true,
+		MatchSourceKind: database.IncidentSourceKindAlert,
+	}).Error; err != nil {
+		t.Fatalf("seed rule: %v", err)
+	}
+	seedFormatterLLM(t, defaultLLMForFormatter())
+
+	caller := &fakeOneShotLLMCaller{respond: func(ctx context.Context) (string, error) {
+		t.Fatal("LLM must not be invoked when no rule matches the cron flow")
+		return "", nil
+	}}
+	runner.SetResponseFormatter(NewResponseFormatter(caller))
+
+	job, err := runner.CreateJob("morning report", "*/2 * * * *", "Summarize incidents", chUUID, true, true, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := runner.RunNow(job.UUID); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	runner.WaitForInflight()
+
+	prov.mu.Lock()
+	posts := append([]recordedPost(nil), prov.posts...)
+	prov.mu.Unlock()
+	if len(posts) != 1 {
+		t.Fatalf("expected one PostMessage call, got %d", len(posts))
+	}
+	if !contains(posts[0].text, "Final cron summary") {
+		t.Errorf("expected raw response in post body: %q", posts[0].text)
+	}
+	if caller.callCount() != 0 {
+		t.Errorf("expected 0 LLM calls, got %d", caller.callCount())
 	}
 }

@@ -165,6 +165,7 @@ type ChannelManager interface {
 
 	ResolveDefault(provider database.MessagingProvider) (*database.Channel, error)
 	ResolveForAlertSource(asi *database.AlertSourceInstance, provider database.MessagingProvider) (*database.Channel, error)
+	FindByExternalID(provider database.MessagingProvider, externalID string) (*database.Channel, error)
 }
 
 // ProviderRegistry is the handler-facing view of the messaging provider

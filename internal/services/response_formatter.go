@@ -43,11 +43,12 @@ func parseAndValidateResponse(raw string, specs []fieldSpec) (map[string]any, []
 	return parsed, validateAgainstSpecs(parsed, specs)
 }
 
-// ResponseFormatter applies a configurable, global system prompt to the agent's
-// final incident response. It runs an extra one-shot LLM call with the raw
-// response plus the full reasoning log and returns the reformatted text. When
-// formatting is disabled, the LLM is unavailable, or the call errors, the raw
-// response is returned unchanged so callers can rely on Format() never failing.
+// ResponseFormatter rewrites the agent's final incident response according to
+// the first matching FormattingRule for the incident's flow. It runs an extra
+// one-shot LLM call with the raw response plus the full reasoning log and
+// returns the reformatted text. When no rule matches, the LLM is unavailable,
+// or the call errors, the raw response is returned unchanged so callers can
+// rely on FormatForFlow() never failing.
 type ResponseFormatter struct {
 	caller OneShotLLMCaller
 }
@@ -59,43 +60,58 @@ func NewResponseFormatter(caller OneShotLLMCaller) *ResponseFormatter {
 	return &ResponseFormatter{caller: caller}
 }
 
-// Format returns rawResponse rewritten according to the configured formatting
-// prompt, or rawResponse unchanged when formatting is disabled, the LLM path
-// is unavailable, or the call fails. Format never returns an error — every
-// failure mode collapses to passthrough so incident finalization is never
-// blocked by formatter problems.
-func (f *ResponseFormatter) Format(ctx context.Context, rawResponse, fullLog string) string {
+// formatConfig is the per-rule formatting configuration applied by
+// formatWithConfig. Blank fields fall back to the built-in defaults.
+type formatConfig struct {
+	systemPrompt        string
+	outputSchemaExample string
+	maxTokens           int
+	temperature         float64
+}
+
+// FormatForFlow applies the first enabled FormattingRule matching the flow.
+// When no rule matches, rawResponse is returned unchanged — rules are the
+// only formatting mechanism; there is no global fallback. FormatForFlow never
+// returns an error: every failure mode collapses to passthrough so incident
+// finalization is never blocked by formatter problems.
+func (f *ResponseFormatter) FormatForFlow(ctx context.Context, rawResponse, fullLog string, flow FormatFlow) string {
 	if f == nil || f.caller == nil {
 		return rawResponse
 	}
 
-	settings, err := database.GetOrCreateFormattingSettings()
+	rules, err := database.ListFormattingRules()
 	if err != nil {
-		slog.Warn("response formatter: failed to load formatting settings, using raw response", "err", err)
+		slog.Warn("response formatter: failed to load formatting rules, using raw response", "err", err)
 		return rawResponse
 	}
-	if settings == nil || !settings.Enabled {
+	rule := MatchFormattingRule(rules, flow)
+	if rule == nil {
 		return rawResponse
 	}
 
-	// Resolve the schema example first so we know whether a custom schema is
-	// active before deciding whether to replace the legacy prompt.
-	example := strings.TrimSpace(settings.OutputSchemaExample)
+	return f.formatWithConfig(ctx, rawResponse, fullLog, formatConfig{
+		systemPrompt:        rule.SystemPrompt,
+		outputSchemaExample: rule.OutputSchemaExample,
+		maxTokens:           rule.MaxTokens,
+		temperature:         rule.Temperature,
+	})
+}
+
+// formatWithConfig runs the formatting pipeline (schema inference, one-shot
+// LLM call, validation with one retry, Slack rendering) with the supplied
+// config. All failures return rawResponse unchanged.
+func (f *ResponseFormatter) formatWithConfig(ctx context.Context, rawResponse, fullLog string, cfg formatConfig) string {
+	example := strings.TrimSpace(cfg.outputSchemaExample)
 	usingDefaultSchema := example == ""
 	if example == "" {
 		example = defaultSchemaExample
 	}
 
-	// The settings UI advertises "leave blank to use the default prompt"; honor
-	// that here by falling back to DefaultFormattingPrompt when the operator
-	// saved an empty/whitespace value. Disabling the formatter entirely is
-	// expressed via Enabled=false, not via a blank prompt.
-	// Also replace the exact legacy default when a custom schema is in use so
-	// that stale field-specific guidance does not conflict with the injected
-	// schema instruction. When using the built-in default schema, the legacy
-	// prompt's field guidance is still valid and is kept as-is.
-	systemPrompt := strings.TrimSpace(settings.SystemPrompt)
-	if systemPrompt == "" || (!usingDefaultSchema && database.IsLegacyDefaultFormattingPrompt(systemPrompt)) {
+	// The rule editor advertises "leave blank to use the default prompt";
+	// honor that by falling back to DefaultFormattingPrompt when the operator
+	// saved an empty/whitespace value.
+	systemPrompt := strings.TrimSpace(cfg.systemPrompt)
+	if systemPrompt == "" {
 		systemPrompt = strings.TrimSpace(database.DefaultFormattingPrompt)
 		if systemPrompt == "" {
 			return rawResponse
@@ -149,12 +165,12 @@ func (f *ResponseFormatter) Format(ctx context.Context, rawResponse, fullLog str
 
 	userPrompt := buildFormatterUserPrompt(rawResponse, fullLog, responseFormatterMaxInputBytes)
 
-	maxTokens := settings.MaxTokens
+	maxTokens := cfg.maxTokens
 	if maxTokens <= 0 {
 		maxTokens = 1500
 	}
 
-	raw, err := f.caller.OneShotLLM(ctx, worker, systemPrompt, userPrompt, maxTokens, settings.Temperature)
+	raw, err := f.caller.OneShotLLM(ctx, worker, systemPrompt, userPrompt, maxTokens, cfg.temperature)
 	if err != nil {
 		if errors.Is(err, ErrWorkerNotConnected) {
 			slog.Debug("response formatter: worker not connected, using raw response")
@@ -180,7 +196,7 @@ func (f *ResponseFormatter) Format(ctx context.Context, rawResponse, fullLog str
 			"\n\nIt had validation errors:\n" +
 			strings.Join(validationErrs, "\n") +
 			"\nReturn only corrected JSON."
-		raw2, err2 := f.caller.OneShotLLM(ctx, worker, systemPrompt, retryUser, maxTokens, settings.Temperature)
+		raw2, err2 := f.caller.OneShotLLM(ctx, worker, systemPrompt, retryUser, maxTokens, cfg.temperature)
 		if err2 != nil {
 			slog.Warn("response formatter: retry call failed, using raw response", "err", err2)
 			return rawResponse

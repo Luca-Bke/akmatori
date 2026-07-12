@@ -36,7 +36,7 @@ func setupFormatterWiringDB(t *testing.T) func() {
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
-	if err := db.AutoMigrate(&database.LLMSettings{}, &database.FormattingSettings{}); err != nil {
+	if err := db.AutoMigrate(&database.LLMSettings{}, &database.FormattingRule{}, &database.Incident{}); err != nil {
 		t.Fatalf("migrate sqlite db: %v", err)
 	}
 	database.DB = db
@@ -60,16 +60,19 @@ func seedFormatterWiringLLM(t *testing.T) {
 	}
 }
 
-func seedFormatterWiringSettings(t *testing.T, fs database.FormattingSettings) {
+func seedFormatterWiringSettings(t *testing.T, fs database.FormattingRule) {
 	t.Helper()
-	if err := database.DB.Exec("DELETE FROM formatting_settings").Error; err != nil {
-		t.Fatalf("clear formatting_settings: %v", err)
+	if err := database.DB.Exec("DELETE FROM formatting_rules").Error; err != nil {
+		t.Fatalf("clear formatting_rules: %v", err)
 	}
-	if fs.SingletonKey == "" {
-		fs.SingletonKey = "default"
+	if fs.UUID == "" {
+		fs.UUID = "00000000-0000-0000-0000-0000000000aa"
+	}
+	if fs.Name == "" {
+		fs.Name = "wiring test rule"
 	}
 	if err := database.DB.Create(&fs).Error; err != nil {
-		t.Fatalf("seed formatting_settings: %v", err)
+		t.Fatalf("seed formatting_rules: %v", err)
 	}
 }
 
@@ -83,7 +86,7 @@ func TestApplyResponseFormatter_SkipsOnError(t *testing.T) {
 	}}
 	formatter := services.NewResponseFormatter(caller)
 
-	got := applyResponseFormatter(context.Background(), formatter, true, "❌ Error: agent crashed", "reasoning")
+	got := applyResponseFormatter(context.Background(), formatter, true, "❌ Error: agent crashed", "reasoning", services.FormatFlow{})
 	if got != "❌ Error: agent crashed" {
 		t.Errorf("expected error response unchanged, got %q", got)
 	}
@@ -101,7 +104,7 @@ func TestApplyResponseFormatter_SkipsOnEmpty(t *testing.T) {
 	}}
 	formatter := services.NewResponseFormatter(caller)
 
-	got := applyResponseFormatter(context.Background(), formatter, false, "", "reasoning")
+	got := applyResponseFormatter(context.Background(), formatter, false, "", "reasoning", services.FormatFlow{})
 	if got != "" {
 		t.Errorf("expected empty response unchanged, got %q", got)
 	}
@@ -114,7 +117,7 @@ func TestApplyResponseFormatter_SkipsOnEmpty(t *testing.T) {
 // helper is safe to call with a nil formatter (early-startup state) — it
 // returns the raw response unchanged.
 func TestApplyResponseFormatter_NilFormatterPassthrough(t *testing.T) {
-	got := applyResponseFormatter(context.Background(), nil, false, "raw response", "reasoning")
+	got := applyResponseFormatter(context.Background(), nil, false, "raw response", "reasoning", services.FormatFlow{})
 	if got != "raw response" {
 		t.Errorf("expected raw response unchanged when formatter is nil, got %q", got)
 	}
@@ -127,7 +130,7 @@ func TestApplyResponseFormatter_DisabledPassthrough(t *testing.T) {
 	cleanup := setupFormatterWiringDB(t)
 	defer cleanup()
 	seedFormatterWiringLLM(t)
-	seedFormatterWiringSettings(t, database.FormattingSettings{Enabled: false, SystemPrompt: "Reformat", MaxTokens: 1000, Temperature: 0.2})
+	seedFormatterWiringSettings(t, database.FormattingRule{Enabled: false, SystemPrompt: "Reformat", MaxTokens: 1000, Temperature: 0.2})
 
 	caller := &fakeFormatterCaller{respond: func() (string, error) {
 		t.Fatal("formatter must not be invoked when settings disabled")
@@ -135,7 +138,7 @@ func TestApplyResponseFormatter_DisabledPassthrough(t *testing.T) {
 	}}
 	formatter := services.NewResponseFormatter(caller)
 
-	got := applyResponseFormatter(context.Background(), formatter, false, "raw response", "reasoning trace")
+	got := applyResponseFormatter(context.Background(), formatter, false, "raw response", "reasoning trace", services.FormatFlow{})
 	if got != "raw response" {
 		t.Errorf("expected passthrough on disabled settings, got %q", got)
 	}
@@ -152,7 +155,7 @@ func TestApplyResponseFormatter_AppliedHappyPath(t *testing.T) {
 	cleanup := setupFormatterWiringDB(t)
 	defer cleanup()
 	seedFormatterWiringLLM(t)
-	seedFormatterWiringSettings(t, database.FormattingSettings{
+	seedFormatterWiringSettings(t, database.FormattingRule{
 		Enabled:      true,
 		SystemPrompt: "Reformat as JSON.",
 		MaxTokens:    1500,
@@ -164,7 +167,7 @@ func TestApplyResponseFormatter_AppliedHappyPath(t *testing.T) {
 	}}
 	formatter := services.NewResponseFormatter(caller)
 
-	got := applyResponseFormatter(context.Background(), formatter, false, "Investigation finished. No issues.", "step 1\nstep 2")
+	got := applyResponseFormatter(context.Background(), formatter, false, "Investigation finished. No issues.", "step 1\nstep 2", services.FormatFlow{})
 	if !strings.Contains(got, "*Status:*") || !strings.Contains(got, "All clear.") {
 		t.Errorf("expected rendered formatted output, got %q", got)
 	}
@@ -186,7 +189,7 @@ func TestApplyResponseFormatter_FallbackOnCallerError(t *testing.T) {
 	cleanup := setupFormatterWiringDB(t)
 	defer cleanup()
 	seedFormatterWiringLLM(t)
-	seedFormatterWiringSettings(t, database.FormattingSettings{
+	seedFormatterWiringSettings(t, database.FormattingRule{
 		Enabled:      true,
 		SystemPrompt: "Reformat",
 		MaxTokens:    1500,
@@ -198,7 +201,7 @@ func TestApplyResponseFormatter_FallbackOnCallerError(t *testing.T) {
 	}}
 	formatter := services.NewResponseFormatter(caller)
 
-	got := applyResponseFormatter(context.Background(), formatter, false, "Investigation completed.", "reasoning")
+	got := applyResponseFormatter(context.Background(), formatter, false, "Investigation completed.", "reasoning", services.FormatFlow{})
 	if got != "Investigation completed." {
 		t.Errorf("expected raw response on caller error, got %q", got)
 	}
@@ -214,7 +217,7 @@ func TestApplyResponseFormatter_WorkerNotConnectedFallback(t *testing.T) {
 	cleanup := setupFormatterWiringDB(t)
 	defer cleanup()
 	seedFormatterWiringLLM(t)
-	seedFormatterWiringSettings(t, database.FormattingSettings{
+	seedFormatterWiringSettings(t, database.FormattingRule{
 		Enabled:      true,
 		SystemPrompt: "Reformat",
 		MaxTokens:    1500,
@@ -226,7 +229,7 @@ func TestApplyResponseFormatter_WorkerNotConnectedFallback(t *testing.T) {
 	}}
 	formatter := services.NewResponseFormatter(caller)
 
-	got := applyResponseFormatter(context.Background(), formatter, false, "Done.", "reasoning")
+	got := applyResponseFormatter(context.Background(), formatter, false, "Done.", "reasoning", services.FormatFlow{})
 	if got != "Done." {
 		t.Errorf("expected raw response when worker disconnected, got %q", got)
 	}

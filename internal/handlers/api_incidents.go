@@ -410,9 +410,11 @@ func (h *APIHandler) runAgentInvestigation(incidentUUID, taskHeader, task string
 			return
 		}
 
-		// Apply the configured formatting prompt before persistence.
-		// Passthrough on error/empty or when formatting is disabled.
-		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog)
+		// Apply the first matching formatting rule before persistence.
+		// Passthrough on error/empty or when no rule matches the
+		// incident's flow. Manual runs have no destination channel.
+		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog,
+			services.BuildFormatFlow(incidentUUID, ""))
 
 		// Re-attach the metrics footer AFTER formatting so the LLM
 		// never sees it (and therefore cannot strip or rewrite ⏱️

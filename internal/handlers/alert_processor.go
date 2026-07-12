@@ -163,10 +163,10 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 		slog.Info("created incident for alert", "incident_id", incidentUUID)
 
 		// Post to Slack
-		var channelID, threadTS string
+		var channelID, threadTS, channelUUID string
 		if h.isSlackEnabled() {
 			var err error
-			channelID, threadTS, err = h.postAlertToSlack(normalized, instance)
+			channelID, threadTS, channelUUID, err = h.postAlertToSlack(normalized, instance)
 			if err != nil {
 				slog.Warn("failed to post alert to Slack", "err", err)
 			}
@@ -182,7 +182,7 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 		if err := h.skillService.UpdateIncidentStatus(incidentUUID, database.IncidentStatusRunning, "", ""); err != nil {
 			slog.Warn("failed to update incident status", "err", err)
 		}
-		go h.runInvestigation(incidentUUID, normalized, instance, channelID, threadTS)
+		go h.runInvestigation(incidentUUID, normalized, instance, channelID, threadTS, channelUUID)
 
 		return nil, nil
 	})
@@ -590,7 +590,7 @@ Be specific and actionable. Reference any relevant data sources or scripts you u
 	return prompt
 }
 
-func (h *AlertHandler) runInvestigation(incidentUUID string, alert alerts.NormalizedAlert, instance *database.AlertSourceInstance, channelID, threadTS string) {
+func (h *AlertHandler) runInvestigation(incidentUUID string, alert alerts.NormalizedAlert, instance *database.AlertSourceInstance, channelID, threadTS, channelUUID string) {
 	slog.Info("starting investigation for alert", "alert_name", alert.AlertName, "incident_id", incidentUUID)
 
 	// Build investigation prompt
@@ -704,10 +704,11 @@ func (h *AlertHandler) runInvestigation(incidentUUID string, alert alerts.Normal
 			return
 		}
 
-		// Apply the configured formatting prompt before persistence and
-		// Slack posting. Passthrough on error/empty or when formatting
-		// is disabled.
-		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog)
+		// Apply the first matching formatting rule before persistence and
+		// Slack posting. Passthrough on error/empty or when no rule
+		// matches the incident's flow.
+		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog,
+			services.BuildFormatFlow(incidentUUID, channelUUID))
 
 		// Re-attach the metrics footer AFTER formatting so the LLM never
 		// sees it (and therefore cannot strip or rewrite ⏱️ Time / 🎯
@@ -925,10 +926,12 @@ func (h *AlertHandler) runListenerChannelInvestigation(
 
 		slog.Info("investigation done", "incident_id", incidentUUID, "has_error", hasError, "response_len", len(response), "session_id", sessionID)
 
-		// Apply the configured formatting prompt before persistence and
-		// Slack posting. Passthrough on error/empty or when formatting
-		// is disabled.
-		dbResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog)
+		// Apply the first matching formatting rule before persistence and
+		// Slack posting. Passthrough on error/empty or when no rule
+		// matches the incident's flow. The listener channel is also the
+		// reply destination, so it doubles as the flow's channel identity.
+		dbResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog,
+			services.BuildFormatFlow(incidentUUID, channel.UUID))
 
 		// Re-attach the metrics footer AFTER formatting so the LLM never
 		// sees it (and therefore cannot strip or rewrite ⏱️ Time / 🎯

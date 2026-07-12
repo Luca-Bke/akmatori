@@ -158,13 +158,45 @@ type UpdateRetentionSettingsRequest struct {
 	CleanupIntervalHours *int  `json:"cleanup_interval_hours"`
 }
 
-// UpdateFormattingSettingsRequest is the request body for PUT /api/settings/formatting.
-type UpdateFormattingSettingsRequest struct {
+// CreateFormattingRuleRequest is the request body for POST /api/formatting-rules.
+// Match fields are wildcards when empty; omitted enabled defaults to true and
+// omitted max_tokens/temperature default to 1500/0.2.
+type CreateFormattingRuleRequest struct {
+	Name                string   `json:"name"`
 	Enabled             *bool    `json:"enabled"`
-	SystemPrompt        *string  `json:"system_prompt"`
+	MatchSourceKind     string   `json:"match_source_kind"`
+	MatchSourceUUID     string   `json:"match_source_uuid"`
+	MatchChannelUUID    string   `json:"match_channel_uuid"`
+	MatchLastSkill      string   `json:"match_last_skill"`
+	MatchExpression     string   `json:"match_expression"`
+	SystemPrompt        string   `json:"system_prompt"`
+	OutputSchemaExample string   `json:"output_schema_example"`
 	MaxTokens           *int     `json:"max_tokens"`
 	Temperature         *float64 `json:"temperature"`
+}
+
+// UpdateFormattingRuleRequest is the request body for PUT
+// /api/formatting-rules/{uuid}. All fields are optional; match fields accept
+// "" to clear a condition back to wildcard.
+type UpdateFormattingRuleRequest struct {
+	Name                *string  `json:"name"`
+	Enabled             *bool    `json:"enabled"`
+	MatchSourceKind     *string  `json:"match_source_kind"`
+	MatchSourceUUID     *string  `json:"match_source_uuid"`
+	MatchChannelUUID    *string  `json:"match_channel_uuid"`
+	MatchLastSkill      *string  `json:"match_last_skill"`
+	MatchExpression     *string  `json:"match_expression"`
+	SystemPrompt        *string  `json:"system_prompt"`
 	OutputSchemaExample *string  `json:"output_schema_example"`
+	MaxTokens           *int     `json:"max_tokens"`
+	Temperature         *float64 `json:"temperature"`
+}
+
+// ReorderFormattingRulesRequest is the request body for PUT
+// /api/formatting-rules/reorder. UUIDs must enumerate every existing rule
+// exactly once, in the desired evaluation order.
+type ReorderFormattingRulesRequest struct {
+	UUIDs []string `json:"uuids"`
 }
 
 // ========== Alert Source Types ==========

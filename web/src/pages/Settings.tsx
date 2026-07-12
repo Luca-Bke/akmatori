@@ -19,7 +19,7 @@ import ProxySettings from '../components/ProxySettings';
 import LLMSettingsSection from '../components/settings/LLMSettingsSection';
 import GeneralSettingsSection from '../components/settings/GeneralSettingsSection';
 import RetentionSettingsSection from '../components/settings/RetentionSettingsSection';
-import FormattingSettingsSection from '../components/settings/FormattingSettingsSection';
+import FormattingRulesSection from '../components/settings/FormattingRulesSection';
 
 function SettingsSection({
   title,
@@ -184,11 +184,11 @@ export default function Settings() {
 
         <SettingsSection
           title="Response Formatting"
-          description="Reformat agent responses with an extra LLM pass before storing"
+          description="Per-flow formatting rules that reshape agent responses before delivery"
           icon={Sparkles}
           status={formattingStatus}
         >
-          <FormattingSettingsSection onStatusChange={setFormattingStatus} />
+          <FormattingRulesSection onStatusChange={setFormattingStatus} />
         </SettingsSection>
 
         <SettingsSection
