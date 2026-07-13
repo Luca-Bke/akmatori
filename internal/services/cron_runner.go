@@ -47,10 +47,14 @@ var ErrSystemCronImmutable = errors.New("system cron jobs cannot be deleted")
 // runner ticking and surfaces a clear LastRunError when the provider stalls.
 const cronChannelPostTimeout = 30 * time.Second
 
-// cronProviderResolveDefault is the messaging provider consulted when a cron
-// job's Channel cannot be loaded — keeps ticks falling back to the workspace
-// default rather than crashing the runner.
-const cronProviderResolveDefault = database.MessagingProviderSlack
+// cronProviderResolveDefaultOrder defines the fallback order when a cron job
+// has no explicit Channel and the operator has not configured a provider
+// hint. Matches the alert flow's "Telegram first, then Slack" order so a
+// workspace that only has a Telegram default still receives cron results.
+var cronProviderResolveDefaultOrder = []database.MessagingProvider{
+	database.MessagingProviderTelegram,
+	database.MessagingProviderSlack,
+}
 
 // CronJobUpdate is the patch shape applied to UpdateJob. Pointer fields make
 // partial updates explicit so the handler can submit just the operator-edited
@@ -612,24 +616,33 @@ func formatCronAgentMessage(job *database.CronJob, response string, hasError boo
 // Fallback provider selection: prefer the explicit channel's Integration
 // provider when the cron job referenced one (so a disabled Telegram channel
 // falls back to the Telegram default, not Slack). When no explicit channel is
-// referenced at all, default to Slack since that is the operator's most
-// common configuration.
+// referenced at all, iterate through cronProviderResolveDefaultOrder
+// (Telegram first, then Slack) to match the alert flow's fallback order.
 func (r *CronRunner) resolveChannel(job *database.CronJob) (*database.Channel, error) {
 	if ch := r.usableExplicitChannel(job); ch != nil {
 		return ch, nil
 	}
-	fallbackProvider := cronProviderResolveDefault
+
+	// Determine which provider(s) to try for the default fallback.
+	// If the cron job referenced an explicit channel (even if currently
+	// unusable), prefer that channel's provider first.
+	var providersToTry []database.MessagingProvider
 	if explicit := r.loadExplicitChannelAny(job); explicit != nil && explicit.Integration.Provider != "" {
-		fallbackProvider = explicit.Integration.Provider
+		providersToTry = append(providersToTry, explicit.Integration.Provider)
 	}
-	ch, err := r.channels.ResolveDefault(fallbackProvider)
-	if err != nil {
-		if errors.Is(err, ErrChannelNotFound) {
-			return nil, fmt.Errorf("no channel configured for cron job and no default available")
+	providersToTry = append(providersToTry, cronProviderResolveDefaultOrder...)
+
+	for _, provider := range providersToTry {
+		ch, err := r.channels.ResolveDefault(provider)
+		if err == nil {
+			return ch, nil
 		}
-		return nil, err
+		if !errors.Is(err, ErrChannelNotFound) {
+			return nil, err
+		}
 	}
-	return ch, nil
+
+	return nil, fmt.Errorf("no channel configured for cron job and no default available")
 }
 
 // loadExplicitChannelAny returns the cron's explicit Channel regardless of
