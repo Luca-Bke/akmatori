@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/akmatori/akmatori/internal/database"
+	"github.com/akmatori/akmatori/internal/messaging"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
@@ -345,8 +346,12 @@ func (r *CronRunner) execute(job *database.CronJob) {
 		return
 	}
 	if !r.runner.IsWorkerConnected() {
-		r.recordResult(job, database.CronJobRunStatusError, "agent worker not connected")
-		return
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := r.runner.WaitForWorkerConnected(ctx); err != nil {
+			r.recordResult(job, database.CronJobRunStatusError, "agent worker not connected after wait")
+			return
+		}
 	}
 
 	// Spawn a cron-agent invocation. The IncidentContext stamps
@@ -482,7 +487,7 @@ func (r *CronRunner) execute(job *database.CronJob) {
 	// Post the final summary to the cron's channel as a fresh message. On
 	// error, surface the failure into the channel so operators see the cron
 	// tick failed without having to open the incident.
-	body := formatCronAgentMessage(job, response, hasError, errorMsg)
+	body := formatCronAgentMessageForProvider(channel, job, response, hasError, errorMsg)
 	postCtx, cancel := context.WithTimeout(context.Background(), cronChannelPostTimeout)
 	defer cancel()
 	if _, err := provider.PostMessage(postCtx, channel, body); err != nil {
@@ -494,6 +499,43 @@ func (r *CronRunner) execute(job *database.CronJob) {
 		return
 	}
 	r.recordResult(job, database.CronJobRunStatusOK, "")
+}
+
+// formatCronAgentMessageForProvider renders the channel-bound summary for an
+// agent-mode cron tick, formatted for the target provider. For Telegram
+// (MarkdownV2) the message is escaped so special characters don't cause API
+// errors. For Slack and other providers the raw format is used.
+func formatCronAgentMessageForProvider(channel *database.Channel, job *database.CronJob, response string, hasError bool, errorMsg string) string {
+	switch channel.Integration.Provider {
+	case database.MessagingProviderTelegram:
+		return formatCronAgentMessageTelegram(job, response, hasError, errorMsg)
+	default:
+		return formatCronAgentMessage(job, response, hasError, errorMsg)
+	}
+}
+
+// formatCronAgentMessageTelegram builds a MarkdownV2-safe cron message for
+// Telegram. The cron name header uses *bold* syntax (safe since the name is
+// escaped), and the body is processed through FormatInvestigationResult which
+// converts Slack-style links and escapes all MarkdownV2 special characters.
+func formatCronAgentMessageTelegram(job *database.CronJob, response string, hasError bool, errorMsg string) string {
+	name := messaging.EscapeMarkdownV2(strings.TrimSpace(job.Name))
+	if name == "" {
+		name = messaging.EscapeMarkdownV2("Scheduled investigation")
+	}
+	if hasError {
+		msg := messaging.EscapeMarkdownV2(strings.TrimSpace(errorMsg))
+		if msg == "" {
+			msg = messaging.EscapeMarkdownV2("Investigation failed")
+		}
+		return capCronMessageBytes(fmt.Sprintf("*%s*\nInvestigation failed: %s", name, msg))
+	}
+	body := strings.TrimSpace(response)
+	if body == "" {
+		body = messaging.EscapeMarkdownV2("Investigation completed (no output)")
+	}
+	formatted := messaging.FormatInvestigationResult(body)
+	return capCronMessageBytes(fmt.Sprintf("*%s*\n%s", name, formatted))
 }
 
 // formatCronAgentMessage renders the channel-bound summary for an agent-mode
