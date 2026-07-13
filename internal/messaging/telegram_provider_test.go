@@ -343,6 +343,14 @@ func TestConvertSlackLinksToMarkdownV2(t *testing.T) {
 			input:  "Unclosed <tag",
 			output: "Unclosed <tag",
 		},
+		{
+			input:  "Check _status_ and *priority*",
+			output: "Check \\_status\\_ and \\*priority\\*",
+		},
+		{
+			input:  "See <https://example.com|click here> for _details_",
+			output: "See [click here](https://example\\.com) for \\_details\\_",
+		},
 	}
 
 	for _, tc := range tests {
