@@ -158,6 +158,7 @@ type AgentWSHandler struct {
 	mu               sync.RWMutex
 	workerConn       *websocket.Conn
 	workerReady      bool
+	workerCond       *sync.Cond                       // signaled when workerReady becomes true
 	callbacks        map[string]incidentCallbackEntry // incident_id -> callback + owning conn
 	callbackMu       sync.RWMutex
 	pendingOneshot   map[string]pendingOneshotEntry // request_id -> response channel + owning conn
@@ -181,7 +182,7 @@ type IncidentCallback = services.IncidentCallback
 
 // NewAgentWSHandler creates a new agent WebSocket handler
 func NewAgentWSHandler() *AgentWSHandler {
-	return &AgentWSHandler{
+	h := &AgentWSHandler{
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins for internal communication
@@ -192,6 +193,8 @@ func NewAgentWSHandler() *AgentWSHandler {
 		callbacks:      make(map[string]incidentCallbackEntry),
 		pendingOneshot: make(map[string]pendingOneshotEntry),
 	}
+	h.workerCond = sync.NewCond(&h.mu)
+	return h
 }
 
 // SetupRoutes configures WebSocket routes
@@ -217,6 +220,7 @@ func (h *AgentWSHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request)
 	}
 	h.workerConn = conn
 	h.workerReady = true
+	h.workerCond.Broadcast()
 	h.mu.Unlock()
 
 	defer h.cleanupWorkerConn(conn)
@@ -688,6 +692,33 @@ func (h *AgentWSHandler) IsWorkerConnected() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.workerReady && h.workerConn != nil
+}
+
+// WaitForWorkerConnected blocks until the worker connects or the context expires.
+func (h *AgentWSHandler) WaitForWorkerConnected(ctx context.Context) error {
+	h.mu.Lock()
+	if h.workerReady && h.workerConn != nil {
+		h.mu.Unlock()
+		return nil
+	}
+	// Create a done channel to wake us when context is cancelled
+	done := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(done)
+		h.workerCond.Broadcast()
+	}()
+	for h.workerReady == false || h.workerConn == nil {
+		select {
+		case <-done:
+			h.mu.Unlock()
+			return ErrWorkerNotConnected
+		default:
+			h.workerCond.Wait()
+		}
+	}
+	h.mu.Unlock()
+	return nil
 }
 
 // SendToWorker sends a message to the agent worker
