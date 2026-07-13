@@ -78,19 +78,16 @@ func FormatAlertMessage(alert alerts.NormalizedAlert, sourceDisplayName, sourceN
 
 // FormatInvestigationResult builds a MarkdownV2 message from the investigation
 // result text. The input is expected to already be formatted (by
-// finalizeSlackMessageBody or similar); this function escapes any MarkdownV2
-// special characters that would break parsing.
-//
-// If the input contains Slack mrkdwn links like <URL|Label>, they are
-// converted to MarkdownV2 link syntax [Label](URL).
+// finalizeSlackMessageBody or similar). Slack mrkdwn links like <URL|Label>
+// are converted to MarkdownV2 link syntax [Label](URL), and all other text
+// is escaped so the result is safe for parse_mode = MarkdownV2.
 func FormatInvestigationResult(text string) string {
-	// Convert Slack-style links <URL|Label> to MarkdownV2 [Label](URL)
-	text = convertSlackLinksToMarkdownV2(text)
-	// Escape remaining special characters, but preserve already-valid MarkdownV2
-	return text
+	return convertSlackLinksToMarkdownV2(text)
 }
 
-// convertSlackLinksToMarkdownV2 replaces <URL|Label> patterns with [Label](URL).
+// convertSlackLinksToMarkdownV2 replaces <URL|Label> patterns with [Label](URL)
+// and escapes all MarkdownV2 special characters in non-link text.  The returned
+// string is ready to be sent with parse_mode = MarkdownV2.
 func convertSlackLinksToMarkdownV2(text string) string {
 	var b strings.Builder
 	b.Grow(len(text))
@@ -98,17 +95,17 @@ func convertSlackLinksToMarkdownV2(text string) string {
 	for {
 		start := strings.Index(text, "<")
 		if start < 0 {
-			b.WriteString(text)
+			b.WriteString(EscapeMarkdownV2(text))
 			break
 		}
 
-		// Write everything before the '<'
-		b.WriteString(text[:start])
+		// Write everything before the '<', escaped
+		b.WriteString(EscapeMarkdownV2(text[:start]))
 
 		end := strings.Index(text[start:], ">")
 		if end < 0 {
-			// No closing '>', treat as literal
-			b.WriteString(text[start:])
+			// No closing '>', treat as literal (escaped)
+			b.WriteString(EscapeMarkdownV2(text[start:]))
 			break
 		}
 
