@@ -79,10 +79,11 @@ Rules:
 - Worker replies with `oneshot_llm_response`
 - Go callers should depend on `services.OneShotLLMCaller`, not concrete worker code
 - If the worker is disconnected, callers must fail gracefully and use deterministic fallbacks
+- `oneshot-llm.ts` retries once without `temperature` when a provider rejects it, then caches that model key for the worker lifetime
 
 ### Response formatting (per-flow rules)
 
-Ordered `FormattingRule` rows (`/api/formatting-rules`, CRUD + `PUT /reorder`) are the ONLY formatting mechanism; no match → raw response for every flow kind. `/api/settings/formatting` is 410 Gone; `migrateGlobalFormattingToRule()` converts an enabled legacy row into a catch-all rule once (rules-table-empty guard).
+Ordered `FormattingRule` rows (`/api/formatting-rules`, CRUD + `PUT /reorder`) are the ONLY formatting mechanism; no match → raw response. `/api/settings/formatting` is 410 Gone; `migrateGlobalFormattingToRule()` converts one enabled legacy row into a catch-all rule (rules-table-empty guard).
 
 Rules:
 - match fields (empty = wildcard, ANDed): `match_source_kind`, `match_source_uuid` (trigger), `match_channel_uuid` (destination), `match_last_skill` — OR a `match_expression` (`==/!=/&&/||/!`, parens, `and/or/not`; either/or with simple fields, API-enforced; invalid stored expr → rule skipped; Go parser + TS mirror `matchExpression.ts` must stay in sync)
@@ -95,13 +96,13 @@ Rules:
 
 ### Runbooks and memory search/write
 
-Runbooks live in Postgres and sync to markdown under `akmatori_data/runbooks/` (mounted read-only). Cross-incident memory lives in markdown under `akmatori_data/memory/` (read-write so memory-writer can edit in place). The agent reaches both via pi-mono subagents (`runbook-searcher`, `memory-searcher`, `memory-writer`).
+Runbooks live in Postgres and sync to `akmatori_data/runbooks/` (read-only). Cross-incident memory lives under `akmatori_data/memory/` (read-write). Agents reach both via pi-mono subagents (`runbook-searcher`, `memory-searcher`, `memory-writer`).
 
 Rules:
 - keep DB state and on-disk runbook files in sync (the runbook service writes both directions)
 - the incident-manager prompt invokes `subagent({agent: "runbook-searcher", task: ...})` for SOP lookup — do not introduce direct grep loops in the main agent
 - memory recall goes through `memory-searcher`; `memory-writer` persists durable findings near end-of-investigation
-- memory-writer is invoked with `{agent: "memory-writer", task}` only — pi-subagents drops extra top-level keys, so scope and incident UUID are the first two header lines of `task` (`Scope: <slug>\nIncident UUID: <uuid>\n\n<reasoning>`); the subagent parses them so `IngestFromDisk` upserts route correctly
+- memory-writer is invoked with `{agent: "memory-writer", task}` only — put scope and incident UUID in the first two task lines (`Scope: <slug>\nIncident UUID: <uuid>`)
 - on incident completion the API runs `MemoryService.IngestFromDisk` to materialize new memory files into Postgres (idempotent by scope + `name:` slug); operator-authored rows carry `created_by: operator` in their frontmatter and ingest preserves that
 
 ### Slack investigation UX
@@ -112,7 +113,7 @@ Rules:
 - progress banner content comes from the latest reasoning line via `SlackProgressStreamer`
 - final thread output is summarized to fit Slack byte limits
 - mention handling is classify-first: confident operator feedback is stored as memory; other mentions continue the investigation
-- feedback ack is split by trigger: non-mention confident feedback → 👍 reaction only; @mention confident feedback → emoji + short text ack (Akmatori only posts thread text when explicitly @mentioned); both route through the injectable `feedbackAcker` seam, best-effort (failures never roll back the persisted memory)
+- feedback ack: non-mention confident feedback → 👍 only; @mention confident feedback → emoji + short text; both use injectable `feedbackAcker`, best-effort
 
 ### Memory system
 
@@ -159,6 +160,7 @@ Rules:
 - `processResolvedAlert` (tx + row lock): finds the `alerts` row by `source_fingerprint` (then `fingerprint` fallback), marks it `resolved_at=now`; when no firing alerts remain on a completed/monitor incident, sets `monitor_until = min(monitor_until, resolved_at + window)`; no-match is logged and dropped
 - `InsertFiringAlert` inserts the initial `alerts` row (status=firing) for a newly spawned incident
 - `LinkAlertToIncident` attaches an alert to an existing incident; extends `monitor_until` if the incident is in monitor status
+- `MonitorSweepService` runs at startup and every 15m, closes expired monitor incidents, resolves any lingering firing alerts first, and clears `monitor_until`
 - manifest capped at `manifestMaxEntriesPerScope` (150) entries per scope by `UpdatedAt` descending
 
 ### Post-investigation incident merge
@@ -251,7 +253,7 @@ Rules:
 - `internal/services/response_formatter.go` - rule-driven response rewrite stage (`FormatForFlow`)
 - `internal/services/formatting_rule_matcher.go` - `FormatFlow`, `MatchFormattingRule`, `BuildFormatFlow`
 - `internal/services/formatter_schema.go` - schema inference (`inferSchema`, `buildSchemaInstruction`, `validateAgainstSpecs`) and built-in default schema example
-- `internal/output/schema_render.go` - `RenderForSlack(parsed, specs)`: walks `FieldSpec` slice in key order to produce Slack mrkdwn; defines the exported `FieldSpec` type used by both renderer and schema helpers
+- `internal/output/schema_render.go` - schema-driven Slack mrkdwn rendering
 - `internal/services/memory_service.go` - cross-incident memory CRUD, DB↔disk sync, and `IngestFromDisk`
 - `internal/services/title_generator.go` - one-shot title generation
 - `internal/services/slack_summarizer.go` - Slack-safe final output compression
@@ -260,7 +262,8 @@ Rules:
 - `internal/database/models_alerts.go` - `Alert` model: one row per firing/resolved alert linked to an incident; `AlertStatus` constants; unique index prevents duplicate concurrent fires
 - `internal/services/channel_service.go` - Integrations/Channels CRUD, `ResolveDefault`, `ResolveForAlertSource`
 - `internal/services/cron_runner.go` - cron scheduler, per-cron agent tick path, reload-on-CRUD
-- `internal/services/incident_service.go` - `SpawnIncidentManager` / `SpawnAgentInvocation`, AGENTS.md generation (`generateAgentsMd`), per-root-skill prompt injection
+- `internal/services/incident_service.go` - agent spawning, AGENTS.md generation, root-skill prompts
+- `internal/services/monitor_sweep_service.go` - closes expired monitor incidents
 - `internal/messaging/` - `Provider`, `ProviderRegistry`, slack provider, telegram stub
 - `akmatori_data/agents/` - `runbook-searcher`, `memory-searcher`, `memory-writer` subagent definitions
 
@@ -306,7 +309,7 @@ Akmatori intentionally keeps working when optional AI pieces fail. When adding A
 
 ## SDK Notes (`@earendil-works/pi-coding-agent`)
 
-- Current versions: pi-coding-agent, pi-ai, pi-agent-core `0.80.6`; pi-subagents `0.34.0`; undici `^8`
+- Current versions: pi-coding-agent, pi-ai, pi-agent-core `0.80.6`; pi-subagents `0.34.0`
 - pi-ai 0.80.0 root is core-only (types stay at root): `complete` from `/compat`, `getBuiltinModel` from `/providers/all`; the new Models API rejects akmatori's synthesized custom-provider specs (compat dispatches on `model.api`)
 - models.json `apiKey` needs `$ENV_VAR` syntax — bare names are literals since pi 0.79.4
 - Project trust (0.79.0+): headless child `pi` treats workspaces as untrusted (we write `<workDir>/.pi/settings.json`) — children use the global `<agentDir>/settings.json` pin and never run workspace `.pi/extensions`; never set `defaultProjectTrust: "always"`
@@ -317,7 +320,7 @@ Akmatori intentionally keeps working when optional AI pieces fail. When adding A
 - The bash tool stays local (TypeScript variance friction)
 - import `typebox` from `typebox`, not `@sinclair/typebox`
 - `DefaultResourceLoader` requires `agentDir` (`getAgentDir()` in production and mocks)
-- Provider SDKs are lazy-loaded; Akmatori forwards retry/timeout settings (long provider timeouts for slow models)
+- Provider SDKs are lazy-loaded; Akmatori forwards retry/timeout settings
 - `setRuntimeApiKey` bypasses `resolveConfigValue` — operator API keys with literal `$` characters are safe
 - `compat.forceAdaptiveThinking: true` is set in synthesized model specs for providers resolving to `anthropic-messages` (`minimax`, fallback Anthropic-compatible endpoints) to enable extended-thinking wire format
 - Subagent support: `agent-runner.ts` keeps `noExtensions: false` + `additionalExtensionPaths: ["/opt/pi-extensions/pi-subagents"]` (baked into the image; `~/.pi/agent/extensions` is an operator mount); the image needs `pi` on `PATH` plus `ripgrep`/`fzf`
