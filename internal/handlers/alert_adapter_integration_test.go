@@ -719,19 +719,23 @@ func BenchmarkAlertAdapters_AllParsePayload(b *testing.B) {
 	}{
 		"alertmanager": {
 			adapter: adapters.NewAlertmanagerAdapter(),
-			payload: []byte(`{"alerts": [{"status": "firing", "labels": {"alertname": "Test"}, "annotations": {}, "fingerprint": "fp"}]}`),
+			payload: testhelpers.LoadFixture(b, "alerts/alertmanager_firing.json"),
 		},
 		"grafana": {
 			adapter: adapters.NewGrafanaAdapter(),
-			payload: []byte(`{"alerts": [{"status": "firing", "labels": {"alertname": "Test"}, "annotations": {}, "fingerprint": "fp"}]}`),
+			payload: testhelpers.LoadFixture(b, "alerts/grafana_alerting.json"),
 		},
 		"zabbix": {
 			adapter: adapters.NewZabbixAdapter(),
-			payload: []byte(`{"event_id": "123", "event_status": "PROBLEM", "alert_name": "Test", "priority": "3"}`),
+			payload: testhelpers.LoadFixture(b, "alerts/zabbix_problem.json"),
 		},
 		"datadog": {
 			adapter: adapters.NewDatadogAdapter(),
-			payload: []byte(`{"id": "123", "title": "Test", "alert_type": "error"}`),
+			payload: testhelpers.LoadFixture(b, "alerts/datadog_monitor.json"),
+		},
+		"pagerduty": {
+			adapter: adapters.NewPagerDutyAdapter(),
+			payload: testhelpers.LoadFixture(b, "alerts/pagerduty_trigger.json"),
 		},
 	}
 
@@ -739,6 +743,8 @@ func BenchmarkAlertAdapters_AllParsePayload(b *testing.B) {
 
 	for name, tc := range adaptersToTest {
 		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+
 			for i := 0; i < b.N; i++ {
 				_, _ = tc.adapter.ParsePayload(tc.payload, instance)
 			}

@@ -499,10 +499,24 @@ func TestFixturePath_RejectsAbsolutePath(t *testing.T) {
 }
 
 func BenchmarkLoadFixture(b *testing.B) {
+	b.ReportAllocs()
+
 	for i := 0; i < b.N; i++ {
-		data := LoadFixture(&testing.T{}, "alerts/alertmanager_firing.json")
+		data := LoadFixture(b, "alerts/alertmanager_firing.json")
 		if len(data) == 0 {
 			b.Fatal("fixture should not be empty")
+		}
+	}
+}
+
+func BenchmarkLoadJSONFixture(b *testing.B) {
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		var payload map[string]any
+		LoadJSONFixture(b, "alerts/alertmanager_firing.json", &payload)
+		if payload["version"] != "4" {
+			b.Fatalf("expected version 4, got %v", payload["version"])
 		}
 	}
 }

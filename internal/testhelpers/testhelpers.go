@@ -321,7 +321,7 @@ func fixturePath(path string) (string, error) {
 //
 // Cached fixture bytes are cloned before returning so callers can safely mutate
 // the returned slice without affecting other tests.
-func LoadFixture(t *testing.T, path string) []byte {
+func LoadFixture(t testing.TB, path string) []byte {
 	t.Helper()
 
 	fixtureFile, err := fixturePath(path)
@@ -343,7 +343,7 @@ func LoadFixture(t *testing.T, path string) []byte {
 }
 
 // LoadJSONFixture loads and unmarshals a JSON fixture
-func LoadJSONFixture(t *testing.T, path string, v interface{}) {
+func LoadJSONFixture(t testing.TB, path string, v interface{}) {
 	t.Helper()
 	data := LoadFixture(t, path)
 	if err := json.Unmarshal(data, v); err != nil {
