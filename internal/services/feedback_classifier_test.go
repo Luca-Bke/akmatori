@@ -62,6 +62,29 @@ func TestFeedbackClassifier_ConfidentFeedback(t *testing.T) {
 	}
 }
 
+// TestFeedbackClassifier_SystemPromptExcludesImperativeRequests pins the
+// guidance that a command directed at the bot ("check freemembers", "look into
+// X") is a task to continue the investigation, NOT durable operator feedback.
+// Regression guard: without it, mention-path requests were misclassified as
+// confident feedback, persisted as memory, and the investigation never ran.
+func TestFeedbackClassifier_SystemPromptExcludesImperativeRequests(t *testing.T) {
+	caller := setupClassifierTest(t)
+	caller.respond = func(ctx context.Context) (string, error) {
+		return `{"is_feedback": false, "summary": "task request", "confidence": 0.2}`, nil
+	}
+	c := NewFeedbackClassifier(caller)
+
+	if _, err := c.Classify(context.Background(), "check freemembers", &database.Incident{Title: "Credit spend anomaly"}); err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	sys := caller.lastSystem
+	for _, want := range []string{"Requests or commands directed at the bot", "check freemembers"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("system prompt missing imperative-request exclusion %q", want)
+		}
+	}
+}
+
 func TestFeedbackClassifier_BelowThresholdNotConfident(t *testing.T) {
 	caller := setupClassifierTest(t)
 	caller.respond = func(ctx context.Context) (string, error) {

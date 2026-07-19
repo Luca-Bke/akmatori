@@ -108,6 +108,10 @@ Feedback IS:
   - Operator policy or runbook adjustments ("for postgres, always check disk space first")
 
 Feedback is NOT:
+  - Requests or commands directed at the bot to DO something now ("check freemembers",
+    "look into the redis latency", "investigate the disk usage", "run the query again",
+    "can you re-check X?"). These are tasks to continue the investigation, not durable
+    facts — classify them as NOT feedback even when they name a metric, host, or tool.
   - Casual chat between humans in the thread
   - Status questions ("any update?", "did the alert clear?")
   - The bot's own messages (you should never see those)
