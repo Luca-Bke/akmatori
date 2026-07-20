@@ -165,19 +165,16 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 
 		slog.Info("created incident for alert", "incident_id", incidentUUID)
 
-		// Post to Slack
-		var channelID, threadTS, channelUUID string
-		if h.isSlackEnabled() {
+		// Post alert to the first available messaging provider (Slack, then Telegram).
+		// Returns the resolved Channel, external ID, and message ID for result posting.
+		var postChannel *database.Channel
+		var postExternalID, postMessageID string
+		var postProvider database.MessagingProvider
+		if h.channelService != nil && h.providerRegistry != nil {
 			var err error
-			channelID, threadTS, channelUUID, err = h.postAlertToSlack(normalized, instance)
+			postChannel, postExternalID, postMessageID, postProvider, err = h.postAlertToChannel(normalized, instance)
 			if err != nil {
-				slog.Warn("failed to post alert to Slack", "err", err)
-			}
-		}
-
-		if channelID != "" && threadTS != "" {
-			if err := h.updateIncidentSlackContext(incidentUUID, channelID, threadTS); err != nil {
-				slog.Warn("failed to update incident Slack context", "err", err)
+				slog.Warn("failed to post alert to messaging provider", "err", err)
 			}
 		}
 
@@ -185,7 +182,7 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 		if err := h.skillService.UpdateIncidentStatus(incidentUUID, database.IncidentStatusRunning, "", ""); err != nil {
 			slog.Warn("failed to update incident status", "err", err)
 		}
-		go h.runInvestigation(incidentUUID, normalized, instance, channelID, threadTS, channelUUID)
+		go h.runInvestigation(incidentUUID, normalized, instance, postChannel, postExternalID, postMessageID, postProvider)
 
 		return nil, nil
 	})
