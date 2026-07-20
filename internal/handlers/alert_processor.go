@@ -197,27 +197,6 @@ func (h *AlertHandler) processAlert(instance *database.AlertSourceInstance, norm
 	// Followers (isLeader==false): singleflight collapsed the burst; the leader
 	// owned all work. The partial-unique index on alerts prevents duplicate rows
 	// if the same alert arrives again before the leader's insert commits.
-
-	slog.Info("created incident for alert", "incident_id", incidentUUID)
-
-	// Post alert to the first available messaging provider (Slack, then Telegram).
-	// Returns the resolved Channel, external ID, and message ID for result posting.
-	var postChannel *database.Channel
-	var postExternalID, postMessageID string
-	var postProvider database.MessagingProvider
-	if h.channelService != nil && h.providerRegistry != nil {
-		var err error
-		postChannel, postExternalID, postMessageID, postProvider, err = h.postAlertToChannel(normalized, instance)
-		if err != nil {
-			slog.Warn("failed to post alert to messaging provider", "err", err)
-		}
-	}
-
-	// Update incident status and run investigation
-	if err := h.skillService.UpdateIncidentStatus(incidentUUID, database.IncidentStatusRunning, "", ""); err != nil {
-		slog.Warn("failed to update incident status", "err", err)
-	}
-	go h.runInvestigation(incidentUUID, normalized, instance, postChannel, postExternalID, postMessageID, postProvider)
 }
 
 // ProcessAlertFromListenerChannel processes an alert that originated from a
@@ -754,7 +733,7 @@ func (h *AlertHandler) runInvestigation(incidentUUID string, alert alerts.Normal
 			return
 		}
 
-// Apply the first matching formatting rule before persistence and
+		// Apply the first matching formatting rule before persistence and
 		// Slack posting. Passthrough on error/empty or when no rule
 		// matches the incident's flow.
 		formattedResponse := applyResponseFormatter(context.Background(), h.responseFormatter, hasError, response, taskHeader+lastStreamedLog,
