@@ -58,6 +58,11 @@ export default function SSHHostsSection({
                   Write Enabled
                 </span>
               )}
+              {host.allowed_commands && host.allowed_commands.length > 0 && (
+                <span className="badge bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300 text-xs">
+                  Custom Allowlist ({host.allowed_commands.length})
+                </span>
+              )}
               {host.jumphost_address && (
                 <span className="badge bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 text-xs">
                   <Server className="w-3 h-3 mr-1 inline" />
@@ -207,6 +212,54 @@ export default function SSHHostsSection({
                       onChange={(e) => onUpdateHost(index, 'jumphost_port', e.target.value ? parseInt(e.target.value) : undefined)}
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Allowed Commands (custom allowlist) */}
+              <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3">
+                <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Allowed Commands
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  Leave empty to use the default read-only list. When set, only these commands are permitted.
+                </p>
+                <div className="flex flex-wrap gap-1 mb-2 min-h-[32px] p-2 border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800">
+                  {(host.allowed_commands || []).map((cmd: string, cmdIdx: number) => (
+                    <span key={cmdIdx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 rounded text-xs">
+                      {cmd}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cmds = host.allowed_commands || [];
+                          cmds.splice(cmdIdx, 1);
+                          onUpdateHost(index, 'allowed_commands', [...cmds]);
+                        }}
+                        className="hover:text-blue-900 dark:hover:text-blue-100"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="input-field flex-1"
+                    placeholder="e.g. cat, grep, systemctl"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ',') {
+                        e.preventDefault();
+                        const val = (e.target as HTMLInputElement).value.trim().replace(/,/g, '');
+                        if (val) {
+                          const cmds = host.allowed_commands || [];
+                          if (!cmds.includes(val)) {
+                            onUpdateHost(index, 'allowed_commands', [...cmds, val]);
+                          }
+                          (e.target as HTMLInputElement).value = '';
+                        }
+                      }
+                    }}
+                  />
                 </div>
               </div>
 
