@@ -181,6 +181,15 @@ func getSSHSchema() ToolTypeSchema {
 								Advanced:    true,
 								Warning:     "Enabling this allows destructive commands like rm, mv, kill, etc.",
 							},
+							"allowed_commands": {
+								Type:        "array",
+								Description: "Custom list of allowed base commands. When set, ONLY these commands are permitted (overrides the default read-only list). Leave empty to use the default read-only command list.",
+								Advanced:    true,
+								Items: &ItemSchema{
+									Type: "string",
+								},
+								Warning: "When set, commands not in this list will be blocked even if they are in the default read-only list.",
+							},
 						},
 					},
 				},
