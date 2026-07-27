@@ -37,7 +37,7 @@ func TestCommandValidator_AllowWriteCommands(t *testing.T) {
 	}
 
 	for _, cmd := range dangerousCommands {
-		err := v.ValidateCommand(cmd, true)
+		err := v.ValidateCommand(cmd, true, false)
 		if err != nil {
 			t.Errorf("Command '%s' should be allowed when allowWriteCommands=true, got error: %v", cmd, err)
 		}
@@ -74,7 +74,7 @@ func TestCommandValidator_ReadOnlyAllowed(t *testing.T) {
 	}
 
 	for _, cmd := range allowedCommands {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Command '%s' should be allowed in read-only mode, got error: %v", cmd, err)
 		}
@@ -102,7 +102,7 @@ func TestCommandValidator_ReadOnlyBlocked(t *testing.T) {
 	}
 
 	for _, cmd := range blockedCommands {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Command '%s' should be blocked in read-only mode", cmd)
 		}
@@ -112,7 +112,7 @@ func TestCommandValidator_ReadOnlyBlocked(t *testing.T) {
 func TestCommandValidator_ErrorContainsAllowedCommands(t *testing.T) {
 	v := NewCommandValidator()
 
-	err := v.ValidateCommand("rm -rf /", false)
+	err := v.ValidateCommand("rm -rf /", false, false)
 	if err == nil {
 		t.Fatal("Expected error for dangerous command")
 	}
@@ -138,7 +138,7 @@ func TestCommandValidator_ErrorContainsAllowedCommands(t *testing.T) {
 func TestCommandValidator_ErrorContainsNewSystemInfoCommands(t *testing.T) {
 	v := NewCommandValidator()
 
-	err := v.ValidateCommand("rm -rf /", false)
+	err := v.ValidateCommand("rm -rf /", false, false)
 	if err == nil {
 		t.Fatal("Expected error for dangerous command")
 	}
@@ -170,7 +170,7 @@ func TestCommandValidator_DockerSubcommands(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Docker command '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -187,7 +187,7 @@ func TestCommandValidator_DockerSubcommands(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Docker command '%s' should be blocked in read-only mode", cmd)
 		}
@@ -209,7 +209,7 @@ func TestCommandValidator_KubectlSubcommands(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Kubectl command '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -225,7 +225,7 @@ func TestCommandValidator_KubectlSubcommands(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Kubectl command '%s' should be blocked in read-only mode", cmd)
 		}
@@ -245,7 +245,7 @@ func TestCommandValidator_SystemctlSubcommands(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Systemctl command '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -261,7 +261,7 @@ func TestCommandValidator_SystemctlSubcommands(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Systemctl command '%s' should be blocked in read-only mode", cmd)
 		}
@@ -280,7 +280,7 @@ func TestCommandValidator_PipeChains(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Pipe chain '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -293,7 +293,7 @@ func TestCommandValidator_PipeChains(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Pipe chain '%s' should be blocked in read-only mode", cmd)
 		}
@@ -310,7 +310,7 @@ func TestCommandValidator_UnknownCommand(t *testing.T) {
 	}
 
 	for _, cmd := range unknownCommands {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Unknown command '%s' should be blocked in read-only mode", cmd)
 		}
@@ -361,7 +361,7 @@ func TestCommandValidator_InlineEnvVars(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Command with env var '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -374,7 +374,7 @@ func TestCommandValidator_InlineEnvVars(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Command '%s' should be blocked", cmd)
 		}
@@ -384,12 +384,12 @@ func TestCommandValidator_InlineEnvVars(t *testing.T) {
 func TestCommandValidator_EmptyCommand(t *testing.T) {
 	v := NewCommandValidator()
 
-	err := v.ValidateCommand("", false)
+	err := v.ValidateCommand("", false, false)
 	if err != nil {
 		t.Errorf("Empty command should not error, got: %v", err)
 	}
 
-	err = v.ValidateCommand("   ", false)
+	err = v.ValidateCommand("   ", false, false)
 	if err != nil {
 		t.Errorf("Whitespace-only command should not error, got: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestCommandValidator_SemicolonChains(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Semicolon chain '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -420,7 +420,7 @@ func TestCommandValidator_SemicolonChains(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Semicolon chain '%s' should be blocked", cmd)
 		}
@@ -437,7 +437,7 @@ func TestCommandValidator_AndOrChains(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Chain '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -449,7 +449,7 @@ func TestCommandValidator_AndOrChains(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Chain '%s' should be blocked", cmd)
 		}
@@ -469,7 +469,7 @@ func TestCommandValidator_SystemInfoCommands(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("System info command '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -490,7 +490,7 @@ func TestCommandValidator_MonitoringCommands(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Monitoring command '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -502,7 +502,7 @@ func TestCommandValidator_ComplexRealWorldCommand(t *testing.T) {
 
 	// Test the exact command from the user's example
 	cmd := "uptime; echo '---'; mpstat 1 3; echo '---'; ps -eo pid,comm,pcpu,pmem,etime,user --sort=-pcpu | head -n 15"
-	err := v.ValidateCommand(cmd, false)
+	err := v.ValidateCommand(cmd, false, false)
 	if err != nil {
 		t.Errorf("Real-world command '%s' should be allowed, got error: %v", cmd, err)
 	}
@@ -533,7 +533,7 @@ func TestCommandValidator_SudoCommands(t *testing.T) {
 	}
 
 	for _, cmd := range allowed {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err != nil {
 			t.Errorf("Sudo command '%s' should be allowed, got error: %v", cmd, err)
 		}
@@ -558,7 +558,7 @@ func TestCommandValidator_SudoCommands(t *testing.T) {
 	}
 
 	for _, cmd := range blocked {
-		err := v.ValidateCommand(cmd, false)
+		err := v.ValidateCommand(cmd, false, false)
 		if err == nil {
 			t.Errorf("Sudo command '%s' should be blocked in read-only mode", cmd)
 		}

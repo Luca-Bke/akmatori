@@ -628,6 +628,7 @@ export interface SSHHostConfig {
   jumphost_user?: string;
   jumphost_port?: number;
   allow_write_commands?: boolean;
+  allowed_commands?: string[];
 }
 
 // Events feed

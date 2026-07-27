@@ -36,15 +36,16 @@ type SSHKey struct {
 
 // SSHHostConfig holds per-host SSH connection configuration
 type SSHHostConfig struct {
-	Hostname           string `json:"hostname"`                       // Display name (e.g., "web-prod-1")
-	Address            string `json:"address"`                        // Real connection address (IP or FQDN)
-	User               string `json:"user,omitempty"`                 // SSH username (default: "root")
-	Port               int    `json:"port,omitempty"`                 // SSH port (default: 22)
-	KeyID              string `json:"key_id,omitempty"`               // Override key for this host (uses default if empty)
-	JumphostAddress    string `json:"jumphost_address,omitempty"`     // Bastion/jumphost address
-	JumphostUser       string `json:"jumphost_user,omitempty"`        // Jumphost username
-	JumphostPort       int    `json:"jumphost_port,omitempty"`        // Jumphost port (default: 22)
-	AllowWriteCommands bool   `json:"allow_write_commands,omitempty"` // Allow write/destructive commands (default: false)
+	Hostname           string   `json:"hostname"`                       // Display name (e.g., "web-prod-1")
+	Address            string   `json:"address"`                        // Real connection address (IP or FQDN)
+	User               string   `json:"user,omitempty"`                 // SSH username (default: "root")
+	Port               int      `json:"port,omitempty"`                 // SSH port (default: 22)
+	KeyID              string   `json:"key_id,omitempty"`               // Override key for this host (uses default if empty)
+	JumphostAddress    string   `json:"jumphost_address,omitempty"`     // Bastion/jumphost address
+	JumphostUser       string   `json:"jumphost_user,omitempty"`        // Jumphost username
+	JumphostPort       int      `json:"jumphost_port,omitempty"`        // Jumphost port (default: 22)
+	AllowWriteCommands bool     `json:"allow_write_commands,omitempty"` // Allow write/destructive commands (default: false)
+	AllowedCommands    []string `json:"allowed_commands,omitempty"`     // If non-empty, only these base commands are allowed (overrides read-only list)
 }
 
 // SSHConfig holds SSH connection configuration
@@ -261,6 +262,15 @@ func (t *SSHTool) getConfig(ctx context.Context, incidentID string, instanceID *
 		// Security settings
 		if allow, ok := hostMap["allow_write_commands"].(bool); ok {
 			host.AllowWriteCommands = allow
+		}
+
+		// Custom allowed commands (if set, overrides the default read-only list)
+		if cmds, ok := hostMap["allowed_commands"].([]interface{}); ok && len(cmds) > 0 {
+			for _, cmd := range cmds {
+				if cmdStr, ok := cmd.(string); ok && cmdStr != "" {
+					host.AllowedCommands = append(host.AllowedCommands, strings.TrimSpace(cmdStr))
+				}
+			}
 		}
 
 		// Skip placeholder rows with blank addresses
@@ -517,9 +527,9 @@ func (t *SSHTool) executeOnServer(ctx context.Context, hostConfig *SSHHostConfig
 		ExitCode: -1,
 	}
 
-	// Validate command against read-only mode
-	validator := NewCommandValidator()
-	if err := validator.ValidateCommand(command, hostConfig.AllowWriteCommands); err != nil {
+	// Validate command against read-only mode or custom allowlist
+	validator := NewCommandValidatorWithAllowlist(hostConfig.AllowedCommands)
+	if err := validator.ValidateCommand(command, hostConfig.AllowWriteCommands, len(hostConfig.AllowedCommands) > 0); err != nil {
 		result.Error = err.Error()
 		result.DurationMs = time.Since(startTime).Milliseconds()
 		return result

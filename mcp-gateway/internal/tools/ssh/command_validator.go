@@ -16,11 +16,21 @@ type CommandValidator struct {
 
 	// AllowedSubcommands defines safe subcommands for specific base commands
 	AllowedSubcommands map[string][]string
+
+	// CustomAllowedCommands is an operator-defined allowlist.
+	// When non-empty, only these base commands are permitted (overrides ReadOnlyCommands).
+	CustomAllowedCommands map[string]bool
 }
 
 // NewCommandValidator creates a validator with default safe commands
 func NewCommandValidator() *CommandValidator {
-	return &CommandValidator{
+	return NewCommandValidatorWithAllowlist(nil)
+}
+
+// NewCommandValidatorWithAllowlist creates a validator with an optional custom allowlist.
+// When allowedCommands is non-empty, only those base commands are permitted.
+func NewCommandValidatorWithAllowlist(allowedCommands []string) *CommandValidator {
+	v := &CommandValidator{
 		ReadOnlyCommands: map[string]bool{
 			// File viewing
 			"cat": true, "head": true, "tail": true, "less": true, "more": true,
@@ -108,10 +118,43 @@ func NewCommandValidator() *CommandValidator {
 			"rpm":       {"-qa", "-qi", "-ql", "--query"},
 		},
 	}
+	if len(allowedCommands) > 0 {
+		v.CustomAllowedCommands = make(map[string]bool)
+		for _, cmd := range allowedCommands {
+			v.CustomAllowedCommands[strings.ToLower(strings.TrimSpace(cmd))] = true
+		}
+	}
+	return v
 }
 
-// ValidateCommand checks if a command is allowed based on read-only mode
-func (v *CommandValidator) ValidateCommand(command string, allowWriteCommands bool) error {
+// ValidateCommand checks if a command is allowed based on read-only mode or custom allowlist.
+// If useCustomAllowlist is true, only commands in CustomAllowedCommands are permitted (allowWriteCommands is ignored).
+func (v *CommandValidator) ValidateCommand(command string, allowWriteCommands bool, useCustomAllowlist bool) error {
+	if useCustomAllowlist {
+		// Custom allowlist mode: only explicitly listed commands are allowed
+		// Dangerous patterns still apply
+		cmd := strings.TrimSpace(command)
+		for _, pattern := range v.DangerousPatterns {
+			if strings.Contains(cmd, pattern) {
+				return v.blockedError(fmt.Sprintf("contains dangerous pattern '%s'", strings.TrimSpace(pattern)))
+			}
+		}
+		if containsWriteRedirect(cmd) {
+			return v.blockedError("contains file output redirect '>'")
+		}
+		separatorPattern := regexp.MustCompile(`[;|]|&&|\|\|`)
+		parts := separatorPattern.Split(cmd, -1)
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if err := v.validateSingleCommandCustom(part); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if allowWriteCommands {
 		return nil // All commands allowed
 	}
@@ -147,7 +190,7 @@ func (v *CommandValidator) ValidateCommand(command string, allowWriteCommands bo
 	return nil
 }
 
-// validateSingleCommand validates a single command (without pipes)
+// validateSingleCommand validates a single command (without pipes) using default read-only list
 func (v *CommandValidator) validateSingleCommand(cmd string) error {
 	// Extract base command (first word)
 	baseCmd := extractBaseCommand(cmd)
@@ -174,6 +217,30 @@ func (v *CommandValidator) validateSingleCommand(cmd string) error {
 		if !v.isSubcommandAllowed(cmd, baseCmd, allowedSubs) {
 			return v.blockedError(fmt.Sprintf("'%s' subcommand is not allowed", baseCmd))
 		}
+	}
+
+	return nil
+}
+
+// validateSingleCommandCustom validates against the custom allowlist
+func (v *CommandValidator) validateSingleCommandCustom(cmd string) error {
+	baseCmd := extractBaseCommand(cmd)
+	if baseCmd == "" {
+		return nil
+	}
+
+	// Check if base command is in the custom allowlist
+	if !v.CustomAllowedCommands[strings.ToLower(baseCmd)] {
+		return v.blockedErrorCustom(fmt.Sprintf("'%s' is not in the allowed command list", baseCmd))
+	}
+
+	// Special handling for sudo - recursively validate the inner command
+	if baseCmd == "sudo" {
+		innerCmd := extractCommandAfterSudo(cmd)
+		if innerCmd == "" {
+			return v.blockedErrorCustom("sudo requires a command")
+		}
+		return v.validateSingleCommandCustom(innerCmd)
 	}
 
 	return nil
@@ -211,6 +278,19 @@ Allowed commands in read-only mode:
   Containers: docker ps/images/logs/inspect/stats, kubectl get/describe/logs
 
 To allow write commands, enable 'Allow Write Commands' for this host`, reason)
+}
+
+// blockedErrorCustom creates an error message for custom allowlist violations
+func (v *CommandValidator) blockedErrorCustom(reason string) error {
+	var cmds []string
+	for cmd := range v.CustomAllowedCommands {
+		cmds = append(cmds, cmd)
+	}
+	return fmt.Errorf(`command blocked: %s (custom command allowlist is enabled)
+
+Allowed commands: %s
+
+To add more commands, edit the 'Allowed Commands' list for this host in tool settings`, reason, strings.Join(cmds, ", "))
 }
 
 // extractBaseCommand extracts the base command from a command string
